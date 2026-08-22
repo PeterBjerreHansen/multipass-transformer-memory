@@ -8,6 +8,5 @@ arms:
   - {id: tape_dense_seed1337, config: tape_dense_seed1337.yaml}
   - {id: tape_periodic32_seed1337, config: tape_periodic32_seed1337.yaml}
   - {id: tape_memory_token32_seed1337, config: tape_memory_token32_seed1337.yaml}
-  - {id: hybrid_seed1337, config: hybrid_seed1337.yaml}
   - {id: hybrid_recirculation_seed1337, config: hybrid_recirculation_seed1337.yaml}
 comparisons: []

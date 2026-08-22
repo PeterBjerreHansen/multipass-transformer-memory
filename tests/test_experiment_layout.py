@@ -82,7 +82,7 @@ def test_active_pipeline_shelves_fbt_and_covers_all_tape_policies():
         assert all(cfg.variant != "fbt" for cfg in configs)
         assert {
             cfg.variant for cfg in configs if "hybrid" in cfg.variant
-        } == {"tape_add_hybrid", "tape_recirculation_hybrid"}
+        } == {"tape_recirculation_hybrid"}
         tape_configs = [cfg for cfg in configs if cfg.variant == "tape"]
         assert {cfg.memory_write_mode for cfg in tape_configs} == expected_tape_modes
         explicit = next(

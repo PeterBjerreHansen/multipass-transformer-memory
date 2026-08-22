@@ -7,6 +7,5 @@ arms:
   - {id: tape_dense_smoke, config: tape_dense_smoke.yaml}
   - {id: tape_periodic32_smoke, config: tape_periodic32_smoke.yaml}
   - {id: tape_memory_token32_smoke, config: tape_memory_token32_smoke.yaml}
-  - {id: hybrid_smoke, config: hybrid_smoke.yaml}
   - {id: hybrid_recirculation_smoke, config: hybrid_recirculation_smoke.yaml}
 comparisons: []
