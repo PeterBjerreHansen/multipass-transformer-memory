@@ -7,11 +7,11 @@ from tiny_mistral_mptt.data.packed_dataset import (
     insert_memory_tokens,
     memory_token_physical_length,
 )
-from tiny_mistral_mptt.feedback import HybridFeedbackState, TapeState
+from tiny_mistral_mptt.feedback import HybridFeedbackState, BankState
 from tiny_mistral_mptt.training.loss import causal_lm_loss_from_labels
 from tiny_mistral_mptt.training.phases import configure_phase
-from tiny_mistral_mptt.variants.tape import TapeVariant
-from tiny_mistral_mptt.variants.tape_add_hybrid import TapeAddHybridVariant
+from tiny_mistral_mptt.variants.bank import BankVariant
+from tiny_mistral_mptt.variants.bank_add_hybrid import BankAddHybridVariant
 
 
 def backbone(seed=123, *, backend="reference", sliding_window=8):
@@ -23,7 +23,7 @@ def backbone(seed=123, *, backend="reference", sliding_window=8):
     )
 
 
-def tape_model(
+def bank_model(
     *,
     mode="periodic",
     stride=2,
@@ -33,7 +33,7 @@ def tape_model(
     seed=123,
     backend="reference",
 ):
-    cls = TapeAddHybridVariant if hybrid else TapeVariant
+    cls = BankAddHybridVariant if hybrid else BankVariant
     model = cls(
         backbone(seed, backend=backend),
         memory_window=window,
@@ -48,15 +48,15 @@ def tape_model(
     return model
 
 
-def activate_tape_readers(model):
+def activate_bank_readers(model):
     with torch.no_grad():
         for reader in model.memory_readers.values():
             reader.o_proj.weight.copy_(torch.eye(model.config.hidden_size))
 
 
-def test_dense_and_periodic_c1_are_the_same_tape_architecture():
-    dense = tape_model(mode="dense", stride=1, seed=5).eval()
-    periodic = tape_model(mode="periodic", stride=1, seed=99).eval()
+def test_dense_and_periodic_c1_are_the_same_bank_architecture():
+    dense = bank_model(mode="dense", stride=1, seed=5).eval()
+    periodic = bank_model(mode="periodic", stride=1, seed=99).eval()
     periodic.backbone.load_state_dict(dense.backbone.state_dict())
     periodic.writer.load_state_dict(dense.writer.state_dict())
     periodic.memory_readers.load_state_dict(dense.memory_readers.state_dict())
@@ -68,8 +68,8 @@ def test_dense_and_periodic_c1_are_the_same_tape_architecture():
             torch.testing.assert_close(actual, expected, atol=0, rtol=0)
 
 
-def test_zero_initialized_tape_is_exact_vanilla_at_every_pass_depth():
-    model = tape_model(mode="periodic", stride=2).eval()
+def test_zero_initialized_bank_is_exact_vanilla_at_every_pass_depth():
+    model = bank_model(mode="periodic", stride=2).eval()
     ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
     with torch.no_grad():
         outputs = model.compute_passes(ids, passes=3)
@@ -80,7 +80,7 @@ def test_zero_initialized_tape_is_exact_vanilla_at_every_pass_depth():
 
 
 def test_periodic_write_mask_uses_completed_stride_positions():
-    model = tape_model(mode="periodic", stride=4)
+    model = bank_model(mode="periodic", stride=4)
     ids = torch.arange(10)[None, :]
     assert model.write_mask(ids).tolist() == [[
         False, False, False, True, False, False, False, True, False, False
@@ -88,14 +88,14 @@ def test_periodic_write_mask_uses_completed_stride_positions():
 
 
 def test_dense_write_mask_writes_every_position():
-    model = tape_model(mode="dense", stride=1)
+    model = bank_model(mode="dense", stride=1)
     ids = torch.arange(6)[None, :]
     assert model.write_mask(ids).all()
 
 
 def test_periodic_write_is_strict_past():
-    model = tape_model(mode="periodic", stride=4).eval()
-    activate_tape_readers(model)
+    model = bank_model(mode="periodic", stride=4).eval()
+    activate_bank_readers(model)
     ids = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]])
     embeddings = model.input_embeddings(ids)
     previous = torch.randn_like(embeddings)
@@ -110,7 +110,7 @@ def test_periodic_write_is_strict_past():
 
 
 def test_phase_a_noop_initialization_stages_reader_then_writer_gradients():
-    model = tape_model(mode="periodic")
+    model = bank_model(mode="periodic")
     configure_phase(model, "A")
     ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
     optimizer = torch.optim.SGD(list(model.added_parameters()), lr=0.1)
@@ -134,20 +134,20 @@ def test_phase_a_noop_initialization_stages_reader_then_writer_gradients():
             assert parameter.grad is None
 
 
-def test_seeded_periodic_tape_keeps_last_w_records():
-    model = tape_model(mode="periodic", stride=2, window=3).eval()
+def test_seeded_periodic_bank_keeps_last_w_records():
+    model = bank_model(mode="periodic", stride=2, window=3).eval()
     hidden = torch.arange(1 * 8 * model.config.hidden_size, dtype=torch.float32).reshape(
         1, 8, model.config.hidden_size
     )
     ids = torch.arange(8)[None, :]
     state = model._feedback_memory_from_hidden(hidden, input_ids=ids)
-    assert isinstance(state, TapeState)
+    assert isinstance(state, BankState)
     assert state.valid.tolist() == [[True, True, True]]
     torch.testing.assert_close(state.memories[0], hidden[0, [3, 5, 7], :])
 
 
 def test_memory_token_is_input_only_and_targets_skip_control_slot():
-    model = tape_model(mode="memory_token").eval()
+    model = bank_model(mode="memory_token").eval()
     V = model.config.vocab_size
     ids = torch.tensor([[4, V, 9, 11]])
     assert model.build_lm_labels(ids).tolist() == [[9, -100, 11, -100]]
@@ -159,7 +159,7 @@ def test_memory_token_is_input_only_and_targets_skip_control_slot():
 
 
 def test_memory_token_loss_has_zero_direct_gradient_at_control_position():
-    model = tape_model(mode="memory_token").eval()
+    model = bank_model(mode="memory_token").eval()
     V = model.config.vocab_size
     ids = torch.tensor([[4, V, 9, 11]])
     labels = model.build_lm_labels(ids)
@@ -178,7 +178,7 @@ def test_memory_token_loss_has_zero_direct_gradient_at_control_position():
 
 
 def test_memory_token_loss_is_invariant_to_control_position_logits():
-    model = tape_model(mode="memory_token").eval()
+    model = bank_model(mode="memory_token").eval()
     V = model.config.vocab_size
     ids = torch.tensor([[4, V, 9, 11]])
     labels = model.build_lm_labels(ids)
@@ -195,7 +195,7 @@ def test_memory_token_loss_is_invariant_to_control_position_logits():
 
 
 def test_memory_token_embedding_gets_phase_a_gradient_through_recurrence():
-    model = tape_model(mode="memory_token", visibility="write_only")
+    model = bank_model(mode="memory_token", visibility="write_only")
     configure_phase(model, "A")
     V = model.config.vocab_size
     ids = torch.tensor([[1, 2, V, 3, 4, V, 5]])
@@ -216,7 +216,7 @@ def test_memory_token_embedding_gets_phase_a_gradient_through_recurrence():
 
 
 def test_write_only_mem_reads_context_but_is_not_visible_to_future_tokens():
-    model = tape_model(mode="memory_token", visibility="write_only").eval()
+    model = bank_model(mode="memory_token", visibility="write_only").eval()
     V = model.config.vocab_size
     ids = torch.tensor([[1, V, 3, 4]])
     with torch.no_grad():
@@ -234,7 +234,7 @@ def test_write_only_mem_reads_context_but_is_not_visible_to_future_tokens():
 
 
 def test_visible_mem_can_affect_later_ordinary_states_locally():
-    model = tape_model(mode="memory_token", visibility="visible").eval()
+    model = bank_model(mode="memory_token", visibility="visible").eval()
     V = model.config.vocab_size
     ids = torch.tensor([[1, V, 3, 4]])
     with torch.no_grad():
@@ -245,9 +245,9 @@ def test_visible_mem_can_affect_later_ordinary_states_locally():
     assert not torch.allclose(base[:, 2:, :], changed[:, 2:, :])
 
 
-def test_mem_write_is_strict_past_for_tape_reader():
-    model = tape_model(mode="memory_token").eval()
-    activate_tape_readers(model)
+def test_mem_write_is_strict_past_for_bank_reader():
+    model = bank_model(mode="memory_token").eval()
+    activate_bank_readers(model)
     V = model.config.vocab_size
     ids = torch.tensor([[1, V, 3, 4]])
     embeddings = model.input_embeddings(ids)
@@ -261,7 +261,7 @@ def test_mem_write_is_strict_past_for_tape_reader():
 
 
 def test_hybrid_mem_and_following_token_use_same_previous_ordinary_fast_source():
-    model = tape_model(mode="memory_token", hybrid=True)
+    model = bank_model(mode="memory_token", hybrid=True)
     V = model.config.vocab_size
     ids = torch.tensor([[10, V, 11, 12, V, 13]])
     dim = model.config.hidden_size
@@ -272,14 +272,14 @@ def test_hybrid_mem_and_following_token_use_same_previous_ordinary_fast_source()
     torch.testing.assert_close(aligned[0, :, 0], expected, atol=0, rtol=0)
 
 
-def test_hybrid_mem_writes_tape_without_advancing_fast_state():
-    model = tape_model(mode="memory_token", hybrid=True).eval()
+def test_hybrid_mem_writes_bank_without_advancing_fast_state():
+    model = bank_model(mode="memory_token", hybrid=True).eval()
     V = model.config.vocab_size
     dim = model.config.hidden_size
     old_fast = torch.full((1, 1, dim), 2.0)
     state = HybridFeedbackState(
         fast_hidden=old_fast,
-        tape=TapeState(
+        bank=BankState(
             memories=torch.zeros(1, model.memory_window, dim),
             valid=torch.zeros(1, model.memory_window, dtype=torch.bool),
             positions=torch.zeros(1, model.memory_window, dtype=torch.long),
@@ -289,24 +289,24 @@ def test_hybrid_mem_writes_tape_without_advancing_fast_state():
     mem_hidden = torch.full((1, 1, dim), 3.0)
     updated = model._append_feedback_memory(state, mem_hidden, token=torch.tensor([[V]]), position=1)
     torch.testing.assert_close(updated.fast_hidden, old_fast, atol=0, rtol=0)
-    assert updated.tape.valid.tolist() == [[True, False, False, False]]
-    assert updated.tape.positions.tolist() == [[0, 0, 0, 0]]
-    assert updated.tape.next_sequence_positions.tolist() == [1]
+    assert updated.bank.valid.tolist() == [[True, False, False, False]]
+    assert updated.bank.positions.tolist() == [[0, 0, 0, 0]]
+    assert updated.bank.next_sequence_positions.tolist() == [1]
 
     ordinary_hidden = torch.full((1, 1, dim), 4.0)
     updated2 = model._append_feedback_memory(updated, ordinary_hidden, token=torch.tensor([[7]]), position=2)
     torch.testing.assert_close(updated2.fast_hidden, ordinary_hidden, atol=0, rtol=0)
-    assert torch.equal(updated2.tape.valid, updated.tape.valid)
-    assert updated2.tape.next_sequence_positions.tolist() == [2]
+    assert torch.equal(updated2.bank.valid, updated.bank.valid)
+    assert updated2.bank.next_sequence_positions.tolist() == [2]
 
 
 def test_memory_token_positions_track_linguistic_sequence_not_control_slots():
-    model = tape_model(mode="memory_token", stride=3)
+    model = bank_model(mode="memory_token", stride=3)
     V = model.config.vocab_size
     ids = torch.tensor([[1, 2, 3, V, 4, 5, 6, V, 7]])
-    tape = model.build_tape(torch.randn(1, ids.shape[1], model.config.hidden_size), ids)
-    assert tape.query_positions.tolist() == [[0, 1, 2, 2, 3, 4, 5, 5, 6]]
-    assert tape.memory_positions[tape.valid].tolist() == [2, 5]
+    bank = model.build_bank(torch.randn(1, ids.shape[1], model.config.hidden_size), ids)
+    assert bank.query_positions.tolist() == [[0, 1, 2, 2, 3, 4, 5, 5, 6]]
+    assert bank.memory_positions[bank.valid].tolist() == [2, 5]
 
 
 def test_memory_token_packing_length_and_order():
@@ -317,7 +317,7 @@ def test_memory_token_packing_length_and_order():
 
 
 def test_invalid_memory_token_id_is_rejected_on_cpu():
-    model = tape_model(mode="memory_token")
+    model = bank_model(mode="memory_token")
     V = model.config.vocab_size
     with pytest.raises(ValueError, match="outside"):
         model.input_embeddings(torch.tensor([[1, V + 1, 2]]))

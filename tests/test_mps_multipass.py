@@ -7,7 +7,7 @@ from tiny_mistral_mptt.training.phases import configure_phase
 from tiny_mistral_mptt.variants.fbt import FBTVariant
 from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
 from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
-from tiny_mistral_mptt.variants.tape import TapeVariant
+from tiny_mistral_mptt.variants.bank import BankVariant
 
 
 pytestmark = pytest.mark.skipif(
@@ -16,7 +16,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.mark.parametrize("variant_name", ["fbt", "memory_add", "tape"])
+@pytest.mark.parametrize("variant_name", ["fbt", "memory_add", "bank"])
 def test_multipass_variants_forward_backward_on_mps(variant_name):
     config = micro_config()
     backbone = MistralForCausalLM(config, attention_backend="auto").to("mps", dtype=torch.float32)
@@ -25,7 +25,7 @@ def test_multipass_variants_forward_backward_on_mps(variant_name):
     elif variant_name == "memory_add":
         model = MemoryAddVariant(backbone)
     else:
-        model = TapeVariant(backbone, memory_window=4, memory_write_mode="dense", memory_write_stride=1, initialization_seed=17)
+        model = BankVariant(backbone, memory_window=4, memory_write_mode="dense", memory_write_stride=1, initialization_seed=17)
     model = model.to("mps", dtype=torch.float32)
     configure_phase(model, "A")
     ids = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]], device="mps")
@@ -37,7 +37,7 @@ def test_multipass_variants_forward_backward_on_mps(variant_name):
     assert all(bool(torch.isfinite(grad).all().item()) for grad in grads)
 
 
-@pytest.mark.parametrize("variant_name", ["memory_add", "tape", "recirculation"])
+@pytest.mark.parametrize("variant_name", ["memory_add", "bank", "recirculation"])
 @pytest.mark.parametrize("passes", [2, 3])
 def test_incremental_memory_inference_on_mps(variant_name, passes):
     from tiny_mistral_mptt.inference import (
@@ -57,8 +57,8 @@ def test_incremental_memory_inference_on_mps(variant_name, passes):
             model.memory_projection.weight.copy_(
                 0.05 * torch.eye(config.hidden_size, device="mps")
             )
-    elif variant_name == "tape":
-        model = TapeVariant(
+    elif variant_name == "bank":
+        model = BankVariant(
             backbone, memory_window=3, memory_write_mode="dense", memory_write_stride=1, initialization_seed=17
         )
     else:

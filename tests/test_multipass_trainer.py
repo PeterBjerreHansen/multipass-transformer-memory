@@ -380,15 +380,15 @@ def test_mixed_pass_schedule_forwards_k_specific_weights(tmp_path, monkeypatch):
     assert all(weights == expected[passes] for passes, weights in observed)
 
 
-def test_tape_phase_a_runs_through_shared_trainer(tmp_path):
-    from tiny_mistral_mptt.variants.tape import TapeVariant
+def test_bank_phase_a_runs_through_shared_trainer(tmp_path):
+    from tiny_mistral_mptt.variants.bank import BankVariant
 
     data_dir = tmp_path / "data-memory"
     make_artifact(data_dir)
     train = PackedTokenDataset(data_dir, "train")
     val = PackedTokenDataset(data_dir, "validation")
     torch.manual_seed(23)
-    model = TapeVariant(
+    model = BankVariant(
         MistralForCausalLM(micro_config(), attention_backend="reference"),
         memory_window=4,
         memory_write_mode="dense",
@@ -396,7 +396,7 @@ def test_tape_phase_a_runs_through_shared_trainer(tmp_path):
         initialization_seed=31,
     )
     cfg = ExperimentConfig(
-        variant="tape",
+        variant="bank",
         memory_write_mode="dense",
         phase="A",
         model_dir="unused",

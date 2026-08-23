@@ -4,8 +4,8 @@ question: Which fast, slow, and hybrid feedback models justify confirmation comp
 arms:
   - {id: vanilla_seed1337, config: vanilla_seed1337.yaml}
   - {id: recirculation_adaptive_seed1337, config: recirculation_adaptive_seed1337.yaml}
-  - {id: tape_dense_seed1337, config: tape_dense_seed1337.yaml}
-  - {id: tape_periodic32_seed1337, config: tape_periodic32_seed1337.yaml}
-  - {id: tape_memory_token32_seed1337, config: tape_memory_token32_seed1337.yaml}
+  - {id: bank_dense_seed1337, config: bank_dense_seed1337.yaml}
+  - {id: bank_periodic32_seed1337, config: bank_periodic32_seed1337.yaml}
+  - {id: bank_memory_token32_seed1337, config: bank_memory_token32_seed1337.yaml}
   - {id: hybrid_recirculation_seed1337, config: hybrid_recirculation_seed1337.yaml}
 comparisons: []

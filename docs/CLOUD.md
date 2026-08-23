@@ -20,7 +20,7 @@ make select-cuda-batch \
   RESULT=benchmarks/efficiency/results/generated/cuda_batch_qualification.json
 ```
 
-The qualification compares K=2 adaptive Recirculation and dense Tape with BF16
+The qualification compares K=2 adaptive Recirculation and dense Bank with BF16
 autocast and accumulation 1 over microbatches 1/2/4/8. OOM cases are retained.
 The selector chooses the smallest common successful batch reaching the
 configured efficiency threshold for both architectures. If this is larger than
@@ -55,7 +55,7 @@ The preflight checks:
 - output directory containment beneath the persistent root;
 - free disk space for durable checkpoint rotation;
 - linguistic versus physical batching quantities for memory-token runs;
-- the exact tape write/visibility configuration.
+- the exact bank write/visibility configuration.
 
 ## Spot-safe checkpoint policy
 

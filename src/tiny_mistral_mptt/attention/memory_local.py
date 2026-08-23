@@ -152,7 +152,7 @@ def memory_bank_attention(
     return output.contiguous().reshape(bsz, hq, query_len, head_dim)
 
 
-def strict_past_tape_attention(
+def strict_past_bank_attention(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
@@ -164,9 +164,9 @@ def strict_past_tape_attention(
     training: bool = False,
     dense: bool = False,
 ) -> torch.Tensor:
-    """O(T*W) GQA attention to the last ``W`` committed tape memories.
+    """O(T*W) GQA attention to the last ``W`` committed bank memories.
 
-    ``key``/``value`` are compact chronological tape records ``[B,Hkv,M,D]``.
+    ``key``/``value`` are compact chronological bank records ``[B,Hkv,M,D]``.
     ``writes_before[b,t]`` is the number of records committed strictly before
     query position ``t``.  Therefore a memory written at position ``t`` is
     invisible to the query at ``t`` and first becomes visible at ``t+1``.
@@ -204,9 +204,9 @@ def strict_past_tape_attention(
 
     if dense:
         if memory_len != seq_len:
-            raise ValueError("dense tape attention requires one memory record per query position")
+            raise ValueError("dense bank attention requires one memory record per query position")
         if not bool(memory_mask.all()):
-            raise ValueError("dense tape attention does not accept padded memory records")
+            raise ValueError("dense bank attention does not accept padded memory records")
         return strict_past_local_attention(
             query,
             key,

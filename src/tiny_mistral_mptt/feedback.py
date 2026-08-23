@@ -6,7 +6,7 @@ import torch
 
 
 @dataclass(frozen=True)
-class TapeState:
+class BankState:
     """Fixed-capacity chronological memory bank for cached inference.
 
     ``memories`` has shape ``[B,W,D]`` and ``valid`` has shape ``[B,W]``.
@@ -24,28 +24,28 @@ class TapeState:
 
     def __post_init__(self) -> None:
         if self.memories.ndim != 3:
-            raise ValueError("TapeState.memories must be [B,W,D]")
+            raise ValueError("BankState.memories must be [B,W,D]")
         if self.valid.ndim != 2 or self.valid.shape != self.memories.shape[:2]:
-            raise ValueError("TapeState.valid must be bool [B,W]")
+            raise ValueError("BankState.valid must be bool [B,W]")
         if self.valid.dtype != torch.bool:
-            raise ValueError("TapeState.valid must have bool dtype")
+            raise ValueError("BankState.valid must have bool dtype")
         if self.positions.shape != self.valid.shape or self.positions.dtype not in (
             torch.int32,
             torch.int64,
         ):
-            raise ValueError("TapeState.positions must be integer [B,W]")
+            raise ValueError("BankState.positions must be integer [B,W]")
         if self.next_sequence_positions.shape != (self.memories.shape[0],) or (
             self.next_sequence_positions.dtype not in (torch.int32, torch.int64)
         ):
             raise ValueError(
-                "TapeState.next_sequence_positions must be integer [B]"
+                "BankState.next_sequence_positions must be integer [B]"
             )
         if bool((self.positions[self.valid] < 0).any()):
-            raise ValueError("valid TapeState positions must be non-negative")
+            raise ValueError("valid BankState positions must be non-negative")
         if bool((self.next_sequence_positions < 0).any()):
-            raise ValueError("next Tape sequence positions must be non-negative")
+            raise ValueError("next Bank sequence positions must be non-negative")
         if self.memories.shape[1] < 1:
-            raise ValueError("TapeState capacity must be positive")
+            raise ValueError("BankState capacity must be positive")
         if (self.projected_keys is None) != (self.projected_values is None):
             raise ValueError("projected_keys and projected_values must be provided together")
         if self.projected_keys is not None:
@@ -73,21 +73,21 @@ class TapeState:
 
 @dataclass(frozen=True)
 class HybridPassSource:
-    """Full-stream sources produced by one tape/recurrent model pass."""
+    """Full-stream sources produced by one bank/recurrent model pass."""
 
     recurrent_hidden: torch.Tensor
-    tape_hidden: torch.Tensor
+    bank_hidden: torch.Tensor
 
     def __post_init__(self) -> None:
-        if self.recurrent_hidden.ndim != 3 or self.tape_hidden.ndim != 3:
+        if self.recurrent_hidden.ndim != 3 or self.bank_hidden.ndim != 3:
             raise ValueError("hybrid pass sources must be [B,T,D]")
-        if self.recurrent_hidden.shape != self.tape_hidden.shape:
-            raise ValueError("hybrid recurrent/tape pass sources must have equal shapes")
+        if self.recurrent_hidden.shape != self.bank_hidden.shape:
+            raise ValueError("hybrid recurrent/bank pass sources must have equal shapes")
 
 
 @dataclass(frozen=True)
 class HybridFeedbackState:
-    """Immediate recurrent state plus an addressable tape.
+    """Immediate recurrent state plus an addressable bank.
 
     ``fast_hidden`` retains its original name for checkpoint/API compatibility;
     it may contain either a top-layer MemoryAdd state or an internal-layer
@@ -95,15 +95,15 @@ class HybridFeedbackState:
     """
 
     fast_hidden: torch.Tensor
-    tape: TapeState
+    bank: BankState
 
     def __post_init__(self) -> None:
         if self.fast_hidden.ndim != 3 or self.fast_hidden.shape[1] != 1:
             raise ValueError("HybridFeedbackState.fast_hidden must be [B,1,D]")
-        if self.fast_hidden.shape[0] != self.tape.batch_size:
-            raise ValueError("hybrid fast/tape batch sizes differ")
-        if self.fast_hidden.shape[-1] != self.tape.hidden_size:
-            raise ValueError("hybrid fast/tape hidden dimensions differ")
+        if self.fast_hidden.shape[0] != self.bank.batch_size:
+            raise ValueError("hybrid fast/bank batch sizes differ")
+        if self.fast_hidden.shape[-1] != self.bank.hidden_size:
+            raise ValueError("hybrid fast/bank hidden dimensions differ")
 
     @property
     def batch_size(self) -> int:
@@ -118,7 +118,7 @@ class HybridFeedbackState:
         return self.fast_hidden
 
 
-FeedbackMemory = torch.Tensor | TapeState | HybridFeedbackState
+FeedbackMemory = torch.Tensor | BankState | HybridFeedbackState
 
 
 def feedback_shape(memory: FeedbackMemory) -> tuple[int, int]:

@@ -68,12 +68,12 @@ def test_objective_specific_pass_weights_are_canonical_and_uniform_defaults_are_
     cfg = _config(
         ntp_pass_loss_weights_by_k={2: [0.25, 0.75], 3: [0.1, 0.2, 0.7]},
         recurrent_nmp_pass_loss_weights_by_k={2: [0.5, 0.5], 3: [1.0, 1.0, 1.0]},
-        tape_nmp_pass_loss_weights_by_k={2: [0.8, 0.2], 3: [0.2, 0.3, 0.5]},
+        bank_nmp_pass_loss_weights_by_k={2: [0.8, 0.2], 3: [0.2, 0.3, 0.5]},
     )
 
     assert cfg.ntp_loss_weights_for_passes(2) == [0.25, 0.75]
     assert cfg.recurrent_nmp_loss_weights_for_passes(3) == [1.0, 1.0, 1.0]
-    assert cfg.tape_nmp_loss_weights_for_passes(2) == [0.8, 0.2]
+    assert cfg.bank_nmp_loss_weights_for_passes(2) == [0.8, 0.2]
     serialized = cfg.to_dict()
     assert serialized["ntp_pass_loss_weights_by_k"] == {
         2: [0.25, 0.75],
@@ -86,9 +86,9 @@ def test_objective_specific_pass_weights_are_canonical_and_uniform_defaults_are_
 def test_nmp_pass_weight_maps_require_exact_schedule_coverage_and_lengths():
     with pytest.raises(ValueError, match="recurrent_nmp_pass_loss_weights_by_k.*exactly match"):
         _config(recurrent_nmp_pass_loss_weights_by_k={2: [0.5, 0.5]})
-    with pytest.raises(ValueError, match=r"tape_nmp_pass_loss_weights_by_k\[3\].*exactly 3"):
+    with pytest.raises(ValueError, match=r"bank_nmp_pass_loss_weights_by_k\[3\].*exactly 3"):
         _config(
-            tape_nmp_pass_loss_weights_by_k={
+            bank_nmp_pass_loss_weights_by_k={
                 2: [0.5, 0.5],
                 3: [0.5, 0.5],
             }
@@ -117,14 +117,14 @@ def test_recurrent_nmp_target_normalization_defaults_to_rms_and_validates():
 
 
 
-def test_tape_config_requires_coherent_write_policy():
-    dense = _config(variant="tape", memory_write_mode="dense")
+def test_bank_config_requires_coherent_write_policy():
+    dense = _config(variant="bank", memory_write_mode="dense")
     assert dense.memory_write_mode == "dense"
     assert dense.memory_write_stride is None
     assert dense.memory_token_visibility is None
 
     periodic = _config(
-        variant="tape",
+        variant="bank",
         memory_write_mode="periodic",
         memory_write_stride=4,
         memory_layers=[7, 3],
@@ -134,7 +134,7 @@ def test_tape_config_requires_coherent_write_policy():
     assert periodic.memory_position_encoding == "rope"
 
     mem = _config(
-        variant="tape_add_hybrid",
+        variant="bank_add_hybrid",
         memory_write_mode="memory_token",
         memory_write_stride=8,
         memory_token_visibility="visible",
@@ -143,36 +143,36 @@ def test_tape_config_requires_coherent_write_policy():
     assert mem.memory_token_visibility == "visible"
 
     with pytest.raises(ValueError, match="require memory_write_mode"):
-        _config(variant="tape")
+        _config(variant="bank")
     with pytest.raises(ValueError, match="requires positive memory_write_stride"):
-        _config(variant="tape", memory_write_mode="periodic")
+        _config(variant="bank", memory_write_mode="periodic")
     with pytest.raises(ValueError, match="requires memory_token_visibility"):
         _config(
-            variant="tape",
+            variant="bank",
             memory_write_mode="memory_token",
             memory_write_stride=8,
         )
     with pytest.raises(ValueError, match="must not set memory_write_stride"):
-        _config(variant="tape", memory_write_mode="dense", memory_write_stride=1)
+        _config(variant="bank", memory_write_mode="dense", memory_write_stride=1)
     with pytest.raises(ValueError, match="applies only"):
         _config(
-            variant="tape",
+            variant="bank",
             memory_write_mode="periodic",
             memory_write_stride=8,
             memory_token_visibility="write_only",
         )
 
 
-def test_tape_fields_cannot_silently_change_other_variants():
-    with pytest.raises(ValueError, match="supported only for tape variants"):
+def test_bank_fields_cannot_silently_change_other_variants():
+    with pytest.raises(ValueError, match="supported only for bank variants"):
         _config(variant="memory_add", memory_write_stride=4)
-    with pytest.raises(ValueError, match="supported only for tape variants"):
+    with pytest.raises(ValueError, match="supported only for bank variants"):
         _config(variant="memory_add", memory_layers=[3])
 
 
-def test_tape_memory_layer_and_position_configuration_is_validated():
+def test_bank_memory_layer_and_position_configuration_is_validated():
     cfg = _config(
-        variant="tape",
+        variant="bank",
         memory_write_mode="periodic",
         memory_write_stride=32,
         memory_layers="all",
@@ -183,21 +183,21 @@ def test_tape_memory_layer_and_position_configuration_is_validated():
 
     with pytest.raises(ValueError, match="non-empty list"):
         _config(
-            variant="tape",
+            variant="bank",
             memory_write_mode="periodic",
             memory_write_stride=32,
             memory_layers=[],
         )
     with pytest.raises(ValueError, match="unique"):
         _config(
-            variant="tape",
+            variant="bank",
             memory_write_mode="periodic",
             memory_write_stride=32,
             memory_layers=[3, 3],
         )
     with pytest.raises(ValueError, match=r"rope\|none"):
         _config(
-            variant="tape",
+            variant="bank",
             memory_write_mode="periodic",
             memory_write_stride=32,
             memory_position_encoding="absolute",
@@ -251,9 +251,9 @@ def test_adaptive_recirculation_adds_a_phase_a_controller():
         )
 
 
-def test_tape_recirculation_hybrid_requires_both_configuration_contracts():
+def test_bank_recirculation_hybrid_requires_both_configuration_contracts():
     cfg = _config(
-        variant="tape_recirculation_hybrid",
+        variant="bank_recirculation_hybrid",
         phase="A",
         memory_write_mode="periodic",
         memory_write_stride=32,
@@ -267,7 +267,7 @@ def test_tape_recirculation_hybrid_requires_both_configuration_contracts():
 
     with pytest.raises(ValueError, match="requires source and destination"):
         _config(
-            variant="tape_recirculation_hybrid",
+            variant="bank_recirculation_hybrid",
             memory_write_mode="periodic",
             memory_write_stride=32,
         )

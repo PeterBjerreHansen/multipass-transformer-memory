@@ -1,36 +1,36 @@
-# Tape memory and explicit `<MEM>` slots
+# Bank memory and explicit `<MEM>` slots
 
-This is the authoritative contract for the active `tape` variant. The
-`tape_add_hybrid` sections are retained only to document historical checkpoints
+This is the authoritative contract for the active `bank` variant. The
+`bank_add_hybrid` sections are retained only to document historical checkpoints
 and are not part of the active experiment pipeline.
 
-## 1. Shared tape architecture
+## 1. Shared bank architecture
 
 All write policies use the same components:
 
-- one shared `TapeWriter`: bias-free `Linear(D,D)`, initialized to identity;
-- one independent `TapeReader` at each configured `memory_layers` index;
-- one chronological tape of writer outputs from the previous pass during
+- one shared `BankWriter`: bias-free `Linear(D,D)`, initialized to identity;
+- one independent `BankReader` at each configured `memory_layers` index;
+- one chronological bank of writer outputs from the previous pass during
   full-sequence multipass execution;
-- a bounded chronological `TapeState` during cached/recurrent execution.
+- a bounded chronological `BankState` during cached/recurrent execution.
 
 Every layer performs ordinary self-attention first, adds its residual, reads the
-tape, adds the tape residual, then performs the normalized MLP residual. The
+bank, adds the bank residual, then performs the normalized MLP residual. The
 reader is Mistral-shaped GQA and has its own query/memory RMSNorm plus Q/K/V/O
 projections.
 
-During cached inference, each retained tape record is projected once per
+During cached inference, each retained bank record is projected once per
 reader when it is created or appended. RoPE rotates the key with the record's
 original linguistic sequence position before it enters the cache. Subsequent
 cached reads project and rotate only the query. The raw-memory and projected
 cache paths are required to be numerically identical.
 
-Reader output projections are zero-initialized. Tape therefore starts as an
+Reader output projections are zero-initialized. Bank therefore starts as an
 exact no-op retrofit: pass 2 and deeper passes equal vanilla at construction.
 The output projections learn on the first optimizer step; Q/K/V and writer
 gradients become active after those projections move away from zero.
 
-A tape record is
+A bank record is
 
 ```text
 m_s = W_write h_s
@@ -48,14 +48,14 @@ memory_position_encoding: rope    # default; explicit ablation: none
 ```
 
 Layer indices are zero-based and unique. A non-reader decoder layer performs
-ordinary self-attention and MLP computation without allocating Tape-reader
-parameters or projected Tape K/V.
+ordinary self-attention and MLP computation without allocating Bank-reader
+parameters or projected Bank K/V.
 
 Memory RoPE is anchored to the original linguistic sequence, never to compact
-tape order. A record written for linguistic position 511 remains position 511
-even if it is the third retained tape record. In memory-token mode a `<MEM>`
-slot inherits the preceding linguistic boundary. `TapeBatch` and cached
-`TapeState` carry these coordinates through compaction, bounded eviction, and
+bank order. A record written for linguistic position 511 remains position 511
+even if it is the third retained bank record. In memory-token mode a `<MEM>`
+slot inherits the preceding linguistic boundary. `BankBatch` and cached
+`BankState` carry these coordinates through compaction, bounded eviction, and
 incremental decoding.
 
 ## 3. Write policies
@@ -90,7 +90,7 @@ memory_token_visibility: visible   # or write_only
 
 The data view inserts one `<MEM>` after each complete group of C linguistic
 tokens when another linguistic token remains in that block. Only MEM positions
-write the tape.
+write the bank.
 
 ## 4. `<MEM>` is input-only
 
@@ -102,7 +102,7 @@ ordinary input IDs: 0 ... V-1
 LM output classes:  0 ... V-1
 ```
 
-The pretrained embedding table and LM head are not resized. Tape variants in
+The pretrained embedding table and LM head are not resized. Bank variants in
 memory-token mode own one architecture-added learned `memory_token_embedding`;
 ID V selects that vector. The embedding is currently initialized to zero and
 learns as an added parameter.
@@ -131,7 +131,7 @@ ordinary one-position shift.
 
 The MEM representation can still receive gradients indirectly. In visible mode
 future ordinary-token losses can flow through self-attention into MEM; in both
-modes later recurrent/tape-mediated losses can flow through the tape reader,
+modes later recurrent/bank-mediated losses can flow through the bank reader,
 writer, and MEM state.
 
 ## 6. Self-attention visibility
@@ -139,15 +139,15 @@ writer, and MEM state.
 ### `visible`
 
 `<MEM>` is an ordinary causal self-attention K/V position. Later tokens may use
-its hidden state locally as well as through the persistent tape. Thus any gain
-can include both dedicated latent compute and improved tape storage.
+its hidden state locally as well as through the persistent bank. Thus any gain
+can include both dedicated latent compute and improved bank storage.
 
 ### `write_only`
 
 `<MEM>` remains a transformer query and can read preceding causal context, but
 its self-attention K/V is marked invalid. No query uses MEM as an ordinary
 self-attention key/value; the MEM input/residual path still exists and its
-hidden state still writes the tape.
+hidden state still writes the bank.
 
 This isolates the persistent memory route more cleanly. The boolean key-validity
 mask is supported by the reference, local O(TW), and FlexAttention full-sequence
@@ -156,16 +156,16 @@ same validity bit, so masking does not collapse sequence positions.
 
 ## 7. Strict read-compute-write timing
 
-Tape causality is always:
+Bank causality is always:
 
 ```text
-READ old tape -> COMPUTE current hidden -> optionally WRITE current hidden
+READ old bank -> COMPUTE current hidden -> optionally WRITE current hidden
 ```
 
 A current position never reads its own newly written record. In full-sequence
 multipass execution this is represented by `writes_before[b,t]`, the number of
 records committed strictly before physical position t. In cached execution the
-old bounded `TapeState` is passed to the reader and the append happens only
+old bounded `BankState` is passed to the reader and the append happens only
 after the token hidden is complete.
 
 For memory-token input
@@ -174,12 +174,12 @@ For memory-token input
 A <MEM> B
 ```
 
-`h_MEM` may write a tape record, and B is the first physical position that can
+`h_MEM` may write a bank record, and B is the first physical position that can
 read that record.
 
-## 8. TapeAddHybrid and `<MEM>`
+## 8. BankAddHybrid and `<MEM>`
 
-The hybrid has a fast MemoryAdd channel and the same tape channel. In
+The hybrid has a fast MemoryAdd channel and the same bank channel. In
 memory-token mode the fast channel advances only on ordinary tokens.
 
 For
@@ -195,17 +195,17 @@ current <MEM> Add source = previous-stream h_A
 current B     Add source = previous-stream h_A
 ```
 
-`h_MEM` writes `W_write h_MEM` to the tape but does not become the fast state.
+`h_MEM` writes `W_write h_MEM` to the bank but does not become the fast state.
 After B computes, B becomes the next fast state.
 
 During full-sequence multipass training this is implemented by gathering the
 nearest strictly preceding ordinary state from the previous pass. During cached
 recurrent execution a MEM step simply leaves `fast_hidden` unchanged while
-conditionally appending the slow tape.
+conditionally appending the slow bank.
 
 ## 9. Full-sequence versus recurrent execution
 
-During training and exact K-pass evaluation, pass k reads tape/fast feedback
+During training and exact K-pass evaluation, pass k reads bank/fast feedback
 constructed from completed pass k-1. The same-position source state is never
 visible. This preserves parallel sequence training.
 
@@ -259,24 +259,24 @@ In memory-token Phase A, the architecture-added MEM embedding participates in
 pass 1. Pass-1 autograd must therefore remain enabled even though pretrained
 backbone parameters stay frozen. With zero-initialized reader outputs, the MEM
 embedding and writer have zero gradient on the first update and receive
-nonzero tape-mediated gradients after the reader output path activates.
+nonzero bank-mediated gradients after the reader output path activates.
 
 ## 12. Required semantic tests
 
 Before interpreting quality results, the repository requires:
 
-- dense tape == periodic C1 with matching weights;
+- dense bank == periodic C1 with matching weights;
 - selected reader layers allocate/read/cache only at their declared indices;
-- sequence RoPE uses original query/write coordinates rather than tape indices;
-- zero-initialized Tape is exact vanilla at every tested pass depth;
-- strict-past tape visibility for periodic and MEM writes;
+- sequence RoPE uses original query/write coordinates rather than bank indices;
+- zero-initialized Bank is exact vanilla at every tested pass depth;
+- strict-past bank visibility for periodic and MEM writes;
 - A `<MEM>` B label alignment and exact zero direct loss gradient at MEM;
 - LM output dimension remains V while MEM input ID is V;
 - MEM embedding receives Phase-A gradient after the zero-output reader activates;
 - visible MEM can influence later ordinary states through self-attention;
 - write-only MEM can read preceding context but is absent as self-attention K/V;
 - cached write-only validity preserves physical cache positions;
-- TapeAddHybrid leaves fast state unchanged on MEM and advances it on ordinary tokens;
-- exact cached K-pass == full-prefix recomputation across the tape modes;
+- BankAddHybrid leaves fast state unchanged on MEM and advances it on ordinary tokens;
+- exact cached K-pass == full-prefix recomputation across the bank modes;
 - the first collapsed recurrent transition == exact K-pass;
 - interrupted/resumed MEM training is trajectory-equivalent to uninterrupted training.

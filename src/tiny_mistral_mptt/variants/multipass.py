@@ -14,9 +14,9 @@ from ..nmp import (
     LatentPredictionHead,
     normalize_nmp_target,
     prepare_recurrent_nmp_alignment,
-    prepare_tape_nmp_alignment,
+    prepare_bank_nmp_alignment,
     recurrent_nmp_pass_loss,
-    tape_nmp_pass_loss,
+    bank_nmp_pass_loss,
 )
 from ..training.loss import causal_lm_loss_from_labels, normalize_pass_weights
 from .base import ExperimentalVariant, TrainOutput
@@ -73,7 +73,7 @@ class MultiPassVariant(ExperimentalVariant):
 
     supports_cached_feedback = False
     supports_recurrent_nmp = False
-    supports_tape_nmp = False
+    supports_bank_nmp = False
 
     def __init__(self, backbone: MistralForCausalLM):
         super().__init__()
@@ -81,28 +81,28 @@ class MultiPassVariant(ExperimentalVariant):
         # Keeping disabled heads as None preserves historical state_dicts
         # exactly. configure_nmp creates only objectives with non-zero weight.
         self.recurrent_nmp_predictor: LatentPredictionHead | None = None
-        self.tape_nmp_predictor: LatentPredictionHead | None = None
+        self.bank_nmp_predictor: LatentPredictionHead | None = None
         self.recurrent_nmp_weight = 0.0
-        self.tape_nmp_weight = 0.0
+        self.bank_nmp_weight = 0.0
         self.recurrent_nmp_target_normalization = "rms"
 
     def configure_nmp(
         self,
         *,
         recurrent_weight: float,
-        tape_weight: float,
+        bank_weight: float,
         recurrent_target_normalization: str = "rms",
         projection_factor: float,
         initialization_seed: int,
     ) -> None:
         if (
             self.recurrent_nmp_predictor is not None
-            or self.tape_nmp_predictor is not None
+            or self.bank_nmp_predictor is not None
         ):
             raise RuntimeError("NMP predictors have already been configured")
         for name, value in (
             ("recurrent_weight", recurrent_weight),
-            ("tape_weight", tape_weight),
+            ("bank_weight", bank_weight),
         ):
             if (
                 not isinstance(value, (int, float))
@@ -117,8 +117,8 @@ class MultiPassVariant(ExperimentalVariant):
             )
         if recurrent_weight and not self.supports_recurrent_nmp:
             raise ValueError(f"{self.variant_name} does not expose a recurrent NMP target")
-        if tape_weight and not self.supports_tape_nmp:
-            raise ValueError(f"{self.variant_name} does not expose a tape NMP target")
+        if bank_weight and not self.supports_bank_nmp:
+            raise ValueError(f"{self.variant_name} does not expose a bank NMP target")
         hidden_size = int(self.config.hidden_size)
         kwargs = {
             "hidden_size": hidden_size,
@@ -129,27 +129,27 @@ class MultiPassVariant(ExperimentalVariant):
             self.recurrent_nmp_predictor = LatentPredictionHead(
                 **kwargs, initialization_seed=int(initialization_seed) + 100_003
             )
-        if tape_weight:
-            self.tape_nmp_predictor = LatentPredictionHead(
+        if bank_weight:
+            self.bank_nmp_predictor = LatentPredictionHead(
                 **kwargs, initialization_seed=int(initialization_seed) + 200_003
             )
         self.recurrent_nmp_weight = float(recurrent_weight)
-        self.tape_nmp_weight = float(tape_weight)
+        self.bank_nmp_weight = float(bank_weight)
         self.recurrent_nmp_target_normalization = str(recurrent_target_normalization)
 
     def added_parameters(self):
         if self.recurrent_nmp_predictor is not None:
             yield from self.recurrent_nmp_predictor.parameters()
-        if self.tape_nmp_predictor is not None:
-            yield from self.tape_nmp_predictor.parameters()
+        if self.bank_nmp_predictor is not None:
+            yield from self.bank_nmp_predictor.parameters()
 
     def initialization_only_state_prefixes(self) -> tuple[str, ...]:
         """State prefixes allowed to be absent from an ``init_from`` checkpoint."""
         prefixes: list[str] = []
         if self.recurrent_nmp_predictor is not None:
             prefixes.append("recurrent_nmp_predictor.")
-        if self.tape_nmp_predictor is not None:
-            prefixes.append("tape_nmp_predictor.")
+        if self.bank_nmp_predictor is not None:
+            prefixes.append("bank_nmp_predictor.")
         return tuple(prefixes)
 
     @staticmethod
@@ -159,20 +159,20 @@ class MultiPassVariant(ExperimentalVariant):
             return (
                 source.recurrent_hidden
                 if component == "recurrent"
-                else source.tape_hidden
+                else source.bank_hidden
             )
         if component == "recurrent":
             return source
         return run.hidden_states
 
-    def nmp_written_states(self, final_tape_source: torch.Tensor) -> torch.Tensor:
-        raise RuntimeError(f"{self.variant_name} does not implement tape NMP writes")
+    def nmp_written_states(self, final_bank_source: torch.Tensor) -> torch.Tensor:
+        raise RuntimeError(f"{self.variant_name} does not implement bank NMP writes")
 
     def nmp_write_mask(self, input_ids: torch.Tensor) -> torch.Tensor:
-        raise RuntimeError(f"{self.variant_name} does not implement a tape write policy")
+        raise RuntimeError(f"{self.variant_name} does not implement a bank write policy")
 
     def nmp_sequence_positions(self, input_ids: torch.Tensor) -> torch.Tensor:
-        raise RuntimeError(f"{self.variant_name} does not implement tape positions")
+        raise RuntimeError(f"{self.variant_name} does not implement bank positions")
 
     @property
     def config(self):
@@ -431,7 +431,7 @@ class MultiPassVariant(ExperimentalVariant):
         passes: int = 1,
         loss_weights: Sequence[float] | None = None,
         recurrent_nmp_loss_weights: Sequence[float] | None = None,
-        tape_nmp_loss_weights: Sequence[float] | None = None,
+        bank_nmp_loss_weights: Sequence[float] | None = None,
         nmp_weight_scale: float = 1.0,
     ) -> TrainOutput:
         if not 0.0 <= float(nmp_weight_scale) <= 1.0:
@@ -546,24 +546,24 @@ class MultiPassVariant(ExperimentalVariant):
                 }
             )
 
-        if self.tape_nmp_predictor is not None:
-            final_tape_source = self._source_component(runs[-1], "tape")
+        if self.bank_nmp_predictor is not None:
+            final_bank_source = self._source_component(runs[-1], "bank")
             # Stop-gradient covers both the final source and the writer target
             # branch. The same writer can still receive gradients through any
             # memories that causally contributed to run.hidden_states.
             with torch.no_grad():
-                written_targets = self.nmp_written_states(final_tape_source).detach()
+                written_targets = self.nmp_written_states(final_bank_source).detach()
             write_mask = self.nmp_write_mask(input_ids)
             sequence_positions = self.nmp_sequence_positions(input_ids)
             with torch.no_grad():
-                tape_alignment = prepare_tape_nmp_alignment(
+                bank_alignment = prepare_bank_nmp_alignment(
                     written_targets,
                     ordinary_mask=ordinary_mask,
                     write_mask=write_mask,
                     sequence_positions=sequence_positions,
                 )
-            tape_pass_weights = normalize_pass_weights(
-                tape_nmp_loss_weights,
+            bank_pass_weights = normalize_pass_weights(
+                bank_nmp_loss_weights,
                 passes,
                 device=loss.device,
                 dtype=loss.dtype,
@@ -571,14 +571,14 @@ class MultiPassVariant(ExperimentalVariant):
             nmp_losses = []
             nmp_diagnostics = []
             distance_values: dict[str, list[torch.Tensor]] = {
-                name: [] for name in tape_alignment.distance_masks
+                name: [] for name in bank_alignment.distance_masks
             }
             for index, run in enumerate(runs):
-                prediction = self.tape_nmp_predictor(run.hidden_states)
+                prediction = self.bank_nmp_predictor(run.hidden_states)
                 pass_diagnostics = {}
-                nmp_loss, _, _, distances = tape_nmp_pass_loss(
+                nmp_loss, _, _, distances = bank_nmp_pass_loss(
                     prediction,
-                    alignment=tape_alignment,
+                    alignment=bank_alignment,
                     diagnostics=pass_diagnostics,
                 )
                 nmp_losses.append(nmp_loss)
@@ -588,13 +588,13 @@ class MultiPassVariant(ExperimentalVariant):
             raw = sum(
                 weight * pass_loss
                 for weight, pass_loss in zip(
-                    tape_pass_weights, nmp_losses, strict=True
+                    bank_pass_weights, nmp_losses, strict=True
                 )
             )
-            weighted = raw * self.tape_nmp_weight * float(nmp_weight_scale)
+            weighted = raw * self.bank_nmp_weight * float(nmp_weight_scale)
             auxiliary_loss = auxiliary_loss + weighted
             pass_loss_values = torch.stack(nmp_losses).detach().cpu().tolist()
-            pass_weight_values = tape_pass_weights.detach().cpu().tolist()
+            pass_weight_values = bank_pass_weights.detach().cpu().tolist()
             error_rms_values = torch.stack(
                 [item["error_rms"] for item in nmp_diagnostics]
             ).detach().cpu().tolist()
@@ -610,25 +610,25 @@ class MultiPassVariant(ExperimentalVariant):
                     strict=True,
                 )
             ):
-                metrics[f"tape_nmp_pass_{index + 1}_loss"] = pass_loss
-                metrics[f"tape_nmp_pass_{index + 1}_weight"] = pass_weight
-                metrics[f"tape_nmp_pass_{index + 1}_error_rms"] = error_rms
-                metrics[f"tape_nmp_pass_{index + 1}_linear_fraction"] = linear_fraction
+                metrics[f"bank_nmp_pass_{index + 1}_loss"] = pass_loss
+                metrics[f"bank_nmp_pass_{index + 1}_weight"] = pass_weight
+                metrics[f"bank_nmp_pass_{index + 1}_error_rms"] = error_rms
+                metrics[f"bank_nmp_pass_{index + 1}_linear_fraction"] = linear_fraction
             metrics.update(
                 {
-                    "tape_nmp_loss": float(raw.detach().cpu()),
-                    "tape_nmp_weighted_loss": float(weighted.detach().cpu()),
-                    "tape_nmp_target_rms": float(
-                        tape_alignment.target_rms.detach().cpu()
+                    "bank_nmp_loss": float(raw.detach().cpu()),
+                    "bank_nmp_weighted_loss": float(weighted.detach().cpu()),
+                    "bank_nmp_target_rms": float(
+                        bank_alignment.target_rms.detach().cpu()
                     ),
-                    "tape_nmp_target_feature_std": float(
-                        tape_alignment.target_feature_std.detach().cpu()
+                    "bank_nmp_target_feature_std": float(
+                        bank_alignment.target_feature_std.detach().cpu()
                     ),
-                    "tape_nmp_valid_queries": float(
-                        tape_alignment.valid.sum().detach().cpu()
+                    "bank_nmp_valid_queries": float(
+                        bank_alignment.valid.sum().detach().cpu()
                     ),
-                    "tape_nmp_valid_events": float(
-                        tape_alignment.present_events.sum().detach().cpu()
+                    "bank_nmp_valid_events": float(
+                        bank_alignment.present_events.sum().detach().cpu()
                     ),
                 }
             )
@@ -639,14 +639,14 @@ class MultiPassVariant(ExperimentalVariant):
             distance_means = distance_matrix.detach().cpu().mean(dim=1).tolist()
             metrics.update(
                 {
-                    f"tape_nmp_distance_{name}_loss": value
+                    f"bank_nmp_distance_{name}_loss": value
                     for name, value in zip(distance_names, distance_means, strict=True)
                 }
             )
 
         if (
             self.recurrent_nmp_predictor is not None
-            or self.tape_nmp_predictor is not None
+            or self.bank_nmp_predictor is not None
         ):
             metrics["nmp_weight_scale"] = float(nmp_weight_scale)
             metrics["ntp_loss"] = float(loss.detach().cpu())

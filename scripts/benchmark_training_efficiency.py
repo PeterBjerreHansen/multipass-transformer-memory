@@ -205,28 +205,28 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
     recirculation_alpha = float(case.get("recirculation_alpha", 0.1))
     recirculation_mode = str(case.get("recirculation_mode", "fixed"))
 
-    is_tape = variant in {
-        "tape",
-        "tape_add_hybrid",
-        "tape_recirculation_hybrid",
+    is_bank = variant in {
+        "bank",
+        "bank_add_hybrid",
+        "bank_recirculation_hybrid",
     }
-    if is_tape:
+    if is_bank:
         if memory_write_mode not in {"dense", "periodic", "memory_token"}:
-            raise ValueError("tape efficiency cases require memory_write_mode: dense|periodic|memory_token")
+            raise ValueError("bank efficiency cases require memory_write_mode: dense|periodic|memory_token")
         if memory_write_mode == "dense":
             if memory_write_stride is not None:
-                raise ValueError("dense tape efficiency cases must not set memory_write_stride")
+                raise ValueError("dense bank efficiency cases must not set memory_write_stride")
             if memory_token_visibility is not None:
                 raise ValueError("memory_token_visibility applies only to memory_token mode")
         else:
             if memory_write_stride is None or memory_write_stride <= 0:
-                raise ValueError(f"{memory_write_mode} tape requires positive memory_write_stride")
+                raise ValueError(f"{memory_write_mode} bank requires positive memory_write_stride")
             if memory_write_mode == "periodic" and memory_token_visibility is not None:
                 raise ValueError("memory_token_visibility applies only to memory_token mode")
             if memory_write_mode == "memory_token" and memory_token_visibility not in {"visible", "write_only"}:
-                raise ValueError("memory_token tape requires memory_token_visibility: visible|write_only")
+                raise ValueError("memory_token bank requires memory_token_visibility: visible|write_only")
     elif any(value is not None for value in (memory_write_mode, memory_write_stride, memory_token_visibility)):
-        raise ValueError("memory_* efficiency fields apply only to tape variants")
+        raise ValueError("memory_* efficiency fields apply only to bank variants")
 
     if passes not in WEIGHTS_BY_K:
         raise ValueError("efficiency benchmark currently supports K=1,2,3")

@@ -245,7 +245,7 @@ def main() -> None:
         "effective_mode": effective_mode,
         "source": source,
         "precision": {"parameter_dtype": cfg.dtype, "autocast_dtype": cfg.autocast_dtype},
-        "tape": {
+        "bank": {
             "variant": cfg.variant,
             "memory_window": cfg.memory_window,
             "memory_write_mode": cfg.memory_write_mode,

@@ -134,10 +134,10 @@ def test_masked_memory_bank_returns_zero_for_empty_rows_without_nan():
     assert out[1].abs().sum() > 0
 
 
-def test_tape_attention_c1_matches_strict_local_attention():
+def test_bank_attention_c1_matches_strict_local_attention():
     from tiny_mistral_mptt.attention.memory_local import (
         strict_past_local_attention,
-        strict_past_tape_attention,
+        strict_past_bank_attention,
     )
 
     torch.manual_seed(3)
@@ -147,14 +147,14 @@ def test_tape_attention_c1_matches_strict_local_attention():
     writes_before = torch.arange(7)[None, :]
     mask = torch.ones(1, 7, dtype=torch.bool)
     dense = strict_past_local_attention(q, k, v, window=4)
-    tape = strict_past_tape_attention(
+    bank = strict_past_bank_attention(
         q, k, v, writes_before=writes_before, memory_mask=mask, window=4
     )
-    torch.testing.assert_close(tape, dense, atol=0, rtol=0)
+    torch.testing.assert_close(bank, dense, atol=0, rtol=0)
 
 
-def test_tape_attention_window_counts_records_not_source_distance():
-    from tiny_mistral_mptt.attention.memory_local import strict_past_tape_attention
+def test_bank_attention_window_counts_records_not_source_distance():
+    from tiny_mistral_mptt.attention.memory_local import strict_past_bank_attention
 
     # One query head/KV head and scalar head dimension makes the retention test
     # easy to audit. Query t=5 has four committed records, but W=2 means only
@@ -164,7 +164,7 @@ def test_tape_attention_window_counts_records_not_source_distance():
     v = torch.tensor([[[[100.0], [200.0], [3.0], [5.0]]]])
     writes_before = torch.tensor([[0, 1, 1, 2, 3, 4]])
     mask = torch.ones(1, 4, dtype=torch.bool)
-    out = strict_past_tape_attention(
+    out = strict_past_bank_attention(
         q, k, v, writes_before=writes_before, memory_mask=mask, window=2
     )
     # Equal keys => uniform attention over the two retained records: (3+5)/2.

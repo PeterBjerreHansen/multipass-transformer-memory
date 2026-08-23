@@ -101,7 +101,7 @@ def _wire_arm(config_path: Path, *, wire_device: str | None) -> None:
             recurrent_nmp_loss_weights=cfg.recurrent_nmp_loss_weights_for_passes(
                 passes
             ),
-            tape_nmp_loss_weights=cfg.tape_nmp_loss_weights_for_passes(passes),
+            bank_nmp_loss_weights=cfg.bank_nmp_loss_weights_for_passes(passes),
         )
         output.loss.backward()
         if not bool(torch.isfinite(output.loss.detach()).item()):

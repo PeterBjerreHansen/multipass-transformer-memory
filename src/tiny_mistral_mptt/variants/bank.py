@@ -17,9 +17,9 @@ from tiny_mistral.modeling import (
 from ..attention.memory_local import (
     memory_bank_attention,
     strict_past_local_attention,
-    strict_past_tape_attention,
+    strict_past_bank_attention,
 )
-from ..feedback import TapeState
+from ..feedback import BankState
 from .multipass import MultiPassVariant
 
 
@@ -28,8 +28,8 @@ MEMORY_TOKEN_VISIBILITIES = {"visible", "write_only"}
 MEMORY_POSITION_ENCODINGS = {"rope", "none"}
 
 
-class TapeReader(nn.Module):
-    """Mistral-shaped GQA cross-attention into a strict-past local memory tape."""
+class BankReader(nn.Module):
+    """Mistral-shaped GQA cross-attention into a strict-past local memory bank."""
 
     def __init__(
         self,
@@ -219,7 +219,7 @@ class TapeReader(nn.Module):
     ) -> torch.Tensor:
         """Attend to a bank whose entries are already strictly in the past."""
         if hidden_states.ndim != 3 or hidden_states.shape[1] != 1:
-            raise ValueError("cached Tape query must be [B,1,D]")
+            raise ValueError("cached Bank query must be [B,1,D]")
         if memory_states.shape[1] > self.window:
             raise ValueError("cached memory bank exceeds configured window")
         key, value = self.project_memory(
@@ -246,7 +246,7 @@ class TapeReader(nn.Module):
         if hidden_states.ndim != 3 or hidden_states.shape[-1] != self.hidden_size:
             raise ValueError("hidden_states must be [B,T,D] with the reader hidden size")
         if hidden_states.shape[1] != 1:
-            raise ValueError("cached Tape query must be [B,1,D]")
+            raise ValueError("cached Bank query must be [B,1,D]")
         if projected_keys.ndim != 4 or projected_keys.shape != projected_values.shape:
             raise ValueError("projected K/V must have matching [B,Hkv,M,Dh] shapes")
         if projected_keys.shape[0] != hidden_states.shape[0]:
@@ -272,7 +272,7 @@ class TapeReader(nn.Module):
         output = output.transpose(1, 2).contiguous().view(bsz, query_len, -1)
         return self.o_proj(output)
 
-    def forward_tape(
+    def forward_full_bank(
         self,
         hidden_states: torch.Tensor,
         memory_states: torch.Tensor,
@@ -293,7 +293,7 @@ class TapeReader(nn.Module):
             query_position_ids=query_position_ids,
             memory_position_ids=memory_position_ids,
         )
-        output = strict_past_tape_attention(
+        output = strict_past_bank_attention(
             query,
             key,
             value,
@@ -310,8 +310,8 @@ class TapeReader(nn.Module):
 
 
 @dataclass(frozen=True)
-class TapeBatch:
-    """Compact full-sequence tape with original sequence coordinates."""
+class BankBatch:
+    """Compact full-sequence bank with original sequence coordinates."""
 
     memories: torch.Tensor  # [B,M,D], padded chronologically per example
     valid: torch.Tensor  # bool [B,M]
@@ -321,29 +321,29 @@ class TapeBatch:
 
     def __post_init__(self) -> None:
         if self.memories.ndim != 3:
-            raise ValueError("TapeBatch.memories must be [B,M,D]")
+            raise ValueError("BankBatch.memories must be [B,M,D]")
         if self.valid.shape != self.memories.shape[:2] or self.valid.dtype != torch.bool:
-            raise ValueError("TapeBatch.valid must be bool [B,M]")
+            raise ValueError("BankBatch.valid must be bool [B,M]")
         if self.writes_before.ndim != 2:
-            raise ValueError("TapeBatch.writes_before must be [B,T]")
+            raise ValueError("BankBatch.writes_before must be [B,T]")
         if self.writes_before.shape[0] != self.memories.shape[0]:
-            raise ValueError("tape batch sizes differ")
+            raise ValueError("bank batch sizes differ")
         if self.memory_positions.shape != self.valid.shape or (
             self.memory_positions.dtype not in (torch.int32, torch.int64)
         ):
-            raise ValueError("TapeBatch.memory_positions must be integer [B,M]")
+            raise ValueError("BankBatch.memory_positions must be integer [B,M]")
         if self.query_positions.shape != self.writes_before.shape or (
             self.query_positions.dtype not in (torch.int32, torch.int64)
         ):
-            raise ValueError("TapeBatch.query_positions must be integer [B,T]")
+            raise ValueError("BankBatch.query_positions must be integer [B,T]")
         if bool((self.memory_positions[self.valid] < 0).any()):
-            raise ValueError("valid TapeBatch memory positions must be non-negative")
+            raise ValueError("valid BankBatch memory positions must be non-negative")
         if bool((self.query_positions < 0).any()):
-            raise ValueError("TapeBatch query positions must be non-negative")
+            raise ValueError("BankBatch query positions must be non-negative")
 
 
 @dataclass(frozen=True)
-class TapeCoreRun:
+class BankCoreRun:
     """Decoder result with an optional internal-layer recurrence source."""
 
     hidden_states: torch.Tensor
@@ -351,7 +351,7 @@ class TapeCoreRun:
     captured_hidden: torch.Tensor | None = None
 
 
-class TapeWriter(nn.Module):
+class BankWriter(nn.Module):
     """Minimal learned D->D storage transform, identity-initialized."""
 
     def __init__(self, hidden_size: int):
@@ -369,18 +369,18 @@ class TapeWriter(nn.Module):
         return self.proj(hidden_states)
 
 
-class TapeVariant(MultiPassVariant):
-    """Learned tape memory with dense, periodic, or explicit-memory-token writes.
+class BankVariant(MultiPassVariant):
+    """Learned bank memory with dense, periodic, or explicit-memory-token writes.
 
     Dense mode writes every top state; periodic mode writes selected ordinary-token top states. Memory-token mode
     treats ID ``backbone.config.vocab_size`` as an input-only ``<MEM>`` control
     position with its own learned embedding; that ID is never an LM output
-    class. A MEM state predicts nothing and writes exactly one tape record.
+    class. A MEM state predicts nothing and writes exactly one bank record.
     """
 
-    variant_name = "tape"
+    variant_name = "bank"
     supports_cached_feedback = True
-    supports_tape_nmp = True
+    supports_bank_nmp = True
 
     def __init__(
         self,
@@ -433,7 +433,7 @@ class TapeVariant(MultiPassVariant):
         self.base_vocab_size = base_vocab
 
         hidden_size = int(backbone.config.hidden_size)
-        self.writer = TapeWriter(hidden_size)
+        self.writer = BankWriter(hidden_size)
         if self.memory_write_mode == "memory_token":
             # Zero-init is deliberately conservative: the control slot begins
             # without adding lexical content but can contextualize through the
@@ -443,7 +443,7 @@ class TapeVariant(MultiPassVariant):
             self.register_parameter("memory_token_embedding", None)
         self.memory_readers = nn.ModuleDict(
             {
-                str(layer_index): TapeReader(
+                str(layer_index): BankReader(
                     backbone,
                     window=self.memory_window,
                     position_encoding=self.memory_position_encoding,
@@ -511,7 +511,7 @@ class TapeVariant(MultiPassVariant):
             if bool((input_ids >= upper).any()):
                 raise ValueError("input ID lies outside this variant's input vocabulary")
             if not self.uses_memory_tokens and bool((input_ids >= self.base_vocab_size).any()):
-                raise ValueError("periodic tape variants accept only ordinary vocabulary IDs")
+                raise ValueError("periodic bank variants accept only ordinary vocabulary IDs")
 
     def input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         self._validate_input_ids(input_ids)
@@ -584,8 +584,8 @@ class TapeVariant(MultiPassVariant):
         positions = ordinary.long().cumsum(dim=1) - 1
         return positions.clamp_min(0)
 
-    def nmp_written_states(self, final_tape_source: torch.Tensor) -> torch.Tensor:
-        return self.writer(final_tape_source)
+    def nmp_written_states(self, final_bank_source: torch.Tensor) -> torch.Tensor:
+        return self.writer(final_bank_source)
 
     def nmp_write_mask(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.write_mask(input_ids)
@@ -659,11 +659,11 @@ class TapeVariant(MultiPassVariant):
             return positions.new_zeros((0, width))
         return torch.stack(rows, dim=0)
 
-    def build_tape(
+    def build_bank(
         self,
         previous_hidden: torch.Tensor,
         input_ids: torch.Tensor,
-    ) -> TapeBatch:
+    ) -> BankBatch:
         if previous_hidden.ndim != 3 or input_ids.ndim != 2:
             raise ValueError("previous_hidden must be [B,T,D] and input_ids [B,T]")
         if previous_hidden.shape[:2] != input_ids.shape:
@@ -677,7 +677,7 @@ class TapeVariant(MultiPassVariant):
         memories = self.writer(selected)
         cumulative = mask.long().cumsum(dim=1)
         writes_before = cumulative - mask.long()
-        return TapeBatch(
+        return BankBatch(
             memories=memories,
             valid=valid,
             writes_before=writes_before,
@@ -694,10 +694,10 @@ class TapeVariant(MultiPassVariant):
             raise ValueError("layer caches disagree on next absolute position")
         return next(iter(positions))
 
-    def _run_tape_core(
+    def _run_bank_core(
         self,
         token_embeddings: torch.Tensor,
-        tape: TapeBatch | TapeState | None,
+        bank: BankBatch | BankState | None,
         *,
         past_key_values: tuple[LayerKVCache, ...] | None,
         use_cache: bool,
@@ -705,18 +705,18 @@ class TapeVariant(MultiPassVariant):
         query_position_ids: torch.Tensor | None = None,
         post_layer: Callable[[int, torch.Tensor], torch.Tensor] | None = None,
         capture_layer: int | None = None,
-    ) -> TapeCoreRun:
+    ) -> BankCoreRun:
         if token_embeddings.ndim != 3:
             raise ValueError("token_embeddings must be [B,T,D]")
-        if tape is not None and token_embeddings.shape[0] != tape.memories.shape[0]:
-            raise ValueError("token and tape batch sizes differ")
-        if tape is not None and token_embeddings.shape[-1] != tape.memories.shape[-1]:
-            raise ValueError("token and tape hidden dimensions differ")
-        cached_bank = isinstance(tape, TapeState)
+        if bank is not None and token_embeddings.shape[0] != bank.memories.shape[0]:
+            raise ValueError("token and bank batch sizes differ")
+        if bank is not None and token_embeddings.shape[-1] != bank.memories.shape[-1]:
+            raise ValueError("token and bank hidden dimensions differ")
+        cached_bank = isinstance(bank, BankState)
         if cached_bank and token_embeddings.shape[1] != 1:
-            raise ValueError("cached tape query must contain exactly one token")
-        if cached_bank and tape.capacity != self.memory_window:
-            raise ValueError("cached tape capacity differs from memory_window")
+            raise ValueError("cached bank query must contain exactly one token")
+        if cached_bank and bank.capacity != self.memory_window:
+            raise ValueError("cached bank capacity differs from memory_window")
         if past_key_values is not None and len(past_key_values) != len(self.backbone.model.layers):
             raise ValueError("past_key_values must contain one cache per layer")
 
@@ -725,13 +725,13 @@ class TapeVariant(MultiPassVariant):
         position_ids = torch.arange(
             start, start + seq_len, device=token_embeddings.device, dtype=torch.long
         )[None, :].expand(bsz, -1)
-        if isinstance(tape, TapeBatch):
-            memory_query_positions = tape.query_positions
-        elif isinstance(tape, TapeState):
+        if isinstance(bank, BankBatch):
+            memory_query_positions = bank.query_positions
+        elif isinstance(bank, BankState):
             if query_position_ids is None:
-                query_position_ids = tape.next_sequence_positions[:, None]
+                query_position_ids = bank.next_sequence_positions[:, None]
             if query_position_ids.shape != (bsz, seq_len):
-                raise ValueError("cached Tape query positions must be [B,1]")
+                raise ValueError("cached Bank query positions must be [B,1]")
             memory_query_positions = query_position_ids
         else:
             memory_query_positions = None
@@ -754,42 +754,42 @@ class TapeVariant(MultiPassVariant):
             hidden_states = residual + x
             if new_caches is not None:
                 if cache is None:
-                    raise RuntimeError("cached tape layer did not return KV state")
+                    raise RuntimeError("cached bank layer did not return KV state")
                 new_caches.append(cache)
 
             reader_key = str(layer_index)
-            if tape is not None and reader_key in self.memory_readers:
+            if bank is not None and reader_key in self.memory_readers:
                 memory_reader = self.memory_readers[reader_key]
                 if cached_bank:
-                    assert isinstance(tape, TapeState)
-                    if tape.projected_keys is None:
+                    assert isinstance(bank, BankState)
+                    if bank.projected_keys is None:
                         memory_delta = memory_reader.forward_bank(
                             hidden_states,
-                            tape.memories,
-                            memory_mask=tape.valid,
+                            bank.memories,
+                            memory_mask=bank.valid,
                             query_position_ids=memory_query_positions,
-                            memory_position_ids=tape.positions,
+                            memory_position_ids=bank.positions,
                         )
                     else:
-                        if tape.projected_values is None or len(tape.projected_keys) != len(self.memory_readers):
-                            raise ValueError("TapeState projected K/V does not match tape readers")
+                        if bank.projected_values is None or len(bank.projected_keys) != len(self.memory_readers):
+                            raise ValueError("BankState projected K/V does not match bank readers")
                         cache_index = self._reader_cache_index[layer_index]
                         memory_delta = memory_reader.forward_projected_bank(
                             hidden_states,
-                            tape.projected_keys[cache_index],
-                            tape.projected_values[cache_index],
-                            memory_mask=tape.valid,
+                            bank.projected_keys[cache_index],
+                            bank.projected_values[cache_index],
+                            memory_mask=bank.valid,
                             query_position_ids=memory_query_positions,
                         )
                 else:
-                    assert isinstance(tape, TapeBatch)
-                    memory_delta = memory_reader.forward_tape(
+                    assert isinstance(bank, BankBatch)
+                    memory_delta = memory_reader.forward_full_bank(
                         hidden_states,
-                        tape.memories,
-                        writes_before=tape.writes_before,
-                        memory_mask=tape.valid,
+                        bank.memories,
+                        writes_before=bank.writes_before,
+                        memory_mask=bank.valid,
                         query_position_ids=memory_query_positions,
-                        memory_position_ids=tape.memory_positions,
+                        memory_position_ids=bank.memory_positions,
                         dense=(
                             self.memory_write_mode == "dense"
                             or (
@@ -810,26 +810,26 @@ class TapeVariant(MultiPassVariant):
         hidden_states = self.backbone.model.norm(hidden_states)
         if capture_layer is not None and captured_hidden is None:
             raise RuntimeError("requested recurrence source layer was not reached")
-        return TapeCoreRun(
+        return BankCoreRun(
             hidden_states=hidden_states,
             past_key_values=(tuple(new_caches) if new_caches is not None else None),
             captured_hidden=captured_hidden,
         )
 
-    def _run_tape_feedback_core(
+    def _run_bank_feedback_core(
         self,
         token_embeddings: torch.Tensor,
-        tape: TapeBatch | TapeState,
+        bank: BankBatch | BankState,
         *,
         past_key_values: tuple[LayerKVCache, ...] | None,
         use_cache: bool,
         self_attention_mask: torch.Tensor | None = None,
         query_position_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, tuple[LayerKVCache, ...] | None]:
-        """Compatibility wrapper for a tape-only decoder pass."""
-        run = self._run_tape_core(
+        """Compatibility wrapper for a bank-only decoder pass."""
+        run = self._run_bank_core(
             token_embeddings,
-            tape,
+            bank,
             past_key_values=past_key_values,
             use_cache=use_cache,
             self_attention_mask=self_attention_mask,
@@ -843,10 +843,10 @@ class TapeVariant(MultiPassVariant):
         token_embeddings: torch.Tensor,
         previous_hidden: torch.Tensor,
     ) -> torch.Tensor:
-        tape = self.build_tape(previous_hidden, input_ids)
-        hidden, _ = self._run_tape_feedback_core(
+        bank = self.build_bank(previous_hidden, input_ids)
+        hidden, _ = self._run_bank_feedback_core(
             token_embeddings,
-            tape,
+            bank,
             past_key_values=None,
             use_cache=False,
             self_attention_mask=self.self_attention_key_mask(input_ids),
@@ -859,32 +859,32 @@ class TapeVariant(MultiPassVariant):
         token_embeddings: torch.Tensor,
         previous_hidden: torch.Tensor,
     ) -> tuple[torch.Tensor, tuple[LayerKVCache, ...]]:
-        tape = self.build_tape(previous_hidden, input_ids)
-        hidden, cache = self._run_tape_feedback_core(
+        bank = self.build_bank(previous_hidden, input_ids)
+        hidden, cache = self._run_bank_feedback_core(
             token_embeddings,
-            tape,
+            bank,
             past_key_values=None,
             use_cache=True,
             self_attention_mask=self.self_attention_key_mask(input_ids),
         )
         if cache is None:
-            raise RuntimeError("cached Tape prefill did not return KV state")
+            raise RuntimeError("cached Bank prefill did not return KV state")
         return hidden, cache
 
     def _run_feedback_token_cached(
         self,
         token_embedding: torch.Tensor,
-        feedback_memory: TapeState,
+        feedback_memory: BankState,
         past_key_values: tuple[LayerKVCache, ...],
         *,
         token: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, tuple[LayerKVCache, ...]]:
-        if not isinstance(feedback_memory, TapeState):
-            raise TypeError("Tape cached feedback requires TapeState")
+        if not isinstance(feedback_memory, BankState):
+            raise TypeError("Bank cached feedback requires BankState")
         if token is None:
-            raise ValueError("cached Tape requires the current token ID")
+            raise ValueError("cached Bank requires the current token ID")
         query_positions = self._cached_query_positions(feedback_memory, token)
-        hidden, cache = self._run_tape_feedback_core(
+        hidden, cache = self._run_bank_feedback_core(
             token_embedding,
             feedback_memory,
             past_key_values=past_key_values,
@@ -893,14 +893,14 @@ class TapeVariant(MultiPassVariant):
             query_position_ids=query_positions,
         )
         if cache is None:
-            raise RuntimeError("cached Tape token did not return KV state")
+            raise RuntimeError("cached Bank token did not return KV state")
         return hidden, cache
 
     def _cached_query_positions(
-        self, state: TapeState, token: torch.Tensor
+        self, state: BankState, token: torch.Tensor
     ) -> torch.Tensor:
         if token.shape != (state.batch_size, 1):
-            raise ValueError("cached Tape token must be [B,1]")
+            raise ValueError("cached Bank token must be [B,1]")
         query_positions = state.next_sequence_positions[:, None]
         if self.uses_memory_tokens:
             query_positions = torch.where(
@@ -910,24 +910,24 @@ class TapeVariant(MultiPassVariant):
             )
         return query_positions
 
-    def _state_from_tape_batch(self, tape: TapeBatch) -> TapeState:
-        bsz, _, dim = tape.memories.shape
-        result = tape.memories.new_zeros((bsz, self.memory_window, dim))
-        valid = torch.zeros((bsz, self.memory_window), dtype=torch.bool, device=tape.memories.device)
+    def _state_from_bank_batch(self, bank: BankBatch) -> BankState:
+        bsz, _, dim = bank.memories.shape
+        result = bank.memories.new_zeros((bsz, self.memory_window, dim))
+        valid = torch.zeros((bsz, self.memory_window), dtype=torch.bool, device=bank.memories.device)
         positions = torch.zeros(
-            (bsz, self.memory_window), dtype=torch.long, device=tape.memories.device
+            (bsz, self.memory_window), dtype=torch.long, device=bank.memories.device
         )
         for batch_index in range(bsz):
-            row = tape.memories[batch_index, tape.valid[batch_index], :][-self.memory_window :]
-            row_positions = tape.memory_positions[
-                batch_index, tape.valid[batch_index]
+            row = bank.memories[batch_index, bank.valid[batch_index], :][-self.memory_window :]
+            row_positions = bank.memory_positions[
+                batch_index, bank.valid[batch_index]
             ][-self.memory_window :]
             count = row.shape[0]
             if count:
                 result[batch_index, :count, :] = row
                 valid[batch_index, :count] = True
                 positions[batch_index, :count] = row_positions
-        next_positions = tape.query_positions[:, -1] + 1
+        next_positions = bank.query_positions[:, -1] + 1
         return self._project_state(result, valid, positions, next_positions)
 
     def _project_state(
@@ -936,7 +936,7 @@ class TapeVariant(MultiPassVariant):
         valid: torch.Tensor,
         positions: torch.Tensor,
         next_sequence_positions: torch.Tensor,
-    ) -> TapeState:
+    ) -> BankState:
         projected_keys: list[torch.Tensor] = []
         projected_values: list[torch.Tensor] = []
         for reader in self.memory_readers.values():
@@ -945,7 +945,7 @@ class TapeVariant(MultiPassVariant):
             )
             projected_keys.append(key.detach())
             projected_values.append(value.detach())
-        return TapeState(
+        return BankState(
             memories=memories.detach(),
             valid=valid.detach(),
             positions=positions.detach(),
@@ -959,14 +959,14 @@ class TapeVariant(MultiPassVariant):
         hidden_states: torch.Tensor,
         *,
         input_ids: torch.Tensor | None = None,
-    ) -> TapeState:
+    ) -> BankState:
         if hidden_states.ndim != 3 or hidden_states.shape[1] < 1:
             raise ValueError("hidden_states must be non-empty [B,T,D]")
         if input_ids is None:
             if self.memory_write_mode == "memory_token":
                 raise ValueError("memory-token mode requires input_ids to seed feedback memory")
             input_ids = torch.zeros(hidden_states.shape[:2], dtype=torch.long, device=hidden_states.device)
-        return self._state_from_tape_batch(self.build_tape(hidden_states, input_ids))
+        return self._state_from_bank_batch(self.build_bank(hidden_states, input_ids))
 
     def _write_trigger(
         self,
@@ -986,15 +986,15 @@ class TapeVariant(MultiPassVariant):
         assert self.memory_token_id is not None
         return token[:, 0].eq(self.memory_token_id)
 
-    def _append_tape(
+    def _append_bank(
         self,
-        state: TapeState,
+        state: BankState,
         new_hidden: torch.Tensor,
         *,
         trigger: torch.Tensor,
         write_positions: torch.Tensor,
         next_sequence_positions: torch.Tensor,
-    ) -> TapeState:
+    ) -> BankState:
         if new_hidden.ndim != 3 or new_hidden.shape[1] != 1:
             raise ValueError("new_hidden must be [B,1,D]")
         if trigger.shape != (new_hidden.shape[0],) or trigger.dtype != torch.bool:
@@ -1009,7 +1009,7 @@ class TapeVariant(MultiPassVariant):
         ):
             raise ValueError("next_sequence_positions must be integer [B]")
         if state.batch_size != new_hidden.shape[0] or state.hidden_size != new_hidden.shape[-1]:
-            raise ValueError("tape and new hidden shapes are incompatible")
+            raise ValueError("bank and new hidden shapes are incompatible")
         new_record = self.writer(new_hidden).detach()
         memories = state.memories.clone()
         valid = state.valid.clone()
@@ -1041,7 +1041,7 @@ class TapeVariant(MultiPassVariant):
 
         assert state.projected_values is not None
         if len(state.projected_keys) != len(self.memory_readers):
-            raise ValueError("TapeState projected K/V does not match tape readers")
+            raise ValueError("BankState projected K/V does not match bank readers")
         projected_keys: list[torch.Tensor] = []
         projected_values: list[torch.Tensor] = []
         for cache_index, reader in enumerate(self.memory_readers.values()):
@@ -1063,7 +1063,7 @@ class TapeVariant(MultiPassVariant):
             old_value = torch.where(trigger[:, None, None, None], candidate_value, old_value)
             projected_keys.append(old_key.detach())
             projected_values.append(old_value.detach())
-        return TapeState(
+        return BankState(
             memories=memories.detach(),
             valid=valid.detach(),
             positions=positions.detach(),
@@ -1074,17 +1074,17 @@ class TapeVariant(MultiPassVariant):
 
     def _append_feedback_memory(
         self,
-        feedback_memory: TapeState,
+        feedback_memory: BankState,
         new_hidden: torch.Tensor,
         *,
         token: torch.Tensor | None = None,
         position: int | None = None,
-    ) -> TapeState:
-        if not isinstance(feedback_memory, TapeState):
-            raise TypeError("Tape feedback requires TapeState")
+    ) -> BankState:
+        if not isinstance(feedback_memory, BankState):
+            raise TypeError("Bank feedback requires BankState")
         trigger = self._write_trigger(token=token, position=position)
         if token is None:
-            raise ValueError("Tape feedback update requires current token")
+            raise ValueError("Bank feedback update requires current token")
         current_positions = feedback_memory.next_sequence_positions
         next_positions = current_positions + 1
         if self.uses_memory_tokens:
@@ -1097,7 +1097,7 @@ class TapeVariant(MultiPassVariant):
             )
         else:
             write_positions = current_positions
-        return self._append_tape(
+        return self._append_bank(
             feedback_memory,
             new_hidden,
             trigger=trigger,

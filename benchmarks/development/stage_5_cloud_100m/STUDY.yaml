@@ -4,8 +4,8 @@ question: How do the six active feedback architectures compare after a 100M-toke
 arms:
   - {id: vanilla_100m, config: vanilla_100m.yaml}
   - {id: recirculation_adaptive_100m, config: recirculation_adaptive_100m.yaml}
-  - {id: tape_dense_100m, config: tape_dense_100m.yaml}
-  - {id: tape_periodic32_100m, config: tape_periodic32_100m.yaml}
-  - {id: tape_memory_token32_100m, config: tape_memory_token32_100m.yaml}
+  - {id: bank_dense_100m, config: bank_dense_100m.yaml}
+  - {id: bank_periodic32_100m, config: bank_periodic32_100m.yaml}
+  - {id: bank_memory_token32_100m, config: bank_memory_token32_100m.yaml}
   - {id: hybrid_recirculation_100m, config: hybrid_recirculation_100m.yaml}
 comparisons: []

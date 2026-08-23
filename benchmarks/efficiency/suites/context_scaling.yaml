@@ -78,35 +78,35 @@ cases:
   recirculation_source_layer: 6
   recirculation_destination_layer: 3
   recirculation_alpha: 0.1
-- variant: tape
+- variant: bank
   passes: 2
   sequence_length: 512
   memory_write_mode: dense
-- variant: tape
+- variant: bank
   passes: 2
   sequence_length: 2048
   memory_write_mode: dense
-- variant: tape
+- variant: bank
   passes: 2
   sequence_length: 4096
   memory_write_mode: dense
-- variant: tape
+- variant: bank
   passes: 2
   sequence_length: 8192
   memory_write_mode: dense
-- variant: tape
+- variant: bank
   passes: 3
   sequence_length: 512
   memory_write_mode: dense
-- variant: tape
+- variant: bank
   passes: 3
   sequence_length: 2048
   memory_write_mode: dense
-- variant: tape
+- variant: bank
   passes: 3
   sequence_length: 4096
   memory_write_mode: dense
-- variant: tape
+- variant: bank
   passes: 3
   sequence_length: 8192
   memory_write_mode: dense

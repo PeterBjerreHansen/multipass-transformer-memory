@@ -19,7 +19,7 @@ def test_efficiency_suites_are_explicit_and_non_scientific():
         "precision_mps.yaml",
         "precision_cuda.yaml",
         "cuda_batch_qualification.yaml",
-        "tape_write_scaling.yaml",
+        "bank_write_scaling.yaml",
         "stage_5_architectures.yaml",
     }
     assert {path.name for path in SUITES.glob("*.yaml")} == expected
@@ -37,8 +37,8 @@ def test_efficiency_suite_cases_have_required_dimensions():
             assert merged["variant"] in {
                 "vanilla",
                 "recirculation",
-                "tape",
-                "tape_recirculation_hybrid",
+                "bank",
+                "bank_recirculation_hybrid",
             }
             assert merged["passes"] in {1, 2, 3}
             assert merged["sequence_length"] > 0
@@ -61,7 +61,7 @@ def test_precision_suites_compare_fp32_and_bfloat16_on_each_backend():
         modes = {case.get("autocast_dtype") for case in raw["cases"]}
         assert modes == {None, "bfloat16"}
         pairs = {(case["variant"], case["passes"]) for case in raw["cases"]}
-    assert pairs == {("vanilla", 1), ("recirculation", 2), ("tape", 3)}
+    assert pairs == {("vanilla", 1), ("recirculation", 2), ("bank", 3)}
 
 
 def test_cuda_batch_qualification_is_k2_bf16_and_does_not_accumulate():
@@ -72,9 +72,9 @@ def test_cuda_batch_qualification_is_k2_bf16_and_does_not_accumulate():
     assert raw["defaults"]["grad_accum_steps"] == 1
     assert {(case["variant"], case["passes"]) for case in raw["cases"]} == {
         ("recirculation", 2),
-        ("tape", 2),
+        ("bank", 2),
     }
-    for variant in ("recirculation", "tape"):
+    for variant in ("recirculation", "bank"):
         assert {
             case["batch_size"] for case in raw["cases"] if case["variant"] == variant
         } == {1, 2, 4, 8}

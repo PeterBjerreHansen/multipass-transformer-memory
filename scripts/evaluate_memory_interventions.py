@@ -15,22 +15,22 @@ from tiny_mistral_mptt.model_factory import load_variant_from_config
 from tiny_mistral_mptt.feedback import HybridPassSource
 from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
 from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
-from tiny_mistral_mptt.variants.tape_add_hybrid import TapeAddHybridVariant
-from tiny_mistral_mptt.variants.tape_recirculation_hybrid import (
-    TapeRecirculationHybridVariant,
+from tiny_mistral_mptt.variants.bank_add_hybrid import BankAddHybridVariant
+from tiny_mistral_mptt.variants.bank_recirculation_hybrid import (
+    BankRecirculationHybridVariant,
 )
-from tiny_mistral_mptt.variants.tape_recurrent_hybrid import (
-    TapeRecurrentHybridVariant,
+from tiny_mistral_mptt.variants.bank_recurrent_hybrid import (
+    BankRecurrentHybridVariant,
 )
-from tiny_mistral_mptt.variants.tape import TapeVariant
+from tiny_mistral_mptt.variants.bank import BankVariant
 
 
 SUPPORTED = {
     "memory_add",
     "recirculation",
-    "tape",
-    "tape_add_hybrid",
-    "tape_recirculation_hybrid",
+    "bank",
+    "bank_add_hybrid",
+    "bank_recirculation_hybrid",
 }
 
 
@@ -57,38 +57,38 @@ def _condition_hiddens(
     real: torch.Tensor | HybridPassSource,
     mismatch: torch.Tensor | HybridPassSource,
 ) -> dict[str, torch.Tensor]:
-    if isinstance(model, TapeRecurrentHybridVariant):
+    if isinstance(model, BankRecurrentHybridVariant):
         if not isinstance(real, HybridPassSource) or not isinstance(
             mismatch, HybridPassSource
         ):
             raise TypeError("hybrid intervention requires HybridPassSource")
         zero_recurrent = torch.zeros_like(real.recurrent_hidden)
-        zero_tape = torch.zeros_like(real.tape_hidden)
+        zero_bank = torch.zeros_like(real.bank_hidden)
 
-        def run(recurrent_hidden, tape_hidden):
-            source = HybridPassSource(recurrent_hidden, tape_hidden)
+        def run(recurrent_hidden, bank_hidden):
+            source = HybridPassSource(recurrent_hidden, bank_hidden)
             return model._run_feedback_state(
                 ids, token_embeddings, source
             ).hidden_states
 
-        recurrent_label = "fast" if isinstance(model, TapeAddHybridVariant) else "recurrent"
+        recurrent_label = "fast" if isinstance(model, BankAddHybridVariant) else "recurrent"
         return {
-            "real_memory": run(real.recurrent_hidden, real.tape_hidden),
-            "zero_memory": run(zero_recurrent, zero_tape),
+            "real_memory": run(real.recurrent_hidden, real.bank_hidden),
+            "zero_memory": run(zero_recurrent, zero_bank),
             "mismatched_memory": run(
-                mismatch.recurrent_hidden, mismatch.tape_hidden
+                mismatch.recurrent_hidden, mismatch.bank_hidden
             ),
-            f"zero_{recurrent_label}_real_tape": run(
-                zero_recurrent, real.tape_hidden
+            f"zero_{recurrent_label}_real_bank": run(
+                zero_recurrent, real.bank_hidden
             ),
-            f"mismatched_{recurrent_label}_real_tape": run(
-                mismatch.recurrent_hidden, real.tape_hidden
+            f"mismatched_{recurrent_label}_real_bank": run(
+                mismatch.recurrent_hidden, real.bank_hidden
             ),
-            f"real_{recurrent_label}_zero_tape": run(
-                real.recurrent_hidden, zero_tape
+            f"real_{recurrent_label}_zero_bank": run(
+                real.recurrent_hidden, zero_bank
             ),
-            f"real_{recurrent_label}_mismatched_tape": run(
-                real.recurrent_hidden, mismatch.tape_hidden
+            f"real_{recurrent_label}_mismatched_bank": run(
+                real.recurrent_hidden, mismatch.bank_hidden
             ),
         }
     if not isinstance(real, torch.Tensor) or not isinstance(mismatch, torch.Tensor):
@@ -105,7 +105,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Run real/zero/mismatched recurrence interventions. The hybrid also "
-            "reports fast and tape channel interventions independently."
+            "reports fast and bank channel interventions independently."
         )
     )
     parser.add_argument("--config", required=True)
@@ -116,7 +116,7 @@ def main() -> None:
     cfg = load_experiment_config(args.config)
     if cfg.variant not in SUPPORTED:
         raise SystemExit(
-            "evaluate_memory_interventions requires a MemoryAdd/Recirculation/Tape variant"
+            "evaluate_memory_interventions requires a MemoryAdd/Recirculation/Bank variant"
         )
     device = resolve_device(cfg.device)
     model = load_variant_from_config(cfg, device=device)
@@ -125,9 +125,9 @@ def main() -> None:
             (
                 MemoryAddVariant,
                 RecirculationVariant,
-                TapeVariant,
-                TapeAddHybridVariant,
-                TapeRecirculationHybridVariant,
+                BankVariant,
+                BankAddHybridVariant,
+                BankRecirculationHybridVariant,
             ),
     ):
         raise SystemExit("loaded model does not support memory interventions")
@@ -186,9 +186,9 @@ def main() -> None:
                 values["count"] = int(values["count"]) + count
                 values["delta_sq"] = float(values["delta_sq"]) + delta_sq
 
-            if isinstance(model, (MemoryAddVariant, TapeAddHybridVariant)):
+            if isinstance(model, (MemoryAddVariant, BankAddHybridVariant)):
                 embedding_rms_sum += _rms(token_embeddings[:, 1:, :])
-                residual_rms_sum += _rms(model.memory_residual(first_hidden, ids)[:, 1:, :] if isinstance(model, TapeAddHybridVariant) else model.memory_residual(first_hidden)[:, 1:, :])
+                residual_rms_sum += _rms(model.memory_residual(first_hidden, ids)[:, 1:, :] if isinstance(model, BankAddHybridVariant) else model.memory_residual(first_hidden)[:, 1:, :])
 
     result: dict[str, object] = {
         "variant": cfg.variant,
@@ -207,7 +207,7 @@ def main() -> None:
             "hidden_delta_rms": math.sqrt(float(values["delta_sq"]) / blocks),
         }
 
-    if isinstance(model, (MemoryAddVariant, TapeAddHybridVariant)):
+    if isinstance(model, (MemoryAddVariant, BankAddHybridVariant)):
         embedding_rms = embedding_rms_sum / blocks
         residual_rms = residual_rms_sum / blocks
         result["memory_add_scales"] = {

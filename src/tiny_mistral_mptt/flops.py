@@ -3,7 +3,7 @@
 The estimator intentionally counts the large matrix products that dominate
 Transformer training.  One multiply-add is counted as two FLOPs.  It includes
 the backbone projections, attention score/value products, LM-head projections,
-Tape projections/attention, and recurrent controller/projection matrices.
+Bank projections/attention, and recurrent controller/projection matrices.
 
 LayerNorm/RMSNorm, activations, softmax, RoPE, masking/gathering, residual
 adds, embedding lookups, and optimizer bookkeeping are not assigned synthetic
@@ -79,18 +79,18 @@ def _causal_pairs(
     return pairs
 
 
-def _tape_pairs(
+def _bank_pairs(
     sequence_length: int,
     write_positions: tuple[int, ...],
     memory_window: int,
 ) -> int:
-    """Count strict-past Tape query/memory pairs for a full sequence."""
+    """Count strict-past Bank query/memory pairs for a full sequence."""
     sequence_length = _validate_positive("sequence_length", sequence_length)
     memory_window = _validate_positive("memory_window", memory_window)
     if any(position < 0 or position >= sequence_length for position in write_positions):
-        raise ValueError("Tape write positions must lie inside the sequence")
+        raise ValueError("Bank write positions must lie inside the sequence")
     if tuple(sorted(set(write_positions))) != write_positions:
-        raise ValueError("Tape write positions must be sorted and unique")
+        raise ValueError("Bank write positions must be sorted and unique")
     pairs = 0
     writes_seen = 0
     write_cursor = 0
@@ -102,7 +102,7 @@ def _tape_pairs(
     return pairs
 
 
-def tape_write_positions(
+def bank_write_positions(
     *,
     linguistic_length: int,
     memory_write_mode: str,
@@ -143,9 +143,9 @@ class FlopBreakdown:
     self_attention_products: int = 0
     mlp_projections: int = 0
     lm_head: int = 0
-    tape_writer: int = 0
-    tape_reader_projections: int = 0
-    tape_reader_products: int = 0
+    bank_writer: int = 0
+    bank_reader_projections: int = 0
+    bank_reader_products: int = 0
     recurrent_controller: int = 0
     recurrent_projection: int = 0
 
@@ -183,7 +183,7 @@ class PassFlopEstimate:
     linguistic_sequence_length: int
     physical_sequence_length: int
     memory_positions: int
-    tape_write_positions: int
+    bank_write_positions: int
     forward: FlopBreakdown
 
     @property
@@ -201,7 +201,7 @@ class PassFlopEstimate:
             "linguistic_sequence_length": self.linguistic_sequence_length,
             "physical_sequence_length": self.physical_sequence_length,
             "memory_positions": self.memory_positions,
-            "tape_write_positions": self.tape_write_positions,
+            "bank_write_positions": self.bank_write_positions,
             "forward": self.forward.to_dict(),
             "forward_flops": self.forward_flops,
             "training_flops": self.training_flops,
@@ -271,7 +271,7 @@ def _backbone_pass_breakdown(
     )
 
 
-def _tape_breakdown(
+def _bank_breakdown(
     config: MistralConfig,
     *,
     sequence_length: int,
@@ -282,7 +282,7 @@ def _tape_breakdown(
     hidden_size = int(config.hidden_size)
     kv_width = int(config.num_key_value_heads) * int(config.head_dim)
     memory_length = len(write_positions)
-    pairs = _tape_pairs(sequence_length, write_positions, memory_window)
+    pairs = _bank_pairs(sequence_length, write_positions, memory_window)
     reader_projections = (
         _linear_flops(sequence_length, hidden_size, hidden_size)
         + 2 * _linear_flops(memory_length, hidden_size, kv_width)
@@ -290,9 +290,9 @@ def _tape_breakdown(
     )
     reader_products = FLOPS_PER_MATMUL * hidden_size * pairs * 2
     return FlopBreakdown(
-        tape_writer=_linear_flops(memory_length, hidden_size, hidden_size),
-        tape_reader_projections=int(reader_layers) * reader_projections,
-        tape_reader_products=int(reader_layers) * reader_products,
+        bank_writer=_linear_flops(memory_length, hidden_size, hidden_size),
+        bank_reader_projections=int(reader_layers) * reader_projections,
+        bank_reader_products=int(reader_layers) * reader_products,
     )
 
 
@@ -308,7 +308,7 @@ def _recurrent_breakdown(
         return FlopBreakdown(
             recurrent_projection=_linear_flops(sequence_length, hidden_size, hidden_size)
         )
-    if variant in {"recirculation", "tape_recirculation_hybrid"}:
+    if variant in {"recirculation", "bank_recirculation_hybrid"}:
         if not adaptive_recirculation:
             return FlopBreakdown()
         return FlopBreakdown(
@@ -318,7 +318,7 @@ def _recurrent_breakdown(
                 + _linear_flops(sequence_length, hidden_size, 2 * hidden_size)
             )
         )
-    if variant == "tape_add_hybrid":
+    if variant == "bank_add_hybrid":
         return FlopBreakdown(
             recurrent_projection=_linear_flops(sequence_length, hidden_size, hidden_size)
         )
@@ -347,9 +347,9 @@ def estimate_pass(
         "vanilla",
         "memory_add",
         "recirculation",
-        "tape",
-        "tape_add_hybrid",
-        "tape_recirculation_hybrid",
+        "bank",
+        "bank_add_hybrid",
+        "bank_recirculation_hybrid",
     }:
         raise ValueError(f"unsupported variant {variant!r}")
     if variant == "vanilla" and passes != 1:
@@ -357,14 +357,14 @@ def estimate_pass(
     if variant != "vanilla" and passes < 2:
         raise ValueError("research variants require at least two passes")
 
-    uses_tape = variant in {"tape", "tape_add_hybrid", "tape_recirculation_hybrid"}
-    if uses_tape and memory_write_mode is None:
-        raise ValueError("Tape variants require memory_write_mode")
-    if not uses_tape and memory_write_mode is not None:
-        raise ValueError("memory_write_mode only applies to Tape variants")
+    uses_bank = variant in {"bank", "bank_add_hybrid", "bank_recirculation_hybrid"}
+    if uses_bank and memory_write_mode is None:
+        raise ValueError("Bank variants require memory_write_mode")
+    if not uses_bank and memory_write_mode is not None:
+        raise ValueError("memory_write_mode only applies to Bank variants")
 
-    if uses_tape:
-        uses_control_tokens, writes, layout = tape_write_positions(
+    if uses_bank:
+        uses_control_tokens, writes, layout = bank_write_positions(
             linguistic_length=linguistic_sequence_length,
             memory_write_mode=str(memory_write_mode),
             memory_write_stride=memory_write_stride,
@@ -388,9 +388,9 @@ def estimate_pass(
         key_valid = (True,) * physical_length
 
     base = _backbone_pass_breakdown(config, key_valid=key_valid)
-    if uses_tape:
+    if uses_bank:
         assert memory_write_mode is not None
-        tape = _tape_breakdown(
+        bank = _bank_breakdown(
             config,
             sequence_length=physical_length,
             write_positions=writes,
@@ -402,7 +402,7 @@ def estimate_pass(
             ),
         )
     else:
-        tape = FlopBreakdown()
+        bank = FlopBreakdown()
 
     recurrent = _recurrent_breakdown(
         config,
@@ -410,7 +410,7 @@ def estimate_pass(
         variant=variant,
         adaptive_recirculation=recirculation_mode == "adaptive",
     )
-    per_pass_extra = tape + recurrent
+    per_pass_extra = bank + recurrent
     total = FlopBreakdown()
     for pass_index in range(passes):
         total = total + base
@@ -422,7 +422,7 @@ def estimate_pass(
         linguistic_sequence_length=linguistic_sequence_length,
         physical_sequence_length=physical_length,
         memory_positions=physical_length - linguistic_sequence_length,
-        tape_write_positions=len(writes),
+        bank_write_positions=len(writes),
         forward=total,
     )
 

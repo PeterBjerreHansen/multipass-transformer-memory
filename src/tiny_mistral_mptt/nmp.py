@@ -89,7 +89,7 @@ class LatentPredictionHead(nn.Module):
 def next_strict_true_indices(mask: torch.Tensor) -> torch.Tensor:
     """Index of the first true position strictly to the right, or ``T``.
 
-    This device-side suffix scan is shared by recurrent and tape NMP.  The
+    This device-side suffix scan is shared by recurrent and bank NMP.  The
     one-position shift is essential: a write at query position ``t`` can never
     become that query's target.
     """
@@ -183,8 +183,8 @@ class RecurrentNMPAlignment:
 
 
 @dataclass(frozen=True)
-class TapeNMPAlignment:
-    """Shared Tape NMP event alignment for every computed pass."""
+class BankNMPAlignment:
+    """Shared Bank NMP event alignment for every computed pass."""
 
     targets: torch.Tensor
     valid: torch.Tensor
@@ -215,26 +215,26 @@ def prepare_recurrent_nmp_alignment(
     return RecurrentNMPAlignment(targets, valid, target_rms, target_feature_std)
 
 
-def prepare_tape_nmp_alignment(
+def prepare_bank_nmp_alignment(
     final_written_states: torch.Tensor,
     *,
     ordinary_mask: torch.Tensor,
     write_mask: torch.Tensor,
     sequence_positions: torch.Tensor,
-) -> TapeNMPAlignment:
+) -> BankNMPAlignment:
     """Build future-write events, targets, and distances once per batch."""
 
     if final_written_states.ndim != 3:
-        raise ValueError("tape NMP targets must be [B,T,D]")
+        raise ValueError("bank NMP targets must be [B,T,D]")
     if (
         ordinary_mask.shape != final_written_states.shape[:2]
         or write_mask.shape != ordinary_mask.shape
         or ordinary_mask.dtype != torch.bool
         or write_mask.dtype != torch.bool
     ):
-        raise ValueError("tape NMP masks must be bool [B,T] with matching shapes")
+        raise ValueError("bank NMP masks must be bool [B,T] with matching shapes")
     if sequence_positions.shape != ordinary_mask.shape:
-        raise ValueError("tape NMP sequence positions must match [B,T]")
+        raise ValueError("bank NMP sequence positions must match [B,T]")
 
     batch, length, _ = final_written_states.shape
     next_write = next_strict_true_indices(write_mask)
@@ -250,7 +250,7 @@ def prepare_tape_nmp_alignment(
     target_positions = sequence_positions.gather(1, safe_write)
     distances = target_positions - sequence_positions
     if bool((distances[valid] < 0).any()):
-        raise RuntimeError("tape NMP produced a negative linguistic distance")
+        raise RuntimeError("bank NMP produced a negative linguistic distance")
     distance_masks = {
         "0": valid & distances.eq(0),
         "1": valid & distances.eq(1),
@@ -261,7 +261,7 @@ def prepare_tape_nmp_alignment(
         "33_plus": valid & distances.ge(33),
     }
     target_rms, target_feature_std = target_diagnostics(targets, valid)
-    return TapeNMPAlignment(
+    return BankNMPAlignment(
         targets,
         valid,
         safe_write,
@@ -311,10 +311,10 @@ def recurrent_nmp_pass_loss(
     return loss, alignment.target_rms, alignment.target_feature_std
 
 
-def tape_nmp_pass_loss(
+def bank_nmp_pass_loss(
     predictions: torch.Tensor,
     *,
-    alignment: TapeNMPAlignment | None = None,
+    alignment: BankNMPAlignment | None = None,
     final_written_states: torch.Tensor | None = None,
     ordinary_mask: torch.Tensor | None = None,
     write_mask: torch.Tensor | None = None,
@@ -330,15 +330,15 @@ def tape_nmp_pass_loss(
             or write_mask is None
             or sequence_positions is None
         ):
-            raise ValueError("tape NMP requires alignment or all raw alignment inputs")
-        alignment = prepare_tape_nmp_alignment(
+            raise ValueError("bank NMP requires alignment or all raw alignment inputs")
+        alignment = prepare_bank_nmp_alignment(
             final_written_states,
             ordinary_mask=ordinary_mask,
             write_mask=write_mask,
             sequence_positions=sequence_positions,
         )
     if predictions.shape != alignment.targets.shape:
-        raise ValueError("tape NMP predictions and targets must have equal [B,T,D] shape")
+        raise ValueError("bank NMP predictions and targets must have equal [B,T,D] shape")
 
     per_query = F.smooth_l1_loss(
         predictions.float(), alignment.targets.float(), reduction="none"

@@ -1,10 +1,10 @@
 from tiny_mistral.config import tiny_mistral_248m_config
 from tiny_mistral_mptt.flops import (
-    _tape_pairs,
+    _bank_pairs,
     estimate_pass,
     estimate_schedule,
     memory_token_layout,
-    tape_write_positions,
+    bank_write_positions,
 )
 
 
@@ -12,7 +12,7 @@ def test_memory_token_layout_matches_packed_dataset_contract():
     layout = memory_token_layout(2048, 32)
     assert len(layout) == 2111
     assert sum(layout) == 63
-    uses_controls, writes, key_layout = tape_write_positions(
+    uses_controls, writes, key_layout = bank_write_positions(
         linguistic_length=2048,
         memory_write_mode="memory_token",
         memory_write_stride=32,
@@ -22,10 +22,10 @@ def test_memory_token_layout_matches_packed_dataset_contract():
     assert key_layout == layout
 
 
-def test_tape_pairs_are_strictly_past_and_windowed():
+def test_bank_pairs_are_strictly_past_and_windowed():
     # Query positions 0..3 see 0, 0, 1, and 1 strictly prior writes. The write
     # at position 3 is not visible to the query at position 3.
-    assert _tape_pairs(4, (1, 3), 2) == 2
+    assert _bank_pairs(4, (1, 3), 2) == 2
 
 
 def test_stage5_flop_estimates_include_architecture_specific_work():
@@ -38,7 +38,7 @@ def test_stage5_flop_estimates_include_architecture_specific_work():
     )
     dense = estimate_schedule(
         config,
-        variant="tape",
+        variant="bank",
         pass_probabilities={2: 0.9, 3: 0.1},
         linguistic_sequence_length=2048,
         memory_window=32,
@@ -47,7 +47,7 @@ def test_stage5_flop_estimates_include_architecture_specific_work():
     )
     periodic = estimate_schedule(
         config,
-        variant="tape",
+        variant="bank",
         pass_probabilities={2: 0.9, 3: 0.1},
         linguistic_sequence_length=2048,
         memory_window=32,
@@ -57,7 +57,7 @@ def test_stage5_flop_estimates_include_architecture_specific_work():
     )
     memory_token = estimate_schedule(
         config,
-        variant="tape",
+        variant="bank",
         pass_probabilities={2: 0.9, 3: 0.1},
         linguistic_sequence_length=2048,
         memory_window=32,

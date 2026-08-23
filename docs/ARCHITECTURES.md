@@ -2,8 +2,8 @@
 
 Experiment-specific learning rates, token budgets, pass depth, initialization,
 and checkpoint ancestry belong under `benchmarks/`. This file defines only the
-reusable architecture surface. The full tape/control-token contract is in
-`TAPE_MEMORY.md`.
+reusable architecture surface. The full bank/control-token contract is in
+`BANK_MEMORY.md`.
 
 The optional training-only latent objective is specified in
 `NEXT_MEMORY_PREDICTION.md`.
@@ -15,17 +15,17 @@ One ordinary TinyMistral causal pass with no architecture-added parameters.
 ## FBT
 
 An independent multipass comparison based on asymmetric latent feedback. It is
-not part of the tape family. Later-pass fused inputs are RMS-normalized before
+not part of the bank family. Later-pass fused inputs are RMS-normalized before
 entering the backbone, while position zero retains its ordinary token
 embedding. FBT implements the same exact cached K-stream and collapsed
 recurrent inference interfaces as the other one-state feedback variants.
 
 ## Retired one-state controls
 
-MemoryAdd and TapeAddHybrid are retained only as historical implementation
+MemoryAdd and BankAddHybrid are retained only as historical implementation
 controls. They are not part of the active experiment pipeline or current
 results; new comparisons use adaptive Recirculation and the
-Recirculation–Tape hybrid instead.
+Recirculation–Bank hybrid instead.
 
 ### MemoryAdd
 
@@ -80,18 +80,18 @@ recirculation_source_layer: 6
 recirculation_destination_layer: 3
 ```
 
-## Tape
+## Bank
 
-`TapeVariant` has one shared identity-initialized bias-free writer
+`BankVariant` has one shared identity-initialized bias-free writer
 
 ```text
 m = W_write h
 ```
 
-and one independent GQA tape reader at each configured `memory_layers` index.
+and one independent GQA bank reader at each configured `memory_layers` index.
 `memory_layers: all` expands to every decoder layer; `[3, 7]` is the default in
 the active experimental pipeline. Every selected reader consumes the same
-previous-pass top-layer tape. Within a selected decoder layer the tape residual
+previous-pass top-layer bank. Within a selected decoder layer the bank residual
 is applied after the ordinary self-attention residual and before the MLP.
 
 Reader output projections are zero-initialized, so every pass is exact vanilla
@@ -100,7 +100,7 @@ gradients after an output projection has moved away from zero.
 
 Cross-attention uses sequence-anchored RoPE by default. Query rotations use the
 current linguistic sequence position and key rotations use the original write
-position; compact tape indices are never used as positions. In memory-token
+position; compact bank indices are never used as positions. In memory-token
 mode a control slot inherits the preceding linguistic boundary so inserting
 control computation does not inflate memory age. `memory_position_encoding:
 none` is retained only as an explicit ablation.
@@ -111,22 +111,22 @@ The architecture has three write policies:
 - `periodic`: write positions satisfying `(t + 1) % C == 0`;
 - `memory_token`: write only explicit input-only `<MEM>` positions.
 
-`memory_window=W` counts committed tape records, not source-token distance.
-Every tape read is strict-past: a record written at physical position `t` is
+`memory_window=W` counts committed bank records, not source-token distance.
+Every bank read is strict-past: a record written at physical position `t` is
 first available to position `t+1`.
 
 Dense and periodic C=1 are the same implementation and are required to be
 numerically identical with matching weights.
 
 For full-sequence MPS training, dense writes use the direct strict-past local
-window path because the tape is already one record per token. This avoids the
-compact-bank gather used by sparse periodic writes. It makes dense Tape faster
-than periodic-32 Tape on the development Mac, although the per-layer readers
+window path because the bank is already one record per token. This avoids the
+compact-bank gather used by sparse periodic writes. It makes dense Bank faster
+than periodic-32 Bank on the development Mac, although the per-layer readers
 still make it more expensive than the retired one-state control.
 
-### TapeAddHybrid (retired)
+### BankAddHybrid (retired)
 
-`TapeAddHybridVariant` is the same tape plus the MemoryAdd path. There is no
+`BankAddHybridVariant` is the same bank plus the MemoryAdd path. There is no
 gate, controller, or fusion MLP between the channels.
 
 For ordinary-token sequences its fast path is ordinary MemoryAdd. With explicit
@@ -137,8 +137,8 @@ A <MEM> B
 ```
 
 previous-stream `h_A` supplies the Add residual to both `<MEM>` and B;
-`h_MEM` writes the slow tape; B then becomes the next fast state. This preserves
-a clean distinction between ordinary-token fast recurrence and explicit tape
+`h_MEM` writes the slow bank; B then becomes the next fast state. This preserves
+a clean distinction between ordinary-token fast recurrence and explicit bank
 writes.
 
 ## Shared multipass causal invariant

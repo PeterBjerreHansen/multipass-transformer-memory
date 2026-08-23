@@ -8,21 +8,21 @@ import torch.nn as nn
 
 from tiny_mistral.modeling import LayerKVCache, MistralForCausalLM
 
-from ..feedback import HybridFeedbackState, HybridPassSource, TapeState
+from ..feedback import HybridFeedbackState, HybridPassSource, BankState
 from .multipass import HiddenRun
-from .tape import TapeBatch, TapeCoreRun, TapeVariant
+from .bank import BankBatch, BankCoreRun, BankVariant
 
 
-class TapeRecurrentHybridVariant(TapeVariant, ABC):
-    """Composable slow-tape plus fast-recurrence MPT base class.
+class BankRecurrentHybridVariant(BankVariant, ABC):
+    """Composable slow-bank plus fast-recurrence MPT base class.
 
     A recurrent mechanism supplies three small hooks: how it changes the input,
     whether it changes an internal decoder layer, and which layer output becomes
-    the next recurrent source. The base owns tape reads/writes, causal source
+    the next recurrent source. The base owns bank reads/writes, causal source
     alignment, multipass plumbing, and exact/recurrent cached inference.
 
     This makes the experimental axis explicit: MemoryAdd and recirculation use
-    the same tape implementation and differ only in their fast routing rule.
+    the same bank implementation and differ only in their fast routing rule.
     """
 
     supports_recurrent_nmp = True
@@ -152,7 +152,7 @@ class TapeRecurrentHybridVariant(TapeVariant, ABC):
         token_embeddings: torch.Tensor,
         *,
         recurrent_source: torch.Tensor | None,
-        tape: TapeBatch | TapeState | None,
+        bank: BankBatch | BankState | None,
         past_key_values: tuple[LayerKVCache, ...] | None,
         use_cache: bool,
         full_sequence_feedback: bool,
@@ -184,9 +184,9 @@ class TapeRecurrentHybridVariant(TapeVariant, ABC):
                 valid_feedback,
             )
 
-        core = self._run_tape_core(
+        core = self._run_bank_core(
             feedback_inputs,
-            tape,
+            bank,
             past_key_values=past_key_values,
             use_cache=use_cache,
             self_attention_mask=self.self_attention_key_mask(input_ids),
@@ -201,7 +201,7 @@ class TapeRecurrentHybridVariant(TapeVariant, ABC):
             past_key_values=core.past_key_values,
         )
 
-    def _recurrent_source_from_core(self, core: TapeCoreRun) -> torch.Tensor:
+    def _recurrent_source_from_core(self, core: BankCoreRun) -> torch.Tensor:
         if self.recurrent_capture_layer is None:
             return core.hidden_states
         if core.captured_hidden is None:
@@ -213,7 +213,7 @@ class TapeRecurrentHybridVariant(TapeVariant, ABC):
             input_ids,
             self.input_embeddings(input_ids),
             recurrent_source=None,
-            tape=None,
+            bank=None,
             past_key_values=None,
             use_cache=False,
             full_sequence_feedback=False,
@@ -230,7 +230,7 @@ class TapeRecurrentHybridVariant(TapeVariant, ABC):
             input_ids,
             token_embeddings,
             recurrent_source=source.recurrent_hidden,
-            tape=self.build_tape(source.tape_hidden, input_ids),
+            bank=self.build_bank(source.bank_hidden, input_ids),
             past_key_values=None,
             use_cache=False,
             full_sequence_feedback=True,
@@ -241,7 +241,7 @@ class TapeRecurrentHybridVariant(TapeVariant, ABC):
             input_ids,
             self.input_embeddings(input_ids),
             recurrent_source=None,
-            tape=None,
+            bank=None,
             past_key_values=None,
             use_cache=True,
             full_sequence_feedback=False,
@@ -258,7 +258,7 @@ class TapeRecurrentHybridVariant(TapeVariant, ABC):
             input_ids,
             token_embeddings,
             recurrent_source=source.recurrent_hidden,
-            tape=self.build_tape(source.tape_hidden, input_ids),
+            bank=self.build_bank(source.bank_hidden, input_ids),
             past_key_values=None,
             use_cache=True,
             full_sequence_feedback=True,
@@ -273,7 +273,7 @@ class TapeRecurrentHybridVariant(TapeVariant, ABC):
             input_ids,
             self.input_embeddings(input_ids),
             recurrent_source=None,
-            tape=None,
+            bank=None,
             past_key_values=past_key_values,
             use_cache=True,
             full_sequence_feedback=False,
@@ -295,11 +295,11 @@ class TapeRecurrentHybridVariant(TapeVariant, ABC):
             token,
             token_embedding,
             recurrent_source=feedback_memory.recurrent_hidden,
-            tape=feedback_memory.tape,
+            bank=feedback_memory.bank,
             past_key_values=past_key_values,
             use_cache=True,
             full_sequence_feedback=False,
-            query_position_ids=self._cached_query_positions(feedback_memory.tape, token),
+            query_position_ids=self._cached_query_positions(feedback_memory.bank, token),
         )
 
     # Hidden-only compatibility hooks.
@@ -365,14 +365,14 @@ class TapeRecurrentHybridVariant(TapeVariant, ABC):
         input_ids: torch.Tensor | None = None,
     ) -> HybridFeedbackState:
         source = self._coerce_pass_source(feedback_source)
-        tape = super()._feedback_memory_from_hidden(
-            source.tape_hidden, input_ids=input_ids
+        bank = super()._feedback_memory_from_hidden(
+            source.bank_hidden, input_ids=input_ids
         )
         return HybridFeedbackState(
             fast_hidden=self._last_ordinary_hidden(
                 source.recurrent_hidden, input_ids
             ),
-            tape=tape,
+            bank=bank,
         )
 
     def _append_feedback_memory(
@@ -386,9 +386,9 @@ class TapeRecurrentHybridVariant(TapeVariant, ABC):
         if not isinstance(feedback_memory, HybridFeedbackState):
             raise TypeError("hybrid feedback requires HybridFeedbackState")
         source = self._coerce_pass_source(new_feedback_source)
-        tape = super()._append_feedback_memory(
-            feedback_memory.tape,
-            source.tape_hidden,
+        bank = super()._append_feedback_memory(
+            feedback_memory.bank,
+            source.bank_hidden,
             token=token,
             position=position,
         )
@@ -403,4 +403,4 @@ class TapeRecurrentHybridVariant(TapeVariant, ABC):
             )
         else:
             recurrent = source.recurrent_hidden.detach()
-        return HybridFeedbackState(fast_hidden=recurrent, tape=tape)
+        return HybridFeedbackState(fast_hidden=recurrent, bank=bank)

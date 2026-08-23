@@ -5,7 +5,7 @@
   efficiency-cuda-precision efficiency-cuda-context efficiency-cuda-batch \
   efficiency-cuda-stage5 \
   estimate-flops-stage5 \
-  efficiency-cuda-batch-qualification efficiency-tape-write \
+  efficiency-cuda-batch-qualification efficiency-bank-write \
   select-cuda-batch cloud-preflight
 
 test:
@@ -113,12 +113,12 @@ estimate-flops-stage5:
 		--output benchmarks/efficiency/results/generated/stage_5_training_flops.json
 
 
-# Engineering-only tape write-cadence scaling. This does not select C.
-efficiency-tape-write:
+# Engineering-only bank write-cadence scaling. This does not select C.
+efficiency-bank-write:
 	uv run python scripts/benchmark_training_efficiency.py \
-		--suite benchmarks/efficiency/suites/tape_write_scaling.yaml \
+		--suite benchmarks/efficiency/suites/bank_write_scaling.yaml \
 		--device cuda --autocast-dtype bfloat16 \
-		--output benchmarks/efficiency/results/generated/tape_write_scaling.json
+		--output benchmarks/efficiency/results/generated/bank_write_scaling.json
 
 # Core-run batching qualification. This keeps grad accumulation at 1 so the
 # hardware microbatch axis is measured without silently changing optimizer batch.

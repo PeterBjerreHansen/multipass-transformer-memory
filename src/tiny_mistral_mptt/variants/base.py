@@ -28,7 +28,7 @@ class ExperimentalVariant(nn.Module):
         passes: int = 1,
         loss_weights: Sequence[float] | None = None,
         recurrent_nmp_loss_weights: Sequence[float] | None = None,
-        tape_nmp_loss_weights: Sequence[float] | None = None,
+        bank_nmp_loss_weights: Sequence[float] | None = None,
         nmp_weight_scale: float = 1.0,
     ) -> TrainOutput:
         raise NotImplementedError

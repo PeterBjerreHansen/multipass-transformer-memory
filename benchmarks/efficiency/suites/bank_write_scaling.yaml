@@ -1,4 +1,4 @@
-name: tape_write_scaling_2048
+name: bank_write_scaling_2048
 defaults:
   device: auto
   model_dir: checkpoints/TinyMistral-248M-v3
@@ -13,26 +13,26 @@ defaults:
   passes: 2
   memory_window: 32
 cases:
-- variant: tape
+- variant: bank
   memory_window: 32
   memory_write_mode: dense
-- variant: tape
+- variant: bank
   memory_window: 32
   memory_write_mode: periodic
   memory_write_stride: 1
-- variant: tape
+- variant: bank
   memory_window: 32
   memory_write_mode: periodic
   memory_write_stride: 4
-- variant: tape
+- variant: bank
   memory_window: 32
   memory_write_mode: periodic
   memory_write_stride: 8
-- variant: tape
+- variant: bank
   memory_window: 32
   memory_write_mode: periodic
   memory_write_stride: 16
-- variant: tape
+- variant: bank
   memory_window: 32
   memory_write_mode: periodic
   memory_write_stride: 32

@@ -8,13 +8,13 @@ import torch.nn as nn
 from tiny_mistral.modeling import MistralForCausalLM, MistralRMSNorm
 
 from ..feedback import HybridPassSource
-from .tape_recurrent_hybrid import TapeRecurrentHybridVariant
+from .bank_recurrent_hybrid import BankRecurrentHybridVariant
 
 
-class TapeAddHybridVariant(TapeRecurrentHybridVariant):
-    """Tape recurrence plus a one-step MemoryAdd fast channel."""
+class BankAddHybridVariant(BankRecurrentHybridVariant):
+    """Bank recurrence plus a one-step MemoryAdd fast channel."""
 
-    variant_name = "tape_add_hybrid"
+    variant_name = "bank_add_hybrid"
 
     def __init__(
         self,
@@ -39,7 +39,7 @@ class TapeAddHybridVariant(TapeRecurrentHybridVariant):
             initialization_seed=initialization_seed,
         )
         hidden_size = int(backbone.config.hidden_size)
-        # Preserve the historical top-level names so existing TapeAdd hybrid
+        # Preserve the historical top-level names so existing BankAdd hybrid
         # checkpoints remain loadable after introducing the generic base.
         self.memory_norm = MistralRMSNorm(
             hidden_size, eps=float(backbone.config.rms_norm_eps)
@@ -87,13 +87,13 @@ class TapeAddHybridVariant(TapeRecurrentHybridVariant):
         token_embeddings: torch.Tensor,
         *,
         fast_hidden: torch.Tensor,
-        tape_hidden: torch.Tensor,
+        bank_hidden: torch.Tensor,
     ) -> torch.Tensor:
-        if token_embeddings.shape != fast_hidden.shape or token_embeddings.shape != tape_hidden.shape:
+        if token_embeddings.shape != fast_hidden.shape or token_embeddings.shape != bank_hidden.shape:
             raise ValueError("token embeddings and both feedback sources must share [B,T,D]")
         source = HybridPassSource(
             recurrent_hidden=fast_hidden,
-            tape_hidden=tape_hidden,
+            bank_hidden=bank_hidden,
         )
         return self._run_feedback_state(
             input_ids, token_embeddings, source

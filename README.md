@@ -7,29 +7,28 @@ I retrofitted a [tiny pretrained LLM](https://huggingface.co/Locutusque/TinyMist
 |---|---:|---:|---:|---:|
 | Transformer baseline | 7.778 | 0.110 (1.40%) | 248.024M | - |
 | Adaptive Recirculation | 7.678 | 0.110 (1.42%) | 253.275M | 2.127x |
-| Sparse Memory-token Tape | 7.616 | 0.133 (1.72%) | 254.321M | 2.187x |
-| Sparse Periodic Tape | 7.599 | 0.113 (1.46%) | 254.320M | 2.122x |
-| Dense Tape | 7.534 | 0.112 (1.46%) | 254.320M | 2.133x |
-| Adaptive Recirculation + Sparse Periodic Tape | 7.519 | 0.120 (1.57%) | 259.571M | 2.149x |
+| Sparse Memory-token Bank | 7.616 | 0.133 (1.72%) | 254.321M | 2.187x |
+| Sparse Periodic Bank | 7.599 | 0.113 (1.46%) | 254.320M | 2.122x |
+| Dense SWA Bank | 7.534 | 0.112 (1.46%) | 254.320M | 2.133x |
+| Adaptive Recirculation + Sparse Periodic Bank | 7.519 | 0.120 (1.57%) | 259.571M | 2.149x |
 
-The "Tape" variants use cross-attention is cross-attention over a bounded bank of memory states produced by the preceding pass $[m_{t-c}^{k-1}, ... ,m_{t-1}^{k-1}]$, whereas recurrent variants like the recirculation method only use $m_{t-1}^{k-1}$. `Dense`, `Periodic`, and `Memory-token` describe the write policy. Sparse Tape variants attends to memories spread out with a stride of $s$, and the hybrid model combines adaptive recirculation with a sparse Tape.
+The "Bank" variants use cross-attention is cross-attention over a bounded bank of memory states produced by the preceding pass $[m_{t-c}^{k-1}, ... ,m_{t-1}^{k-1}]$, whereas recurrent variants like the recirculation method only use $m_{t-1}^{k-1}$. `Dense`, `Periodic`, and `Memory-token` describe the write policy. Sparse Bank variants attends to memories spread out with a stride of $s$, and the hybrid model combines adaptive recirculation with a sparse Bank.
 
-I think there are three notable patterns:
-
+I think there are three notable patterns in these results:
 1. The attention-based mechanisms outperform the recurrent mechanisms almost uniformly. Since replacing recurrent connections with attention has a solid track-record, I'd wager this trick would work at scale as well.
 2. The sparse attention to far away memories outperformed models with only the recurrent connections to memories. To me this result slightly favours the notion that the performance-gains reported in the FBT and recirculation papers stem from *mere greater effective depth* rather than *unlocking recurrent computation patterns*.
 3. The recurrent/attention hybrid performs on par with the dense attention model, and so attention over a sparse memory-bank could provide a valuable "slow" (long-range) memory for multi-pass models with only the "fast" (short-term) recurrent pattern. 
 
 The experiment is riddled with confounders such as differing compute budgets, parameter count, and starting-point inequality (some mechanisms are more easily slotted into a pretrained model, and the vanilla backbone had no pre-run adaptation). Moreover, I simply do not have the computational resources to provide the exhaustive sweeps and ablations one needs to make convincing optimality arguments. However, I do think the results point towards potential improvements to the existing architectures. 
 
-### The tape models
+### The memory-bank models
 
 ![Memory Access Through Cross-attention](/docs/memory_attn.png)
 
-All tape policies share the same identity-initialized learned writer and GQA readers at configurable decoder layers. Reader outputs are zero-initialized, and sequence-anchored RoPE is the default:
+All bank policies share the same identity-initialized learned writer and GQA readers at configurable decoder layers. Reader outputs are zero-initialized, and sequence-anchored RoPE is the default:
 
 ```yaml
-variant: tape
+variant: bank
 memory_window: 32
 memory_write_mode: dense       # dense | periodic | memory_token
 memory_layers: [3, 7]          # or: all
@@ -40,14 +39,14 @@ Periodic writes additionally require `memory_write_stride`. Explicit memory
 slots use:
 
 ```yaml
-variant: tape
+variant: bank
 memory_window: 32
 memory_write_mode: memory_token
 memory_write_stride: 8
 memory_token_visibility: visible   # visible | write_only
 ```
 
-`<MEM>` is an input-only architecture position with ID equal to the base vocabulary size `V`; it is not added to the LM output head. For physical input `A <MEM> B`, the language target at A is B, the MEM position has no LM loss, and `h_MEM` writes one tape record. See `docs/TAPE_MEMORY.md` for the exact attention, loss, cached-inference, and hybrid contracts.
+`<MEM>` is an input-only architecture position with ID equal to the base vocabulary size `V`; it is not added to the LM output head. For physical input `A <MEM> B`, the language target at A is B, the MEM position has no LM loss, and `h_MEM` writes one bank record. See `docs/BANK_MEMORY.md` for the exact attention, loss, cached-inference, and hybrid contracts.
 
 Memory models can optionally continue NTP training with a causal next-memory prediction head. The head sees only `h_t`, targets detached final-pass future memory features, and is absent from inference. See `docs/NEXT_MEMORY_PREDICTION.md` for alignment, gradient, checkpoint, and leakage contracts.
 
@@ -102,8 +101,8 @@ The active compute-conscious program is defined in
 `benchmarks/development/experimental_pipeline.md`: local frozen-backbone
 wiring, local Phase-B smoke tests, a resumable cloud pilot, selected
 confirmation runs, and the locked six-arm Stage-5 continuation. It compares
-vanilla, adaptive Recirculation, Dense Tape, Periodic Tape, write-only
-Memory-token Tape, and their Recirculation–Periodic Tape hybrid. Tape readers
+vanilla, adaptive Recirculation, Dense Bank, Periodic Bank, write-only
+Memory-token Bank, and their Recirculation–Periodic Bank hybrid. Bank readers
 use layers `[3, 7]` except for the
 hybrid's locked `[4, 7]` placement; no spacing, reader-placement, or controller
 placement sweep is active.
@@ -112,7 +111,7 @@ FBT and MemoryAdd are retired controls. Their implementations and focused
 correctness tests remain only for historical checkpoint/provenance
 compatibility, like other archived research controls, but neither appears in
 the active studies, efficiency qualifications, cloud campaign, or current
-results. TapeAddHybrid, which uses the same MemoryAdd fast channel, is also
+results. BankAddHybrid, which uses the same MemoryAdd fast channel, is also
 retired from the active experiment surface.
 
 Historical benchmark results remain read-only evidence; they do not define the

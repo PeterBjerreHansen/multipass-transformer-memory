@@ -1,4 +1,4 @@
-variant: tape_recirculation_hybrid
+variant: bank_recirculation_hybrid
 phase: A
 recirculation_mode: adaptive
 recirculation_source_layer: 6

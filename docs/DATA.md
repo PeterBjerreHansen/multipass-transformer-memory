@@ -63,7 +63,7 @@ following linguistic token inside that block. Ordinary token order and source ID
 are unchanged.
 
 This means every standard backing block remains 2048
-**linguistic** tokens. At C=8 the tape model processes 2303 physical positions.
+**linguistic** tokens. At C=8 the bank model processes 2303 physical positions.
 That extra compute is intentional and separately accounted; it avoids silently
 reducing the text/data dose for MEM experiments.
 

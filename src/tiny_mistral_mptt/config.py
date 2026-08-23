@@ -14,9 +14,9 @@ SUPPORTED_VARIANTS = {
     "fbt",
     "memory_add",
     "recirculation",
-    "tape",
-    "tape_add_hybrid",
-    "tape_recirculation_hybrid",
+    "bank",
+    "bank_add_hybrid",
+    "bank_recirculation_hybrid",
 }
 SUPPORTED_LR_SCHEDULES = {"constant", "cosine", "piecewise_linear"}
 SUPPORTED_AUTOCAST_DTYPES = {"bfloat16"}
@@ -68,7 +68,7 @@ def _coerce_pass_loss_weights_by_k(
 
 
 def _coerce_memory_layers(raw: Any) -> str | list[int]:
-    """Canonicalize Tape reader placement while retaining an ``all`` shorthand."""
+    """Canonicalize Bank reader placement while retaining an ``all`` shorthand."""
     if raw == "all":
         return "all"
     if not isinstance(raw, (list, tuple)) or not raw:
@@ -196,7 +196,7 @@ class ExperimentConfig:
     snapshot_at_tokens: list[int] | None = None
 
     # Architecture/training protocol knobs. NTP names are explicit because
-    # recurrent and Tape NMP have independent pass-loss weightings below.
+    # recurrent and Bank NMP have independent pass-loss weightings below.
     phase: str = "B"
     pass_schedule: list[dict[str, Any]] | None = None
     ntp_pass_loss_weights: list[float] | None = None
@@ -206,7 +206,7 @@ class ExperimentConfig:
     pass_loss_weights: list[float] | None = None
     pass_loss_weights_by_k: dict[int, list[float]] | None = None
     memory_window: int = 32
-    # Tape architecture axes. Experiment configs declare them explicitly; the
+    # Bank architecture axes. Experiment configs declare them explicitly; the
     # model constructors retain small ergonomic defaults for unit tests.
     memory_write_mode: str | None = None
     memory_write_stride: int | None = None
@@ -222,14 +222,14 @@ class ExperimentConfig:
     # Training-only next-memory prediction (NMP). Disabled objectives do not
     # instantiate heads and therefore preserve historical model state exactly.
     recurrent_nmp_weight: float = 0.0
-    tape_nmp_weight: float = 0.0
+    bank_nmp_weight: float = 0.0
     # Recirculation sources are high-amplitude residual-stream states, so the
     # default target is parameter-free RMS-normalized. ``none`` remains useful
-    # as a raw-state ablation. Tape targets are always the post-writer memory
+    # as a raw-state ablation. Bank targets are always the post-writer memory
     # representation and are intentionally not normalized here.
     recurrent_nmp_target_normalization: str = "rms"
     recurrent_nmp_pass_loss_weights_by_k: dict[int, list[float]] | None = None
-    tape_nmp_pass_loss_weights_by_k: dict[int, list[float]] | None = None
+    bank_nmp_pass_loss_weights_by_k: dict[int, list[float]] | None = None
     nmp_projection_factor: float = 1.3
     nmp_warmup_tokens: int = 0
 
@@ -257,7 +257,7 @@ class ExperimentConfig:
         for field_name in (
             "ntp_pass_loss_weights_by_k",
             "recurrent_nmp_pass_loss_weights_by_k",
-            "tape_nmp_pass_loss_weights_by_k",
+            "bank_nmp_pass_loss_weights_by_k",
         ):
             value = getattr(self, field_name)
             if value is not None:
@@ -270,7 +270,7 @@ class ExperimentConfig:
             self.pass_loss_weights_by_k = self.ntp_pass_loss_weights_by_k
         if self.snapshot_at_tokens is not None:
             self.snapshot_at_tokens = sorted({int(value) for value in self.snapshot_at_tokens})
-        if self.variant in {"tape", "tape_add_hybrid", "tape_recirculation_hybrid"}:
+        if self.variant in {"bank", "bank_add_hybrid", "bank_recirculation_hybrid"}:
             self.memory_layers = _coerce_memory_layers(
                 "all" if self.memory_layers is None else self.memory_layers
             )
@@ -329,11 +329,11 @@ class ExperimentConfig:
             label="recurrent NMP",
         )
 
-    def tape_nmp_loss_weights_for_passes(self, passes: int) -> list[float] | None:
+    def bank_nmp_loss_weights_for_passes(self, passes: int) -> list[float] | None:
         return self._nmp_loss_weights_for_passes(
-            self.tape_nmp_pass_loss_weights_by_k,
+            self.bank_nmp_pass_loss_weights_by_k,
             passes,
-            label="Tape NMP",
+            label="Bank NMP",
         )
 
     def nmp_weight_scale_at(self, unique_tokens_seen: int) -> float:
@@ -397,7 +397,7 @@ class ExperimentConfig:
 
         for name, value in (
             ("recurrent_nmp_weight", self.recurrent_nmp_weight),
-            ("tape_nmp_weight", self.tape_nmp_weight),
+            ("bank_nmp_weight", self.bank_nmp_weight),
         ):
             if not math.isfinite(float(value)) or float(value) < 0:
                 raise ValueError(f"{name} must be finite and non-negative")
@@ -416,7 +416,7 @@ class ExperimentConfig:
             or self.nmp_warmup_tokens > self.max_unique_tokens
         ):
             raise ValueError("nmp_warmup_tokens must lie in [0, max_unique_tokens]")
-        nmp_enabled = self.recurrent_nmp_weight > 0 or self.tape_nmp_weight > 0
+        nmp_enabled = self.recurrent_nmp_weight > 0 or self.bank_nmp_weight > 0
         if not nmp_enabled and self.nmp_warmup_tokens != 0:
             raise ValueError("nmp_warmup_tokens requires an enabled NMP objective")
         if nmp_enabled and not (self.init_from or self.resume_from):
@@ -429,16 +429,16 @@ class ExperimentConfig:
         recurrent_nmp_variants = {
             "memory_add",
             "recirculation",
-            "tape_add_hybrid",
-            "tape_recirculation_hybrid",
+            "bank_add_hybrid",
+            "bank_recirculation_hybrid",
         }
-        tape_nmp_variants = {"tape", "tape_add_hybrid", "tape_recirculation_hybrid"}
+        bank_nmp_variants = {"bank", "bank_add_hybrid", "bank_recirculation_hybrid"}
         if self.recurrent_nmp_weight > 0 and self.variant not in recurrent_nmp_variants:
             raise ValueError(f"variant={self.variant} does not support recurrent NMP")
-        if self.tape_nmp_weight > 0 and self.variant not in tape_nmp_variants:
-            raise ValueError(f"variant={self.variant} does not support tape NMP")
+        if self.bank_nmp_weight > 0 and self.variant not in bank_nmp_variants:
+            raise ValueError(f"variant={self.variant} does not support bank NMP")
 
-        recirculation_variants = {"recirculation", "tape_recirculation_hybrid"}
+        recirculation_variants = {"recirculation", "bank_recirculation_hybrid"}
         if self.variant in recirculation_variants:
             if self.recirculation_mode not in {"fixed", "adaptive"}:
                 raise ValueError("recirculation_mode must be 'fixed' or 'adaptive'")
@@ -479,35 +479,35 @@ class ExperimentConfig:
                 "recirculation_* fields apply only to recirculation variants"
             )
 
-        tape_variants = {"tape", "tape_add_hybrid", "tape_recirculation_hybrid"}
-        if self.variant in tape_variants:
+        bank_variants = {"bank", "bank_add_hybrid", "bank_recirculation_hybrid"}
+        if self.variant in bank_variants:
             if self.memory_write_mode not in {"dense", "periodic", "memory_token"}:
                 raise ValueError(
-                    "tape configs require memory_write_mode: dense|periodic|memory_token"
+                    "bank configs require memory_write_mode: dense|periodic|memory_token"
                 )
             if self.memory_write_mode == "dense":
                 if self.memory_write_stride is not None:
-                    raise ValueError("dense tape must not set memory_write_stride")
+                    raise ValueError("dense bank must not set memory_write_stride")
                 if self.memory_token_visibility is not None:
-                    raise ValueError("dense tape must not set memory_token_visibility")
+                    raise ValueError("dense bank must not set memory_token_visibility")
             elif self.memory_write_mode == "periodic":
                 if self.memory_write_stride is None or self.memory_write_stride <= 0:
-                    raise ValueError("periodic tape requires positive memory_write_stride")
+                    raise ValueError("periodic bank requires positive memory_write_stride")
                 if self.memory_token_visibility is not None:
                     raise ValueError("memory_token_visibility applies only to memory_token mode")
             else:
                 if self.memory_write_stride is None or self.memory_write_stride <= 0:
-                    raise ValueError("memory_token tape requires positive memory_write_stride")
+                    raise ValueError("memory_token bank requires positive memory_write_stride")
                 if self.memory_token_visibility not in {"visible", "write_only"}:
                     raise ValueError(
-                        "memory_token tape requires memory_token_visibility: visible|write_only"
+                        "memory_token bank requires memory_token_visibility: visible|write_only"
                     )
             if self.memory_layers is None:
-                raise ValueError("tape configs require memory_layers")
+                raise ValueError("bank configs require memory_layers")
             self.memory_layers = _coerce_memory_layers(self.memory_layers)
             if self.memory_position_encoding not in {"rope", "none"}:
                 raise ValueError(
-                    "tape configs require memory_position_encoding: rope|none"
+                    "bank configs require memory_position_encoding: rope|none"
                 )
         elif (
             self.memory_write_mode is not None
@@ -516,7 +516,7 @@ class ExperimentConfig:
             or self.memory_layers is not None
             or self.memory_position_encoding is not None
         ):
-            raise ValueError("memory_* fields are supported only for tape variants")
+            raise ValueError("memory_* fields are supported only for bank variants")
         if (
             not math.isfinite(float(self.prefix_mixin_probability))
             or not 0.0 <= float(self.prefix_mixin_probability) <= 1.0
@@ -562,7 +562,7 @@ class ExperimentConfig:
                     )
         for name, mapping in (
             ("recurrent_nmp_pass_loss_weights_by_k", self.recurrent_nmp_pass_loss_weights_by_k),
-            ("tape_nmp_pass_loss_weights_by_k", self.tape_nmp_pass_loss_weights_by_k),
+            ("bank_nmp_pass_loss_weights_by_k", self.bank_nmp_pass_loss_weights_by_k),
         ):
             if mapping is None:
                 continue

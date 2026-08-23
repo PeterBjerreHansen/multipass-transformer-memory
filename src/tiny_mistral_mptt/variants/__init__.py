@@ -3,10 +3,10 @@ from .fbt import FBTVariant
 from .memory_add import MemoryAddVariant
 from .multipass import HiddenRun, MultiPassResult, MultiPassVariant, PassResult, shift_previous_hidden
 from .recirculation import RecirculationVariant
-from .tape import TapeBatch, TapeReader, TapeVariant, TapeWriter
-from .tape_add_hybrid import TapeAddHybridVariant
-from .tape_recirculation_hybrid import TapeRecirculationHybridVariant
-from .tape_recurrent_hybrid import TapeRecurrentHybridVariant
+from .bank import BankBatch, BankReader, BankVariant, BankWriter
+from .bank_add_hybrid import BankAddHybridVariant
+from .bank_recirculation_hybrid import BankRecirculationHybridVariant
+from .bank_recurrent_hybrid import BankRecurrentHybridVariant
 from .vanilla import VanillaVariant
 
 __all__ = [
@@ -18,13 +18,13 @@ __all__ = [
     "MultiPassVariant",
     "PassResult",
     "RecirculationVariant",
-    "TapeAddHybridVariant",
-    "TapeBatch",
-    "TapeReader",
-    "TapeRecirculationHybridVariant",
-    "TapeRecurrentHybridVariant",
-    "TapeVariant",
-    "TapeWriter",
+    "BankAddHybridVariant",
+    "BankBatch",
+    "BankReader",
+    "BankRecirculationHybridVariant",
+    "BankRecurrentHybridVariant",
+    "BankVariant",
+    "BankWriter",
     "TrainOutput",
     "VanillaVariant",
     "shift_previous_hidden",

@@ -15,9 +15,9 @@ from tiny_mistral_mptt.nmp import (
     normalize_nmp_target,
     next_strict_true_indices,
     prepare_recurrent_nmp_alignment,
-    prepare_tape_nmp_alignment,
+    prepare_bank_nmp_alignment,
     recurrent_nmp_pass_loss,
-    tape_nmp_pass_loss,
+    bank_nmp_pass_loss,
 )
 from tiny_mistral_mptt.training.checkpoint import (
     TrainState,
@@ -41,14 +41,14 @@ def memory_add_with_nmp(seed: int = 1):
     )
 
 
-def periodic_tape_with_nmp(seed: int = 1):
+def periodic_bank_with_nmp(seed: int = 1):
     return build_variant(
-        "tape",
+        "bank",
         backbone(seed),
         memory_write_mode="periodic",
         memory_write_stride=2,
         memory_layers=[0],
-        tape_nmp_weight=0.1,
+        bank_nmp_weight=0.1,
         nmp_projection_factor=1.3,
     )
 
@@ -145,7 +145,7 @@ def test_recurrent_nmp_empty_alignment_is_a_finite_differentiable_zero():
     assert target.grad is None
 
 
-def test_tape_nmp_uses_first_strictly_future_write_and_balances_write_events():
+def test_bank_nmp_uses_first_strictly_future_write_and_balances_write_events():
     # Writes at 2 and 5. Queries 0,1 map to event 2; queries 2,3,4 map
     # strictly forward to event 5. The first event has zero loss and the second
     # has SmoothL1(2,0)=1.5, so target-balanced loss is (0+1.5)/2=.75.
@@ -154,7 +154,7 @@ def test_tape_nmp_uses_first_strictly_future_write_and_balances_write_events():
     target = torch.zeros(1, 6, 1)
     prediction = torch.tensor([[[0.0], [0.0], [2.0], [2.0], [2.0], [99.0]]])
     positions = torch.arange(6).view(1, 6)
-    loss, _, _, distances = tape_nmp_pass_loss(
+    loss, _, _, distances = bank_nmp_pass_loss(
         prediction,
         final_written_states=target,
         ordinary_mask=ordinary,
@@ -175,7 +175,7 @@ def test_memory_token_write_can_have_zero_linguistic_distance_without_leakage():
     positions = torch.tensor([[0, 0, 1]])
     prediction = torch.zeros(1, 3, 1)
     targets = torch.zeros_like(prediction)
-    _, _, _, distances = tape_nmp_pass_loss(
+    _, _, _, distances = bank_nmp_pass_loss(
         prediction,
         final_written_states=targets,
         ordinary_mask=ordinary,
@@ -186,13 +186,13 @@ def test_memory_token_write_can_have_zero_linguistic_distance_without_leakage():
     torch.testing.assert_close(distances["0"], torch.tensor(0.0))
 
 
-def test_tape_nmp_with_no_future_write_is_a_finite_differentiable_zero():
+def test_bank_nmp_with_no_future_write_is_a_finite_differentiable_zero():
     ordinary = torch.ones(1, 5, dtype=torch.bool)
     writes = torch.zeros(1, 5, dtype=torch.bool)
     positions = torch.arange(5).view(1, 5)
     prediction = torch.randn(1, 5, 2, requires_grad=True)
     target = torch.randn(1, 5, 2, requires_grad=True)
-    loss, target_rms, target_std, distances = tape_nmp_pass_loss(
+    loss, target_rms, target_std, distances = bank_nmp_pass_loss(
         prediction,
         final_written_states=target,
         ordinary_mask=ordinary,
@@ -210,14 +210,14 @@ def test_tape_nmp_with_no_future_write_is_a_finite_differentiable_zero():
     assert target.grad is None
 
 
-def test_sparse_tape_model_with_no_future_write_keeps_ntp_finite():
+def test_sparse_bank_model_with_no_future_write_keeps_ntp_finite():
     model = build_variant(
-        "tape",
+        "bank",
         backbone(),
         memory_write_mode="periodic",
         memory_write_stride=32,
         memory_layers=[0],
-        tape_nmp_weight=0.1,
+        bank_nmp_weight=0.1,
         nmp_projection_factor=1.3,
     )
     output = model.compute_loss(
@@ -227,8 +227,8 @@ def test_sparse_tape_model_with_no_future_write_keeps_ntp_finite():
         nmp_weight_scale=1.0,
     )
     assert torch.isfinite(output.loss)
-    assert output.metrics["tape_nmp_valid_queries"] == 0.0
-    assert output.metrics["tape_nmp_loss"] == 0.0
+    assert output.metrics["bank_nmp_valid_queries"] == 0.0
+    assert output.metrics["bank_nmp_loss"] == 0.0
 
 
 @pytest.mark.parametrize("passes", [1, 2, 3])
@@ -248,27 +248,27 @@ def test_recurrent_predictions_at_t_are_invariant_to_tokens_after_t(passes: int)
     )
 
 
-def test_tape_prediction_at_t_is_invariant_to_future_tokens():
-    model = periodic_tape_with_nmp().eval()
-    assert model.tape_nmp_predictor is not None
-    _activate_output(model.tape_nmp_predictor)
+def test_bank_prediction_at_t_is_invariant_to_future_tokens():
+    model = periodic_bank_with_nmp().eval()
+    assert model.bank_nmp_predictor is not None
+    _activate_output(model.bank_nmp_predictor)
     left = torch.tensor([[1, 2, 3, 4, 5, 6]])
     right = torch.tensor([[1, 2, 3, 70, 71, 72]])
     with torch.no_grad():
         left_run = model._run_passes(left, passes=2, phase="B")[-1]
         right_run = model._run_passes(right, passes=2, phase="B")[-1]
-        left_prediction = model.tape_nmp_predictor(left_run.hidden_states)
-        right_prediction = model.tape_nmp_predictor(right_run.hidden_states)
+        left_prediction = model.bank_nmp_predictor(left_run.hidden_states)
+        right_prediction = model.bank_nmp_predictor(right_run.hidden_states)
     torch.testing.assert_close(
         left_prediction[:, :3], right_prediction[:, :3], atol=1e-6, rtol=1e-6
     )
 
 
-def test_tape_writer_gets_gradient_through_memory_using_hidden_not_target_branch():
-    model = periodic_tape_with_nmp()
-    assert model.tape_nmp_predictor is not None
-    _activate_output(model.tape_nmp_predictor)
-    # Tape readers are no-op initialized for safe backbone retrofitting. Move
+def test_bank_writer_gets_gradient_through_memory_using_hidden_not_target_branch():
+    model = periodic_bank_with_nmp()
+    assert model.bank_nmp_predictor is not None
+    _activate_output(model.bank_nmp_predictor)
+    # Bank readers are no-op initialized for safe backbone retrofitting. Move
     # the output projection off zero so this one-step test exercises the
     # causal writer -> reader -> h_t -> predictor path.
     with torch.no_grad():
@@ -319,25 +319,25 @@ def test_nmp_uses_uniform_pass_weights_independent_of_ntp_weights():
     )
 
 
-def test_tape_nmp_pass_weights_are_independent_and_uniform_by_default():
-    model = periodic_tape_with_nmp().eval()
-    assert model.tape_nmp_predictor is not None
-    _activate_output(model.tape_nmp_predictor)
+def test_bank_nmp_pass_weights_are_independent_and_uniform_by_default():
+    model = periodic_bank_with_nmp().eval()
+    assert model.bank_nmp_predictor is not None
+    _activate_output(model.bank_nmp_predictor)
     ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
     default = model.compute_loss(ids, passes=2, loss_weights=[0.0, 1.0], nmp_weight_scale=1.0)
-    assert default.metrics["tape_nmp_pass_1_weight"] == pytest.approx(0.5)
-    assert default.metrics["tape_nmp_pass_2_weight"] == pytest.approx(0.5)
+    assert default.metrics["bank_nmp_pass_1_weight"] == pytest.approx(0.5)
+    assert default.metrics["bank_nmp_pass_2_weight"] == pytest.approx(0.5)
     weighted = model.compute_loss(
         ids,
         passes=2,
         loss_weights=[0.0, 1.0],
-        tape_nmp_loss_weights=[0.0, 1.0],
+        bank_nmp_loss_weights=[0.0, 1.0],
         nmp_weight_scale=1.0,
     )
-    assert weighted.metrics["tape_nmp_pass_1_weight"] == pytest.approx(0.0)
-    assert weighted.metrics["tape_nmp_pass_2_weight"] == pytest.approx(1.0)
-    assert weighted.metrics["tape_nmp_loss"] == pytest.approx(
-        weighted.metrics["tape_nmp_pass_2_loss"]
+    assert weighted.metrics["bank_nmp_pass_1_weight"] == pytest.approx(0.0)
+    assert weighted.metrics["bank_nmp_pass_2_weight"] == pytest.approx(1.0)
+    assert weighted.metrics["bank_nmp_loss"] == pytest.approx(
+        weighted.metrics["bank_nmp_pass_2_loss"]
     )
 
 
@@ -463,21 +463,21 @@ def test_recurrent_nmp_raw_ablation_still_detaches_target(monkeypatch):
     assert seen and not seen[0].requires_grad
 
 
-def test_tape_nmp_target_is_final_pass_post_writer_state(monkeypatch):
+def test_bank_nmp_target_is_final_pass_post_writer_state(monkeypatch):
     import tiny_mistral_mptt.variants.multipass as multipass_module
 
-    model = periodic_tape_with_nmp()
+    model = periodic_bank_with_nmp()
     ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
     expected_runs = model._run_passes(ids, passes=2, phase="B")
     expected_written = model.writer(expected_runs[-1].hidden_states).detach()
-    expected = prepare_tape_nmp_alignment(
+    expected = prepare_bank_nmp_alignment(
         expected_written,
         ordinary_mask=torch.ones(1, 6, dtype=torch.bool),
         write_mask=model.write_mask(ids),
         sequence_positions=model.sequence_positions(ids),
     ).targets
     seen: list[torch.Tensor] = []
-    original = multipass_module.tape_nmp_pass_loss
+    original = multipass_module.bank_nmp_pass_loss
 
     def recording_loss(predictions, *, alignment, diagnostics):
         seen.append(alignment.targets)
@@ -487,7 +487,7 @@ def test_tape_nmp_target_is_final_pass_post_writer_state(monkeypatch):
             diagnostics=diagnostics,
         )
 
-    monkeypatch.setattr(multipass_module, "tape_nmp_pass_loss", recording_loss)
+    monkeypatch.setattr(multipass_module, "bank_nmp_pass_loss", recording_loss)
     model.compute_loss(ids, passes=2, loss_weights=[0.0, 1.0])
     assert len(seen) == 2
     assert all(target.data_ptr() == seen[0].data_ptr() for target in seen)
@@ -496,7 +496,7 @@ def test_tape_nmp_target_is_final_pass_post_writer_state(monkeypatch):
         assert not target.requires_grad
 
 
-def test_dense_tape_next_write_is_exactly_next_physical_token():
+def test_dense_bank_next_write_is_exactly_next_physical_token():
     mask = torch.ones(2, 5, dtype=torch.bool)
     expected = torch.tensor([[1, 2, 3, 4, 5], [1, 2, 3, 4, 5]])
     torch.testing.assert_close(next_strict_true_indices(mask), expected)
@@ -504,24 +504,24 @@ def test_dense_tape_next_write_is_exactly_next_physical_token():
 
 def test_hybrid_heads_are_architecturally_equal_but_parameter_independent():
     model = build_variant(
-        "tape_add_hybrid",
+        "bank_add_hybrid",
         backbone(),
         memory_write_mode="periodic",
         memory_write_stride=2,
         memory_layers=[0],
         recurrent_nmp_weight=0.1,
-        tape_nmp_weight=0.2,
+        bank_nmp_weight=0.2,
     )
     recurrent = model.recurrent_nmp_predictor
-    tape = model.tape_nmp_predictor
-    assert recurrent is not None and tape is not None
-    assert type(recurrent) is type(tape)
+    bank = model.bank_nmp_predictor
+    assert recurrent is not None and bank is not None
+    assert type(recurrent) is type(bank)
     recurrent_shapes = [parameter.shape for parameter in recurrent.parameters()]
-    tape_shapes = [parameter.shape for parameter in tape.parameters()]
-    assert recurrent_shapes == tape_shapes
+    bank_shapes = [parameter.shape for parameter in bank.parameters()]
+    assert recurrent_shapes == bank_shapes
     assert all(
         left.data_ptr() != right.data_ptr()
-        for left, right in zip(recurrent.parameters(), tape.parameters(), strict=True)
+        for left, right in zip(recurrent.parameters(), bank.parameters(), strict=True)
     )
 
 
@@ -553,7 +553,7 @@ def test_zero_weight_factory_model_has_exact_historical_state_and_loss():
         "memory_add",
         backbone(7),
         recurrent_nmp_weight=0.0,
-        tape_nmp_weight=0.0,
+        bank_nmp_weight=0.0,
     )
     assert historical.state_dict().keys() == explicit_zero.state_dict().keys()
     ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
@@ -582,21 +582,21 @@ def test_config_requires_supported_checkpointed_ramped_nmp_continuation():
 
 
 @pytest.mark.parametrize(
-    ("variant", "recurrent", "tape"),
+    ("variant", "recurrent", "bank"),
     [
         ("vanilla", 0.1, 0.0),
         ("fbt", 0.1, 0.0),
         ("memory_add", 0.0, 0.1),
-        ("tape", 0.1, 0.0),
+        ("bank", 0.1, 0.0),
     ],
 )
 def test_config_rejects_objectives_without_architectural_targets(
-    variant: str, recurrent: float, tape: float
+    variant: str, recurrent: float, bank: float
 ):
     cfg = ExperimentConfig(
         variant=variant,
         recurrent_nmp_weight=recurrent,
-        tape_nmp_weight=tape,
+        bank_nmp_weight=bank,
         nmp_warmup_tokens=10,
         init_from="ntp.pt",
     )

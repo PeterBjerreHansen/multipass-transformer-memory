@@ -605,7 +605,7 @@ class Trainer:
                         recurrent_nmp_loss_weights=cfg.recurrent_nmp_loss_weights_for_passes(
                             passes
                         ),
-                        tape_nmp_loss_weights=cfg.tape_nmp_loss_weights_for_passes(
+                        bank_nmp_loss_weights=cfg.bank_nmp_loss_weights_for_passes(
                             passes
                         ),
                         nmp_weight_scale=cfg.nmp_weight_scale_at(

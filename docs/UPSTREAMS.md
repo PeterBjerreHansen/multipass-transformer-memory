@@ -15,7 +15,7 @@ Research infrastructure must not change ordinary vanilla behavior silently.
 Baseline tests, HF-comparison scripts, and `VANILLA_SOURCE.sha256` are the
 guardrails.
 
-The tape work adds one explicitly tested substrate capability: self-attention
+The bank work adds one explicitly tested substrate capability: self-attention
 K/V entries can carry a boolean validity mask. This allows write-only `<MEM>`
 positions to retain physical/RoPE/cache coordinates while remaining unavailable
 as K/V. Ordinary inputs use all-valid keys. Reference attention was also hardened
@@ -35,7 +35,7 @@ pretraining recipe.
 `79398be4ac33a7489029e6075bdce930a0ec44b2` is a design reference for
 previous-pass top-state feedback, strict recurrence causality, retired
 MemoryAdd, and
-per-layer tape cross-attention. Current implementations are written directly
+per-layer bank cross-attention. Current implementations are written directly
 against this repository's Mistral/GQA/local-attention interfaces.
 
 ## Training data

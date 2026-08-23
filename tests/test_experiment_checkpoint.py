@@ -39,7 +39,7 @@ def test_checkpoint_restores_model_optimizer_sampler_and_all_counters(tmp_path):
         optimizer=optimizer,
         sampler_state=sampler.state_dict(),
         train_state=state,
-        experiment_config={"variant": "tape", "memory_write_mode": "memory_token"},
+        experiment_config={"variant": "bank", "memory_write_mode": "memory_token"},
         data_manifest_sha256="manifest-hash",
     )
     expected_parameters = {name: tensor.detach().clone() for name, tensor in model.state_dict().items()}

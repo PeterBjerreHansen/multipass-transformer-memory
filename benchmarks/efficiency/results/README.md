@@ -1,1 +1,1 @@
-Active efficiency results may be retained here when they are worth versioning. Large/ad-hoc generated measurements belong under `generated/`, which is ignored by Git. No unified-tape efficiency result has been retained yet.
+Active efficiency results may be retained here when they are worth versioning. Large/ad-hoc generated measurements belong under `generated/`, which is ignored by Git. No unified-bank efficiency result has been retained yet.

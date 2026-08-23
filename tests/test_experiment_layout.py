@@ -63,9 +63,9 @@ def test_development_studies_verify_semantically():
         verify_study(manifest)
 
 
-def test_active_pipeline_shelves_retired_controls_and_covers_all_tape_policies():
+def test_active_pipeline_shelves_retired_controls_and_covers_all_bank_policies():
     development = ROOT / "benchmarks" / "development"
-    expected_tape_modes = {"dense", "periodic", "memory_token"}
+    expected_bank_modes = {"dense", "periodic", "memory_token"}
 
     for stage_name, expected_retention in (
         ("stage_1_wiring", 1),
@@ -80,16 +80,16 @@ def test_active_pipeline_shelves_retired_controls_and_covers_all_tape_policies()
         ]
 
         assert all(
-            cfg.variant not in {"fbt", "memory_add", "tape_add_hybrid"}
+            cfg.variant not in {"fbt", "memory_add", "bank_add_hybrid"}
             for cfg in configs
         )
         assert {
             cfg.variant for cfg in configs if "hybrid" in cfg.variant
-        } == {"tape_recirculation_hybrid"}
-        tape_configs = [cfg for cfg in configs if cfg.variant == "tape"]
-        assert {cfg.memory_write_mode for cfg in tape_configs} == expected_tape_modes
+        } == {"bank_recirculation_hybrid"}
+        bank_configs = [cfg for cfg in configs if cfg.variant == "bank"]
+        assert {cfg.memory_write_mode for cfg in bank_configs} == expected_bank_modes
         explicit = next(
-            cfg for cfg in tape_configs if cfg.memory_write_mode == "memory_token"
+            cfg for cfg in bank_configs if cfg.memory_write_mode == "memory_token"
         )
         assert explicit.memory_write_stride == 32
         assert explicit.memory_token_visibility == "write_only"
@@ -102,7 +102,7 @@ def test_active_pipeline_shelves_retired_controls_and_covers_all_tape_policies()
         for arm in manifest["arms"]
     ]
     assert all(
-        cfg.variant not in {"fbt", "memory_add", "tape_add_hybrid"}
+        cfg.variant not in {"fbt", "memory_add", "bank_add_hybrid"}
         for cfg in configs
     )
 

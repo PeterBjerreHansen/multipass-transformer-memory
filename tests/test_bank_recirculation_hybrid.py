@@ -7,8 +7,8 @@ from tiny_mistral_mptt.feedback import HybridFeedbackState, HybridPassSource
 from tiny_mistral_mptt.inference import exact_decode_step, prefill_exact
 from tiny_mistral_mptt.training.phases import configure_phase
 from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
-from tiny_mistral_mptt.variants.tape_recirculation_hybrid import (
-    TapeRecirculationHybridVariant,
+from tiny_mistral_mptt.variants.bank_recirculation_hybrid import (
+    BankRecirculationHybridVariant,
 )
 
 
@@ -20,8 +20,8 @@ def make_backbone(seed: int = 123) -> MistralForCausalLM:
     )
 
 
-def make_hybrid(*, mode: str = "periodic") -> TapeRecirculationHybridVariant:
-    model = TapeRecirculationHybridVariant(
+def make_hybrid(*, mode: str = "periodic") -> BankRecirculationHybridVariant:
+    model = BankRecirculationHybridVariant(
         make_backbone(),
         source_layer=2,
         destination_layer=0,
@@ -37,7 +37,7 @@ def make_hybrid(*, mode: str = "periodic") -> TapeRecirculationHybridVariant:
     return model
 
 
-def test_zero_tape_readers_reduce_hybrid_to_adaptive_recirculation():
+def test_zero_bank_readers_reduce_hybrid_to_adaptive_recirculation():
     hybrid = make_hybrid().eval()
     recirculation = RecirculationVariant(
         make_backbone(),
@@ -61,7 +61,7 @@ def test_zero_tape_readers_reduce_hybrid_to_adaptive_recirculation():
         )
 
 
-def test_pass_source_separates_internal_recurrence_from_top_layer_tape():
+def test_pass_source_separates_internal_recurrence_from_top_layer_bank():
     model = make_hybrid().eval()
     ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
     with torch.no_grad():
@@ -70,14 +70,14 @@ def test_pass_source_separates_internal_recurrence_from_top_layer_tape():
     assert isinstance(run.feedback_source, HybridPassSource)
     assert run.feedback_source.recurrent_hidden.shape == run.hidden_states.shape
     torch.testing.assert_close(
-        run.feedback_source.tape_hidden, run.hidden_states, atol=0, rtol=0
+        run.feedback_source.bank_hidden, run.hidden_states, atol=0, rtol=0
     )
     assert not torch.allclose(
-        run.feedback_source.recurrent_hidden, run.feedback_source.tape_hidden
+        run.feedback_source.recurrent_hidden, run.feedback_source.bank_hidden
     )
 
 
-def test_phase_a_trains_tape_reader_and_adaptive_recirculation_controller():
+def test_phase_a_trains_bank_reader_and_adaptive_recirculation_controller():
     model = make_hybrid()
     configure_phase(model, "A")
     ids = torch.tensor([[1, 2, 3, 4, 5, 6]])

@@ -27,37 +27,37 @@ cases:
   recirculation_source_layer: 6
   recirculation_destination_layer: 3
   recirculation_alpha: 0.1
-- variant: tape
+- variant: bank
   passes: 2
   memory_layers: [3, 7]
   memory_write_mode: dense
-- variant: tape
+- variant: bank
   passes: 3
   memory_layers: [3, 7]
   memory_write_mode: dense
-- variant: tape
+- variant: bank
   passes: 2
   memory_layers: [3, 7]
   memory_write_mode: periodic
   memory_write_stride: 32
-- variant: tape
+- variant: bank
   passes: 3
   memory_layers: [3, 7]
   memory_write_mode: periodic
   memory_write_stride: 32
-- variant: tape
+- variant: bank
   passes: 2
   memory_layers: [3, 7]
   memory_write_mode: memory_token
   memory_write_stride: 32
   memory_token_visibility: write_only
-- variant: tape
+- variant: bank
   passes: 3
   memory_layers: [3, 7]
   memory_write_mode: memory_token
   memory_write_stride: 32
   memory_token_visibility: write_only
-- variant: tape_recirculation_hybrid
+- variant: bank_recirculation_hybrid
   passes: 2
   memory_layers: [4, 7]
   memory_write_mode: periodic
@@ -66,7 +66,7 @@ cases:
   recirculation_source_layer: 6
   recirculation_destination_layer: 3
   recirculation_alpha: 0.1
-- variant: tape_recirculation_hybrid
+- variant: bank_recirculation_hybrid
   passes: 3
   memory_layers: [4, 7]
   memory_write_mode: periodic

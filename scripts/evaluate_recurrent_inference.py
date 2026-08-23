@@ -16,10 +16,10 @@ from tiny_mistral_mptt.evaluation.recurrent import evaluate_recurrent_continuati
 from tiny_mistral_mptt.model_factory import load_variant_from_config
 from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
 from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
-from tiny_mistral_mptt.variants.tape import TapeVariant
-from tiny_mistral_mptt.variants.tape_add_hybrid import TapeAddHybridVariant
-from tiny_mistral_mptt.variants.tape_recirculation_hybrid import (
-    TapeRecirculationHybridVariant,
+from tiny_mistral_mptt.variants.bank import BankVariant
+from tiny_mistral_mptt.variants.bank_add_hybrid import BankAddHybridVariant
+from tiny_mistral_mptt.variants.bank_recirculation_hybrid import (
+    BankRecirculationHybridVariant,
 )
 
 
@@ -59,9 +59,9 @@ def main() -> None:
     if cfg.variant not in {
         "memory_add",
         "recirculation",
-        "tape",
-        "tape_add_hybrid",
-        "tape_recirculation_hybrid",
+        "bank",
+        "bank_add_hybrid",
+        "bank_recirculation_hybrid",
     }:
         raise SystemExit("evaluate_recurrent_inference requires a cached recurrent variant")
     device = resolve_device(cfg.device)
@@ -71,9 +71,9 @@ def main() -> None:
         (
             MemoryAddVariant,
             RecirculationVariant,
-            TapeVariant,
-            TapeAddHybridVariant,
-            TapeRecirculationHybridVariant,
+            BankVariant,
+            BankAddHybridVariant,
+            BankRecirculationHybridVariant,
         ),
     ):
         raise SystemExit("loaded variant does not implement recurrent memory inference")

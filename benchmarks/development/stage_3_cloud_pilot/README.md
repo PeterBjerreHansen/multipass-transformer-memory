@@ -17,7 +17,7 @@ its 256-block validation split is document-disjoint from training. The recipe
 also skips the full 5M wiring slice before collecting pilot training data.
 
 The pilot benchmarks dense, periodic-C32, and write-only explicit-`<MEM>`-C32
-Tape as separate arms, plus periodic Tape paired with adaptive Recirculation.
+Bank as separate arms, plus periodic Bank paired with adaptive Recirculation.
 FBT and MemoryAdd are not part of this experimental pipeline.
 
 Use the existing evaluation entry points on each 5M checkpoint:

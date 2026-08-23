@@ -13,9 +13,9 @@ from .variants import (
     FBTVariant,
     MemoryAddVariant,
     RecirculationVariant,
-    TapeAddHybridVariant,
-    TapeRecirculationHybridVariant,
-    TapeVariant,
+    BankAddHybridVariant,
+    BankRecirculationHybridVariant,
+    BankVariant,
     VanillaVariant,
 )
 
@@ -40,7 +40,7 @@ def build_variant(
     recirculation_alpha: float = 0.1,
     recirculation_mode: str = "fixed",
     recurrent_nmp_weight: float = 0.0,
-    tape_nmp_weight: float = 0.0,
+    bank_nmp_weight: float = 0.0,
     recurrent_nmp_target_normalization: str = "rms",
     nmp_projection_factor: float = 1.3,
 ) -> ExperimentalVariant:
@@ -68,28 +68,28 @@ def build_variant(
             mode=recirculation_mode,
             initialization_seed=architecture_seed,
         )
-    elif name in {"tape", "tape_add_hybrid", "tape_recirculation_hybrid"}:
+    elif name in {"bank", "bank_add_hybrid", "bank_recirculation_hybrid"}:
         if memory_write_mode not in {"dense", "periodic", "memory_token"}:
-            raise ValueError("tape variants require memory_write_mode: dense|periodic|memory_token")
+            raise ValueError("bank variants require memory_write_mode: dense|periodic|memory_token")
         if memory_write_mode == "dense":
             if memory_write_stride is not None:
-                raise ValueError("dense tape must not set memory_write_stride")
+                raise ValueError("dense bank must not set memory_write_stride")
             if memory_token_visibility is not None:
-                raise ValueError("dense tape must not set memory_token_visibility")
+                raise ValueError("dense bank must not set memory_token_visibility")
             stride = 1
             visibility = "visible"
         elif memory_write_mode == "periodic":
             if memory_write_stride is None or int(memory_write_stride) <= 0:
-                raise ValueError("periodic tape requires positive memory_write_stride")
+                raise ValueError("periodic bank requires positive memory_write_stride")
             if memory_token_visibility is not None:
                 raise ValueError("memory_token_visibility applies only to memory_token mode")
             stride = int(memory_write_stride)
             visibility = "visible"
         else:
             if memory_write_stride is None or int(memory_write_stride) <= 0:
-                raise ValueError("memory_token tape requires positive memory_write_stride")
+                raise ValueError("memory_token bank requires positive memory_write_stride")
             if memory_token_visibility not in {"visible", "write_only"}:
-                raise ValueError("memory_token tape requires memory_token_visibility: visible|write_only")
+                raise ValueError("memory_token bank requires memory_token_visibility: visible|write_only")
             stride = int(memory_write_stride)
             visibility = str(memory_token_visibility)
         kwargs = dict(
@@ -101,20 +101,20 @@ def build_variant(
             memory_position_encoding=memory_position_encoding,
             initialization_seed=architecture_seed,
         )
-        if name == "tape":
-            variant = TapeVariant(backbone, **kwargs)
-        elif name == "tape_add_hybrid":
-            variant = TapeAddHybridVariant(backbone, **kwargs)
+        if name == "bank":
+            variant = BankVariant(backbone, **kwargs)
+        elif name == "bank_add_hybrid":
+            variant = BankAddHybridVariant(backbone, **kwargs)
         else:
             if (
                 recirculation_source_layer is None
                 or recirculation_destination_layer is None
             ):
                 raise ValueError(
-                    "tape_recirculation_hybrid requires recirculation_source_layer "
+                    "bank_recirculation_hybrid requires recirculation_source_layer "
                     "and recirculation_destination_layer"
                 )
-            variant = TapeRecirculationHybridVariant(
+            variant = BankRecirculationHybridVariant(
                 backbone,
                 source_layer=recirculation_source_layer,
                 destination_layer=recirculation_destination_layer,
@@ -125,14 +125,14 @@ def build_variant(
     else:
         raise ValueError(f"unknown variant {name!r}")
 
-    if recurrent_nmp_weight or tape_nmp_weight:
+    if recurrent_nmp_weight or bank_nmp_weight:
         from .variants import MultiPassVariant
 
         if not isinstance(variant, MultiPassVariant):
             raise ValueError(f"{name} does not support NMP")
         variant.configure_nmp(
             recurrent_weight=recurrent_nmp_weight,
-            tape_weight=tape_nmp_weight,
+            bank_weight=bank_nmp_weight,
             recurrent_target_normalization=recurrent_nmp_target_normalization,
             projection_factor=nmp_projection_factor,
             initialization_seed=architecture_seed,
@@ -164,7 +164,7 @@ def load_variant(
     recirculation_alpha: float = 0.1,
     recirculation_mode: str = "fixed",
     recurrent_nmp_weight: float = 0.0,
-    tape_nmp_weight: float = 0.0,
+    bank_nmp_weight: float = 0.0,
     recurrent_nmp_target_normalization: str = "rms",
     nmp_projection_factor: float = 1.3,
 ) -> ExperimentalVariant:
@@ -191,7 +191,7 @@ def load_variant(
         recirculation_alpha=recirculation_alpha,
         recirculation_mode=recirculation_mode,
         recurrent_nmp_weight=recurrent_nmp_weight,
-        tape_nmp_weight=tape_nmp_weight,
+        bank_nmp_weight=bank_nmp_weight,
         recurrent_nmp_target_normalization=recurrent_nmp_target_normalization,
         nmp_projection_factor=nmp_projection_factor,
     )
@@ -223,7 +223,7 @@ def load_variant_from_config(
         recirculation_alpha=cfg.recirculation_alpha,
         recirculation_mode=cfg.recirculation_mode,
         recurrent_nmp_weight=cfg.recurrent_nmp_weight,
-        tape_nmp_weight=cfg.tape_nmp_weight,
+        bank_nmp_weight=cfg.bank_nmp_weight,
         recurrent_nmp_target_normalization=cfg.recurrent_nmp_target_normalization,
         nmp_projection_factor=cfg.nmp_projection_factor,
     )

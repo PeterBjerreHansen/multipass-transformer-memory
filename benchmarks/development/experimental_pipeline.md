@@ -3,21 +3,21 @@
 This pipeline answers four scoped questions without spending compute on broad
 hyperparameter searches:
 
-1. How do dense and sparse content-addressed Tape policies affect long-range
+1. How do dense and sparse content-addressed Bank policies affect long-range
    memory relative to the local-attention backbone?
-2. Does sparse Tape still help when writes come from explicit input-only
+2. Does sparse Bank still help when writes come from explicit input-only
    `<MEM>` positions rather than periodically selected linguistic tokens?
-3. Does Tape provide a useful slow-memory channel beyond a fast recurrent
+3. Does Bank provide a useful slow-memory channel beyond a fast recurrent
    channel?
-4. Under the chosen TinyMistral training regime, how do Tape and adaptive
+4. Under the chosen TinyMistral training regime, how do Bank and adaptive
    Recirculation compare at similar data and dollar budgets?
 
-All Tape arms use a 32-record bank, readers after decoder layers 3 and 7,
+All Bank arms use a 32-record bank, readers after decoder layers 3 and 7,
 sequence-anchored RoPE, an identity-initialized writer, and zero-initialized
 reader output projections. The three write policies are dense, periodic C32,
 and explicit-memory-token C32. The explicit `<MEM>` arm uses `write_only`
-visibility so the control position can affect later tokens only through Tape.
-The active hybrid uses periodic C32 Tape with adaptive Recirculation as its fast
+visibility so the control position can affect later tokens only through Bank.
+The active hybrid uses periodic C32 Bank with adaptive Recirculation as its fast
 channel. The locked Recirculation placement is source layer 6 to destination
 layer 3. Layer indices are zero-based. These are good-enough defaults, not
 claims of optimal spacing or placement.
@@ -25,7 +25,7 @@ claims of optimal spacing or placement.
 FBT and MemoryAdd remain implemented and covered by architecture correctness
 tests for historical compatibility, but both are retired from the active
 research program: no wiring, smoke, efficiency, cloud, or confirmation run is
-scheduled for either model. The related TapeAddHybrid is likewise not an
+scheduled for either model. The related BankAddHybrid is likewise not an
 active experiment.
 
 ## Shared pass protocol
@@ -75,7 +75,7 @@ before deleting local run directories.
 
 A wiring checkpoint is accepted only if all losses are finite, K=3 does not
 collapse, reader outputs remain bounded, and the relevant added parameters
-receive gradients. Tape is expected to update its output projections on the
+receive gradients. Bank is expected to update its output projections on the
 first optimizer step; Q/K/V and writer gradients become nonzero after those
 projections move away from zero.
 
@@ -84,7 +84,7 @@ projections move away from zero.
 Directory: `stage_2_local_smoke/`.
 
 Initialize from the canonical Stage-1 checkpoints and train adaptive
-Recirculation, all three Tape policies, and Recirculation–Tape for 1M tokens
+Recirculation, all three Bank policies, and Recirculation–Bank for 1M tokens
 with the full backbone differentiable. This stage checks stability and
 integration only. It is not a final model comparison. These local configs also
 retain one checkpoint generation.
@@ -109,17 +109,17 @@ Before paid execution, run CUDA qualification and change hardware batch fields
 only if the same change is applied to all directly compared arms. Record
 linguistic tokens/s, pass-position compute, peak VRAM, instance runtime, and
 dollars. The first 5M pilot includes six arms: Vanilla, adaptive Recirculation,
-dense Tape, periodic-C32 Tape, explicit-`<MEM>`-C32 Tape, and the
+dense Bank, periodic-C32 Bank, explicit-`<MEM>`-C32 Bank, and the
 periodic-C32 Recirculation hybrid. Cloud configs retain two checkpoint
 generations.
 
 At the 5M gate, run pass-depth, recurrent-inference, and memory-intervention
-diagnostics. Each Tape policy is analyzed independently. A Tape policy is
-eligible for promotion only if real Tape performs better than its zero or
+diagnostics. Each Bank policy is analyzed independently. A Bank policy is
+eligible for promotion only if real Bank performs better than its zero or
 mismatched-memory interventions on at least one long-range measure. Promote at
-most one Tape policy, using the predeclared long-range result first and cost as
+most one Bank policy, using the predeclared long-range result first and cost as
 the tie-breaker. At most one hybrid is promoted. A hybrid is eligible for the
-slow-memory claim only if its real Tape channel improves over its
+slow-memory claim only if its real Bank channel improves over its
 recurrent-only intervention; choose between eligible hybrids using the
 predeclared long-range result and then cost.
 
@@ -128,8 +128,8 @@ predeclared long-range result and then cost.
 Directory: `stage_4_confirmation/`.
 
 Resume the promoted Stage-3 seed to 10M. Then execute the two additional-seed
-candidate configs only for Vanilla, the selected Tape policy, the selected
-hybrid, and adaptive Recirculation. The preparation command takes the Tape
+candidate configs only for Vanilla, the selected Bank policy, the selected
+hybrid, and adaptive Recirculation. The preparation command takes the Bank
 selection and fixed Recirculation choices, so no execution settings need to be
 edited after observing pilot results.
 

@@ -12,7 +12,7 @@ Prepare and verify `data/dolmino/wiring_2048` first. Every arm consumes its
 rate of `1e-4`.
 
 Use `--arm <id>` to run one arm. Generated checkpoints and metrics live below
-`results/generated/` and are ignored by Git. Tape is wired separately for
+`results/generated/` and are ignored by Git. Bank is wired separately for
 dense, periodic-C32, and write-only explicit-`<MEM>`-C32 writes. The periodic
 hybrid is wired with adaptive Recirculation.
 

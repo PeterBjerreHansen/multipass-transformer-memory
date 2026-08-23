@@ -9,13 +9,13 @@ import torch.nn as nn
 from tiny_mistral.modeling import MistralForCausalLM
 
 from .recirculation import _AdaptiveRecirculationController
-from .tape_recurrent_hybrid import TapeRecurrentHybridVariant
+from .bank_recurrent_hybrid import BankRecurrentHybridVariant
 
 
-class TapeRecirculationHybridVariant(TapeRecurrentHybridVariant):
-    """Slow tape attention plus fixed or adaptive layer recirculation."""
+class BankRecirculationHybridVariant(BankRecurrentHybridVariant):
+    """Slow bank attention plus fixed or adaptive layer recirculation."""
 
-    variant_name = "tape_recirculation_hybrid"
+    variant_name = "bank_recirculation_hybrid"
 
     def __init__(
         self,

@@ -18,9 +18,9 @@ import sys
 
 ARMS = (
     "recirculation_adaptive_100m",
-    "tape_dense_100m",
-    "tape_periodic32_100m",
-    "tape_memory_token32_100m",
+    "bank_dense_100m",
+    "bank_periodic32_100m",
+    "bank_memory_token32_100m",
     "hybrid_recirculation_100m",
 )
 DEFAULT_REMOTE_ROOT = "/root/TinyMistralMPTT"

@@ -34,7 +34,7 @@ make estimate-flops-stage5
 The estimator reads the model configuration and counts the dominant matrix
 products for each full-sequence optimizer step: backbone Q/K/V/O projections,
 local self-attention score/value products, SwiGLU projections, every pass's
-LM-head projection, Tape writer/reader projections and attention, and adaptive
+LM-head projection, Bank writer/reader projections and attention, and adaptive
 recirculation controller matrices. It accounts for the exact physical sequence
 length and memory-write positions, including the 2,111-position Memory-token
 sequence produced from 2,048 linguistic tokens. K=2 and K=3 are combined with
@@ -65,7 +65,7 @@ make select-cuda-batch \
   RESULT=benchmarks/efficiency/results/cuda_batch_qualification.json
 ```
 
-The qualification suite tests K=2 adaptive Recirculation and dense Tape at 2048 context,
+The qualification suite tests K=2 adaptive Recirculation and dense Bank at 2048 context,
 FP32 parameter/optimizer storage, BF16 autocast, `grad_accum_steps=1`, and
 microbatches 1/2/4/8. OOM cases are recorded rather than aborting the suite.
 
@@ -157,7 +157,7 @@ make efficiency-cuda-stage5
 
 This suite measures K=1 for vanilla and K=2/K=3 for each multipass method at
 2048 tokens, batch size 1, FP32 parameter/optimizer storage, and BF16 autocast.
-It includes the study's actual Tape reader layers and adaptive recirculation
+It includes the study's actual Bank reader layers and adaptive recirculation
 source/destination layers. Combine the K=2 and K=3 rows using the study's
 90%/10% pass schedule to estimate wall-clock hours per 100M linguistic tokens;
 do not use the nominal pass-count multiplier as a substitute for this measured
@@ -170,9 +170,9 @@ invalidating the whole precision suite.
 Compact retained results live under `benchmarks/efficiency/results/`. See
 `docs/PRECISION.md` for the training precision contract.
 
-## Tape write-scaling suite
+## Bank write-scaling suite
 
-`benchmarks/efficiency/suites/tape_write_scaling.yaml` compares dense Tape and
+`benchmarks/efficiency/suites/bank_write_scaling.yaml` compares dense Bank and
 periodic C=1/4/8/16/32 at W=32.
 These are engineering measurements only; they do not select the scientific
 write cadence.

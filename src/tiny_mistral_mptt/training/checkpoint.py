@@ -303,7 +303,7 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
         canonical["ntp_pass_loss_weights_by_k"] = canonical.get("pass_loss_weights_by_k")
     canonical.setdefault("recurrent_nmp_target_normalization", "rms")
     canonical.setdefault("recurrent_nmp_pass_loss_weights_by_k", None)
-    canonical.setdefault("tape_nmp_pass_loss_weights_by_k", None)
+    canonical.setdefault("bank_nmp_pass_loss_weights_by_k", None)
     canonical.pop("pass_loss_weights", None)
     canonical.pop("pass_loss_weights_by_k", None)
     ignored = {

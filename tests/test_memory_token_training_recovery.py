@@ -12,8 +12,8 @@ from tiny_mistral_mptt.data.packed_dataset import load_packed_dataset_for_experi
 from tiny_mistral_mptt.data.prepare import PreparationRequest, materialize_from_document_iterators
 from tiny_mistral_mptt.data.recipes import DOLMINO_50B_SOURCES
 from tiny_mistral_mptt.training.trainer import Trainer
-from tiny_mistral_mptt.variants.tape import TapeVariant
-from tiny_mistral_mptt.variants.tape_add_hybrid import TapeAddHybridVariant
+from tiny_mistral_mptt.variants.bank import BankVariant
+from tiny_mistral_mptt.variants.bank_add_hybrid import BankAddHybridVariant
 
 
 def _docs(offset: int):
@@ -48,7 +48,7 @@ def _model(variant: str):
         micro_config(num_hidden_layers=2, sliding_window=4),
         attention_backend="reference",
     )
-    cls = TapeVariant if variant == "tape" else TapeAddHybridVariant
+    cls = BankVariant if variant == "bank" else BankAddHybridVariant
     return cls(
         backbone,
         memory_window=3,
@@ -73,7 +73,7 @@ def _assert_optimizer_equal(a: torch.optim.Optimizer, b: torch.optim.Optimizer) 
                 assert value == other
 
 
-@pytest.mark.parametrize("variant", ["tape", "tape_add_hybrid"])
+@pytest.mark.parametrize("variant", ["bank", "bank_add_hybrid"])
 def test_memory_token_training_is_bit_exact_across_auto_resume(tmp_path, variant):
     data_dir = tmp_path / "data"
     _artifact(data_dir)
