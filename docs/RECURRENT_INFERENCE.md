@@ -1,19 +1,16 @@
 # Exact incremental and collapsed recurrent inference
 
-This document defines cached inference for the active `recirculation` and
-`bank` and `bank_multiscale` variants. The retired `memory_add` and
-`bank_add_hybrid` controls remain
-documented only for loading historical checkpoints. Prompt refinement depth K
-is an inference-time parameter and need not equal the K used during training.
+This document defines cached inference for the active `recirculation`, `bank`,
+and `bank_multiscale` variants. Prompt refinement depth K is an inference-time
+parameter and need not equal the training depth.
 
 ## Exact incremental K
 
 `exact_incremental` keeps K independent TinyMistral self-attention KV streams.
 Stream 1 is the first-pass stream. Stream `k>1` consumes strict-past feedback
-from stream `k-1` using the architecture-specific MemoryAdd/recirculation/bank
-rule. Recirculation stores the source-layer state rather than the final-layer
-state, so the cached source and full-sequence source use the same layer and
-right-shift alignment.
+from stream `k-1` using the architecture-specific routing rule. Recirculation
+stores its source-layer state, so cached and full-sequence execution use the
+same layer and shift.
 
 The central invariant is **snapshot before update**. At physical position t,
 every higher stream reads the lower-stream feedback state that existed before t.
@@ -77,16 +74,6 @@ In `write_only` mode every self-attention layer cache carries a boolean
 position but has validity false, so later cached queries cannot self-attend to
 it.
 
-## BankAddHybrid MEM rule
-
-For `A <MEM> B`, the fast MemoryAdd state is the last ordinary state. The MEM
-step reads that fast state and writes its own slow bank record, but does not
-replace the fast state. B therefore receives the same fast source h_A and only
-then advances the fast state to h_B.
-
-This rule is identical between full-sequence multipass alignment and cached
-recurrent updates.
-
 ## API
 
 ```python
@@ -114,7 +101,5 @@ Before interpreting recurrent quality:
 - multiscale Bank state must retain the exact sparse-old/dense-recent union;
 - write-only MEM validity must survive KV caching without changing physical
   positions;
-- BankAddHybrid must preserve fast state across MEM and advance it on ordinary
-  tokens;
 - cached absolute positions must remain correct beyond the self-attention
   sliding window.

@@ -1,1 +1,4 @@
-Active efficiency results may be retained here when they are worth versioning. Large/ad-hoc generated measurements belong under `generated/`, which is ignored by Git. No unified-bank efficiency result has been retained yet.
+# Efficiency results
+
+Retain compact, reusable results here. Large or ad-hoc measurements are ignored
+alongside this README; use descriptive filenames directly in this directory.

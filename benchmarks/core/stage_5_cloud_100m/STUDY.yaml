@@ -1,6 +1,6 @@
 name: stage_5_cloud_100m
 status: locked
-question: How do the six active feedback architectures compare after a 100M-token Phase-B continuation from the canonical wiring setup?
+question: How do the eight active architectures compare after a 100M-token Phase-B continuation from the canonical wiring setup?
 arms:
   - {id: vanilla_100m, config: vanilla_100m.yaml}
   - {id: recirculation_adaptive_100m, config: recirculation_adaptive_100m.yaml}
@@ -8,4 +8,6 @@ arms:
   - {id: bank_periodic32_100m, config: bank_periodic32_100m.yaml}
   - {id: bank_memory_token32_100m, config: bank_memory_token32_100m.yaml}
   - {id: hybrid_recirculation_100m, config: hybrid_recirculation_100m.yaml}
+  - {id: bank_multiscale_100m, config: bank_multiscale_100m.yaml}
+  - {id: sparse_swa_100m, config: sparse_swa_100m.yaml}
 comparisons: []

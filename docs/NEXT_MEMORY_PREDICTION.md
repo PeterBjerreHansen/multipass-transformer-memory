@@ -25,13 +25,13 @@ P_recurrent(h_t^k) -> stop_gradient(RMS(r_(t+1)^K))
 
 `r` is semantic and architecture-specific. Adaptive Recirculation uses its
 captured source-layer state; the active hybrid uses its recurrent component.
-The retired MemoryAdd/BankAddHybrid controls use their historical recurrent
-states only for checkpoint compatibility. The default target RMS-normalization uses the same parameter-free
-variance calculation as Mistral RMSNorm, without applying a learned gain. This
-removes the arbitrary residual-stream amplitude that `_norm_match` discards at
-routing time. Set `recurrent_nmp_target_normalization: none` for the raw-state
-ablation. Explicit `<MEM>` controls are skipped when finding the next linguistic
-token.
+The retired MemoryAdd and BankAddHybrid controls use their historical recurrent
+states only for checkpoint compatibility. The default target normalization uses
+the same parameter-free variance calculation as Mistral RMSNorm, without a
+learned gain. This removes the residual-stream amplitude that `_norm_match`
+discards at routing time. Set `recurrent_nmp_target_normalization: none` for the
+raw-state ablation. Explicit `<MEM>` controls are skipped when finding the next
+linguistic token.
 
 Bank NMP predicts the first strictly later stored memory:
 
@@ -40,11 +40,11 @@ w(t) = first write position greater than physical position t
 P_bank(h_t^k) -> stop_gradient(writer(s_w(t)^K))
 ```
 
-The existing dense, periodic, or explicit-memory-token write policy defines
-`w(t)`. The target is post-writer because that is the representation read from
-the bank; no pre-writer state is cached or used as a bank target. Bank targets
-are left in their exact post-writer scale by default. Query positions must be
-linguistic; write positions may be controls.
+For `bank`, the configured dense, periodic, or explicit-memory-token write
+policy defines `w(t)`. Multiscale Bank uses its dense source stream. The target
+is post-writer because that is the representation read from the Bank. Bank
+targets keep their post-writer scale. Query positions must be linguistic, but
+write positions may be controls.
 In memory-token mode, a future `<MEM>` can have linguistic distance zero from
 the preceding token even though its physical index is strictly greater.
 
@@ -93,8 +93,9 @@ Supported objectives are:
 | --- | ---: | ---: |
 | `recirculation` | yes | no |
 | `bank` | no | yes |
+| `bank_multiscale` | no | yes |
 | `bank_recirculation_hybrid` | yes | yes |
-| `vanilla`, `fbt` | no | no |
+| `vanilla`, `sparse_swa`, `fbt` | no | no |
 
 Each enabled objective gets an independent
 `RMSNorm -> Linear -> GELU -> Linear -> GELU -> Linear` head. Heads have the

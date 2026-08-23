@@ -2,7 +2,7 @@ variant: vanilla
 phase: B
 model_dir: checkpoints/TinyMistral-248M-v3
 data_dir: data/dolmino/pilot_2048
-output_dir: benchmarks/development/stage_3_cloud_pilot/results/generated/vanilla_seed1337
+output_dir: benchmarks/development/stage_3_cloud_pilot/results/vanilla_seed1337
 device: cuda
 dtype: float32
 autocast_dtype: bfloat16

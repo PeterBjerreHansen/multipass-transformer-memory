@@ -10,6 +10,8 @@ materialized dataset files are ignored.
   set.
 - `dolmino/gpu_2048/config.yaml`: separate 100M-token serious-run artifact;
   training may repeat it when a declared campaign budget exceeds one epoch.
+- `dolmino/gpu_2048_staged/config.yaml`: shared validation plus non-overlapping
+  wiring and Phase-B slices for initialized serious-run controls.
 
 Use `scripts/prepare_data.py` and `scripts/verify_data.py` rather than editing a
 generated artifact in place.

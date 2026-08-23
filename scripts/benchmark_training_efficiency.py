@@ -233,6 +233,7 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("bank_multiscale efficiency cases do not use memory_write_* fields")
         if min(memory_dense_window + memory_sparse_window, memory_sparse_stride) <= 0:
             raise ValueError("bank_multiscale efficiency cases require valid retention fields")
+        memory_window = memory_dense_window + memory_sparse_window
     elif is_bank:
         if memory_write_mode not in {"dense", "periodic", "memory_token"}:
             raise ValueError("bank efficiency cases require memory_write_mode: dense|periodic|memory_token")

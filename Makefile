@@ -74,12 +74,12 @@ efficiency-mps-precision:
 efficiency-mps-context:
 	uv run python scripts/benchmark_training_efficiency.py \
 		--suite benchmarks/efficiency/suites/context_scaling.yaml --device mps \
-		--output benchmarks/efficiency/results/generated/mps_context.json
+		--output benchmarks/efficiency/results/mps_context.json
 
 efficiency-mps-batch:
 	uv run python scripts/benchmark_training_efficiency.py \
 		--suite benchmarks/efficiency/suites/batch_scaling.yaml --device mps \
-		--output benchmarks/efficiency/results/generated/mps_batch.json
+		--output benchmarks/efficiency/results/mps_batch.json
 
 efficiency-cuda-training:
 	uv run python scripts/benchmark_training_efficiency.py \
@@ -94,23 +94,23 @@ efficiency-cuda-precision:
 efficiency-cuda-context:
 	uv run python scripts/benchmark_training_efficiency.py \
 		--suite benchmarks/efficiency/suites/context_scaling.yaml --device cuda --autocast-dtype bfloat16 \
-		--output benchmarks/efficiency/results/generated/cuda_context.json
+		--output benchmarks/efficiency/results/cuda_context.json
 
 efficiency-cuda-batch:
 	uv run python scripts/benchmark_training_efficiency.py \
 		--suite benchmarks/efficiency/suites/batch_scaling.yaml --device cuda --autocast-dtype bfloat16 \
-		--output benchmarks/efficiency/results/generated/cuda_batch.json
+		--output benchmarks/efficiency/results/cuda_batch.json
 
 efficiency-cuda-stage5:
 	uv run python scripts/benchmark_training_efficiency.py \
 		--suite benchmarks/efficiency/suites/stage_5_architectures.yaml \
-		--output benchmarks/efficiency/results/generated/stage_5_architectures.json
+		--output benchmarks/efficiency/results/stage_5_architectures.json
 
 estimate-flops-stage5:
 	uv run python scripts/estimate_training_flops.py \
 		--suite benchmarks/efficiency/suites/stage_5_architectures.yaml \
 		--model-config checkpoints/TinyMistral-248M-v3/config.json \
-		--output benchmarks/efficiency/results/generated/stage_5_training_flops.json
+		--output benchmarks/efficiency/results/stage_5_training_flops.json
 
 
 # Engineering-only bank write-cadence scaling. This does not select C.
@@ -118,7 +118,7 @@ efficiency-bank-write:
 	uv run python scripts/benchmark_training_efficiency.py \
 		--suite benchmarks/efficiency/suites/bank_write_scaling.yaml \
 		--device cuda --autocast-dtype bfloat16 \
-		--output benchmarks/efficiency/results/generated/bank_write_scaling.json
+		--output benchmarks/efficiency/results/bank_write_scaling.json
 
 # Core-run batching qualification. This keeps grad accumulation at 1 so the
 # hardware microbatch axis is measured without silently changing optimizer batch.

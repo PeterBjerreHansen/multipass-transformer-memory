@@ -5,7 +5,10 @@ import math
 import torch
 import torch.nn.functional as F
 
-from .multiresolution import multiresolution_key_indices
+from .multiresolution import (
+    fast_multiresolution_key_value_windows,
+    multiresolution_key_indices,
+)
 
 
 def _validate_qkv(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> None:
@@ -172,25 +175,36 @@ def _multiresolution_local_attention(
         sparse_window=sparse_window,
         include_current=True,
     )
-    compact_width = indices.shape[-1]
-    safe_indices = indices.clamp(max=seq_len - 1)
+    if query.device.type == "mps":
+        key_bank, value_bank, valid = fast_multiresolution_key_value_windows(
+            key,
+            value,
+            positions,
+            recent_window=sliding_window,
+            sparse_stride=sparse_stride,
+            sparse_window=sparse_window,
+            include_current=True,
+            key_padding_mask=key_padding_mask,
+        )
+    else:
+        compact_width = indices.shape[-1]
+        safe_indices = indices.clamp(max=seq_len - 1)
+        key_expanded = key[:, :, None, :, :].expand(-1, -1, seq_len, -1, -1)
+        value_expanded = value[:, :, None, :, :].expand(-1, -1, seq_len, -1, -1)
+        gather_index = safe_indices[:, None, :, :, None].expand(
+            -1, hkv, -1, -1, head_dim
+        )
+        key_bank = torch.gather(key_expanded, dim=3, index=gather_index)
+        value_bank = torch.gather(value_expanded, dim=3, index=gather_index)
 
-    key_expanded = key[:, :, None, :, :].expand(-1, -1, seq_len, -1, -1)
-    value_expanded = value[:, :, None, :, :].expand(-1, -1, seq_len, -1, -1)
-    gather_index = safe_indices[:, None, :, :, None].expand(
-        -1, hkv, -1, -1, head_dim
-    )
-    key_bank = torch.gather(key_expanded, dim=3, index=gather_index)
-    value_bank = torch.gather(value_expanded, dim=3, index=gather_index)
-
-    valid = index_valid
-    if key_padding_mask is not None:
-        gathered_key_valid = torch.gather(
-            key_padding_mask,
-            dim=1,
-            index=safe_indices.reshape(bsz, -1),
-        ).reshape(bsz, seq_len, compact_width)
-        valid = valid & gathered_key_valid
+        valid = index_valid
+        if key_padding_mask is not None:
+            gathered_key_valid = torch.gather(
+                key_padding_mask,
+                dim=1,
+                index=safe_indices.reshape(bsz, -1),
+            ).reshape(bsz, seq_len, compact_width)
+            valid = valid & gathered_key_valid
 
     groups = hq // hkv
     grouped_query = query.reshape(bsz, hkv, groups, seq_len, head_dim)

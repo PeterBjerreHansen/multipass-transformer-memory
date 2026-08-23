@@ -67,7 +67,7 @@ def _repo(tmp_path: Path) -> Path:
 
 def test_study_allows_only_declared_experimental_axes(tmp_path):
     study = _repo(tmp_path)
-    prefix = "benchmarks/development/example/results/generated"
+    prefix = "benchmarks/development/example/results"
     _write_config(study / "k2.yaml", output_dir=f"{prefix}/k2", passes=2)
     _write_config(study / "k3.yaml", output_dir=f"{prefix}/k3", passes=3)
     (study / "STUDY.yaml").write_text(
@@ -90,7 +90,7 @@ comparisons:
 
 def test_study_rejects_undeclared_execution_difference(tmp_path):
     study = _repo(tmp_path)
-    prefix = "benchmarks/development/example/results/generated"
+    prefix = "benchmarks/development/example/results"
     _write_config(study / "a.yaml", output_dir=f"{prefix}/a", batch_size=1)
     _write_config(study / "b.yaml", output_dir=f"{prefix}/b", batch_size=2)
     (study / "STUDY.yaml").write_text(
@@ -113,7 +113,7 @@ comparisons:
 
 def test_study_rejects_orphan_runnable_config(tmp_path):
     study = _repo(tmp_path)
-    prefix = "benchmarks/development/example/results/generated"
+    prefix = "benchmarks/development/example/results"
     _write_config(study / "a.yaml", output_dir=f"{prefix}/a")
     _write_config(study / "orphan.yaml", output_dir=f"{prefix}/orphan")
     (study / "STUDY.yaml").write_text(
@@ -132,7 +132,7 @@ comparisons: []
 
 def test_study_requires_initialization_match_unless_explicitly_allowed(tmp_path):
     study = _repo(tmp_path)
-    prefix = "benchmarks/development/example/results/generated"
+    prefix = "benchmarks/development/example/results"
     _write_config(study / "a.yaml", output_dir=f"{prefix}/a", init_from="a.pt")
     _write_config(study / "b.yaml", output_dir=f"{prefix}/b", init_from="b.pt")
     manifest = study / "STUDY.yaml"
@@ -177,7 +177,7 @@ def test_core_study_must_be_locked(tmp_path):
     )
     study = tmp_path / "benchmarks" / "core" / "main_comparison"
     study.mkdir(parents=True)
-    prefix = "benchmarks/core/main_comparison/results/generated"
+    prefix = "benchmarks/core/main_comparison/results"
     _write_config(study / "arm.yaml", output_dir=f"{prefix}/arm")
     (study / "STUDY.yaml").write_text(
         """name: main_comparison

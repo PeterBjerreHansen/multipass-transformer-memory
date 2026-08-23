@@ -7,4 +7,5 @@ arms:
   - {id: bank_periodic32_wiring_5m, config: bank_periodic32_wiring.yaml}
   - {id: bank_memory_token32_wiring_5m, config: bank_memory_token32_wiring.yaml}
   - {id: hybrid_recirculation_wiring_5m, config: hybrid_recirculation_wiring.yaml}
+  - {id: bank_multiscale_wiring_5m, config: bank_multiscale_wiring.yaml}
 comparisons: []

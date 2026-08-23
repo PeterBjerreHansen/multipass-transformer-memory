@@ -11,6 +11,7 @@ Checked-in preparation recipes live beside their local generated artifacts:
 data/dolmino/wiring_2048/config.yaml
 data/dolmino/pilot_2048/config.yaml
 data/dolmino/gpu_2048/config.yaml
+data/dolmino/gpu_2048_staged/config.yaml
 ```
 
 Generated binaries and manifests remain local/ignored.
@@ -77,6 +78,8 @@ Development wiring uses `wiring_2048` exactly once per arm. Development pilots
 use `pilot_2048` exactly once when continued to their full 10M endpoint. Both
 share the same held-out validation split; the pilot recipe skips the complete
 5M wiring slice before storing its following 10M training slice. The larger
-`gpu_2048` artifact is reserved for serious runs and may be reshuffled and
-repeated when a declared training budget exceeds 100M tokens. In all three
-artifacts, evaluation remains source-document-disjoint from training.
+`gpu_2048` artifact supports ordinary serious runs. The `gpu_2048_staged`
+recipe stores non-overlapping wiring and Phase-B slices with a shared validation
+set for initialized controls. A run may reshuffle and repeat its assigned slice
+when its budget exceeds the stored token count. Evaluation remains
+source-document-disjoint from training in every artifact.

@@ -180,6 +180,7 @@ def test_multiscale_bank_config_uses_explicit_dense_and_sparse_windows():
     )
     assert cfg.memory_layers == [4, 7]
     assert cfg.memory_position_encoding == "rope"
+    assert cfg.memory_window == 64
 
     with pytest.raises(ValueError, match="requires memory_dense_window"):
         _config(variant="bank_multiscale")

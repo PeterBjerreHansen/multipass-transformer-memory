@@ -2,7 +2,7 @@ variant: vanilla
 phase: B
 model_dir: checkpoints/TinyMistral-248M-v3
 data_dir: data/dolmino/wiring_2048
-output_dir: benchmarks/controls/substrate/results/generated/mac
+output_dir: benchmarks/controls/substrate/results/mac
 device: mps
 dtype: float32
 autocast_dtype: null

@@ -5,7 +5,10 @@ import math
 import torch
 import torch.nn.functional as F
 
-from tiny_mistral.attention.multiresolution import multiresolution_key_indices
+from tiny_mistral.attention.multiresolution import (
+    fast_multiresolution_key_value_windows,
+    multiresolution_key_indices,
+)
 
 
 def _validate_qkv(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> None:
@@ -316,26 +319,38 @@ def strict_past_multiscale_bank_attention(
     if not torch.equal(memory_positions, expected):
         raise ValueError("multiscale Bank requires one dense record per sequence position")
 
-    indices, index_valid = multiresolution_key_indices(
-        query_positions,
-        recent_window=dense_window,
-        sparse_stride=sparse_stride,
-        sparse_window=sparse_window,
-        include_current=False,
-    )
-    compact_width = indices.shape[-1]
-    safe_indices = indices.clamp(max=memory_len - 1)
-    key_expanded = key[:, :, None, :, :].expand(-1, -1, query_len, -1, -1)
-    value_expanded = value[:, :, None, :, :].expand(-1, -1, query_len, -1, -1)
-    gather_index = safe_indices[:, None, :, :, None].expand(
-        -1, hkv, -1, -1, head_dim
-    )
-    key_bank = torch.gather(key_expanded, 3, gather_index)
-    value_bank = torch.gather(value_expanded, 3, gather_index)
-    gathered_mask = torch.gather(
-        memory_mask, 1, safe_indices.reshape(bsz, -1)
-    ).reshape(bsz, query_len, compact_width)
-    valid = index_valid & gathered_mask
+    if query.device.type == "mps" and query_len == memory_len and torch.equal(query_positions, expected):
+        key_bank, value_bank, valid = fast_multiresolution_key_value_windows(
+            key,
+            value,
+            query_positions,
+            recent_window=dense_window,
+            sparse_stride=sparse_stride,
+            sparse_window=sparse_window,
+            include_current=False,
+            key_padding_mask=memory_mask,
+        )
+    else:
+        indices, index_valid = multiresolution_key_indices(
+            query_positions,
+            recent_window=dense_window,
+            sparse_stride=sparse_stride,
+            sparse_window=sparse_window,
+            include_current=False,
+        )
+        compact_width = indices.shape[-1]
+        safe_indices = indices.clamp(max=memory_len - 1)
+        key_expanded = key[:, :, None, :, :].expand(-1, -1, query_len, -1, -1)
+        value_expanded = value[:, :, None, :, :].expand(-1, -1, query_len, -1, -1)
+        gather_index = safe_indices[:, None, :, :, None].expand(
+            -1, hkv, -1, -1, head_dim
+        )
+        key_bank = torch.gather(key_expanded, 3, gather_index)
+        value_bank = torch.gather(value_expanded, 3, gather_index)
+        gathered_mask = torch.gather(
+            memory_mask, 1, safe_indices.reshape(bsz, -1)
+        ).reshape(bsz, query_len, compact_width)
+        valid = index_valid & gathered_mask
 
     groups = hq // hkv
     grouped_query = query.reshape(bsz, hkv, groups, query_len, head_dim)

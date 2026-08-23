@@ -27,10 +27,10 @@ L = sum_k w_k L_k
 `pass_schedule` independently controls the sampled pass count. Its RNG/state is
 checkpointed, so fixed or mixed K schedules resume exactly.
 
-The active compute-conscious multipass protocol samples K=2 on 90% of batches
-and K=3 on 10%. K-specific loss weights make Phase A estimate `0.9 L2 + 0.1
-L3` with only 2.1 average passes. Phase B additionally retains a first-pass
-loss. The runnable specifications live under `benchmarks/development/`.
+The original multipass study samples K=2 on 90% of batches and K=3 on 10%.
+K-specific loss weights make Phase A estimate `0.9 L2 + 0.1 L3` with 2.1
+average passes. Phase B also retains a first-pass loss. One-pass controls such
+as Sparse SWA use K=1. Runnable protocols live under `benchmarks/development/`.
 
 ## Parameter groups and schedules
 
@@ -104,11 +104,11 @@ A predicts B; MEM predicts nothing. See `BANK_MEMORY.md` for the full contract.
 
 ## Phase A and MEM
 
-Dense/periodic bank Phase A can discard the frozen pass-1 graph because no added
-parameter occurs in pass 1. Memory-token Phase A cannot: the added MEM embedding
-participates in pass 1 and must receive gradient through later recurrent/bank
-loss. The backbone remains frozen, but pass-1 autograd stays enabled for that
-mode.
+Dense and periodic Bank Phase A can discard the frozen pass-1 graph because no
+added parameter occurs in pass 1. Memory-token Phase A cannot: the added MEM
+embedding participates in pass 1 and must receive gradient through later
+recurrent/bank loss. The backbone remains frozen, but pass-1 autograd stays
+enabled for that mode.
 
 ## Checkpoint cadence and validation
 

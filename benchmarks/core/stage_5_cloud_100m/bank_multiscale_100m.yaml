@@ -1,14 +1,13 @@
-variant: bank
+variant: bank_multiscale
 phase: B
-memory_window: 32
-memory_write_mode: periodic
-memory_write_stride: 32
-memory_token_visibility: null
-memory_layers: [3, 7]
+memory_dense_window: 32
+memory_sparse_window: 32
+memory_sparse_stride: 32
+memory_layers: [4, 7]
 memory_position_encoding: rope
 model_dir: checkpoints/TinyMistral-248M-v3
 data_dir: data/dolmino/gpu_2048_staged
-output_dir: benchmarks/development/stage_5_cloud_100m/results/generated/bank_periodic32_100m
+output_dir: benchmarks/core/stage_5_cloud_100m/results/bank_multiscale_100m
 device: cuda
 dtype: float32
 autocast_dtype: bfloat16
@@ -37,4 +36,4 @@ checkpoint_every_seconds: 900.0
 checkpoint_keep_last: 2
 snapshot_at_tokens: [100007936]
 resume_from: null
-init_from: benchmarks/development/stage_1_wiring/results/generated/bank_periodic32_wiring_5m/checkpoints/checkpoint_000005242880.pt
+init_from: benchmarks/development/stage_1_wiring/results/bank_multiscale_wiring_5m/checkpoints/checkpoint_000005242880.pt

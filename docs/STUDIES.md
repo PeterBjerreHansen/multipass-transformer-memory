@@ -13,7 +13,7 @@ benchmarks/<role>/<study>/
   results/
     README.md
     <retained summaries>
-    generated/              # ignored raw run artifacts
+    <arm>/                  # ignored raw run artifacts
 ```
 
 The runnable arm YAML is the authoritative execution specification. It should
@@ -78,7 +78,7 @@ study directories explicitly. The verifier checks that:
 - manifests are structurally valid;
 - all declared arm configs exist and parse;
 - no runnable config is silently omitted from the manifest;
-- each arm writes under its own `results/generated/<arm>/` path;
+- each arm writes under its own `results/<arm>/` path;
 - compared arms differ only on declared fields;
 - core studies are locked before execution.
 
@@ -88,8 +88,8 @@ study directories explicitly. The verifier checks that:
 
 Keep small result tables, JSON summaries, and interpretation notes directly in
 `results/` when they are worth retaining. Raw checkpoints, `run.json`,
-`metrics.jsonl`, and other execution artifacts belong under `results/generated/`
-and are ignored by Git.
+`metrics.jsonl`, and other execution artifacts belong under the relevant
+`results/<arm>/` directory and are ignored by Git.
 
 This preserves locality without turning the source tree into a checkpoint
 archive. When a generated checkpoint initializes another run, the trainer

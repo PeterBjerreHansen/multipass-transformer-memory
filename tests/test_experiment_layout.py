@@ -21,14 +21,14 @@ def _development_configs() -> list[Path]:
     )
 
 
-def test_default_experiment_config_uses_active_2048_context_and_local_generated_output():
+def test_default_experiment_config_uses_active_2048_context_and_local_output():
     cfg = ExperimentConfig()
     assert cfg.data_dir == "data/dolmino/wiring_2048"
-    assert cfg.output_dir == "benchmarks/controls/smoke/results/generated/vanilla"
+    assert cfg.output_dir == "benchmarks/controls/smoke/results/vanilla"
 
 
 def test_data_recipes_live_beside_materialized_artifacts():
-    for name in ("wiring_2048", "pilot_2048", "gpu_2048"):
+    for name in ("wiring_2048", "pilot_2048", "gpu_2048", "gpu_2048_staged"):
         path = ROOT / "data" / "dolmino" / name / "config.yaml"
         assert path.exists()
         cfg = load_data_config(path)
@@ -45,13 +45,13 @@ def test_evaluation_suites_are_reusable_assets_not_data_recipes():
     assert not (ROOT / "data" / "lm_evaluation").exists()
 
 
-def test_control_configs_parse_and_write_to_local_generated_results():
+def test_control_configs_parse_and_write_to_local_results():
     configs = _control_configs()
     assert configs
     for path in configs:
         cfg = load_experiment_config(path)
         control_dir = path.parent
-        expected_prefix = (control_dir / "results" / "generated").relative_to(ROOT)
+        expected_prefix = (control_dir / "results").relative_to(ROOT)
         output = Path(cfg.output_dir)
         assert output.is_relative_to(expected_prefix)
 
@@ -95,7 +95,7 @@ def test_active_pipeline_shelves_retired_controls_and_covers_all_bank_policies()
         assert explicit.memory_token_visibility == "write_only"
         assert all(cfg.checkpoint_keep_last == expected_retention for cfg in configs)
 
-    stage5 = development / "stage_5_cloud_100m"
+    stage5 = ROOT / "benchmarks" / "core" / "stage_5_cloud_100m"
     manifest = yaml.safe_load((stage5 / "STUDY.yaml").read_text(encoding="utf-8"))
     configs = [
         load_experiment_config(stage5 / arm["config"])
@@ -105,6 +105,49 @@ def test_active_pipeline_shelves_retired_controls_and_covers_all_bank_policies()
         cfg.variant not in {"fbt", "memory_add", "bank_add_hybrid"}
         for cfg in configs
     )
+
+
+def test_attention_controls_follow_their_required_training_paths():
+    development = ROOT / "benchmarks" / "development"
+
+    stage1 = yaml.safe_load(
+        (development / "stage_1_wiring" / "STUDY.yaml").read_text(encoding="utf-8")
+    )
+    stage1_configs = {
+        load_experiment_config(development / "stage_1_wiring" / arm["config"]).variant
+        for arm in stage1["arms"]
+    }
+    assert "bank_multiscale" in stage1_configs
+    assert "sparse_swa" not in stage1_configs
+
+    stage2 = yaml.safe_load(
+        (development / "stage_2_local_smoke" / "STUDY.yaml").read_text(encoding="utf-8")
+    )
+    stage2_configs = [
+        load_experiment_config(development / "stage_2_local_smoke" / arm["config"])
+        for arm in stage2["arms"]
+    ]
+    assert {cfg.variant for cfg in stage2_configs} >= {"bank_multiscale", "sparse_swa"}
+
+    stage5_dir = ROOT / "benchmarks" / "core" / "stage_5_cloud_100m"
+    stage5 = yaml.safe_load((stage5_dir / "STUDY.yaml").read_text(encoding="utf-8"))
+    controls = {
+        cfg.variant: cfg
+        for cfg in (
+            load_experiment_config(stage5_dir / arm["config"])
+            for arm in stage5["arms"]
+            if arm["id"] in {"bank_multiscale_100m", "sparse_swa_100m"}
+        )
+    }
+    assert set(controls) == {"bank_multiscale", "sparse_swa"}
+    assert controls["bank_multiscale"].memory_window == 64
+    assert controls["bank_multiscale"].init_from is not None
+    assert controls["sparse_swa"].init_from is None
+    assert controls["sparse_swa"].normalized_pass_schedule()[0]["probabilities"] == {
+        1: 1.0
+    }
+    assert all(cfg.data_dir == "data/dolmino/gpu_2048_staged" for cfg in controls.values())
+    assert all(cfg.checkpoint_keep_last == 2 for cfg in controls.values())
 
 
 def test_wiring_and_pilot_each_consume_one_complete_training_split():
@@ -188,7 +231,7 @@ def test_root_readme_links_active_pipeline_and_explains_config_locality():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "benchmarks/development/experimental_pipeline.md" in readme
     assert "There is intentionally no central `configs/` directory" in readme
-    assert "results/generated/" in readme
+    assert "results/<arm>/" in readme
 
 
 def test_deleted_diagnostic_studies_are_not_referenced_by_current_docs():

@@ -22,10 +22,12 @@ ARMS = (
     "bank_periodic32_100m",
     "bank_memory_token32_100m",
     "hybrid_recirculation_100m",
+    "bank_multiscale_100m",
+    "sparse_swa_100m",
 )
-DEFAULT_REMOTE_ROOT = "/root/TinyMistralMPTT"
-DEFAULT_STUDY_DIR = "benchmarks/development/stage_5_cloud_100m"
-DEFAULT_LOCAL_ROOT = "benchmarks/core/stage_5_cloud_100m_baseline/results/generated"
+DEFAULT_REMOTE_ROOT = "/root/multipass-transformer-memory"
+DEFAULT_STUDY_DIR = "benchmarks/core/stage_5_cloud_100m"
+DEFAULT_LOCAL_ROOT = "benchmarks/core/stage_5_cloud_100m/results"
 DEFAULT_LOCK = "/tmp/tinymistral-cloud-campaign.lock"
 
 
@@ -67,7 +69,7 @@ def _local_complete(path: Path) -> bool:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the locked Stage-5 cloud arms one at a time and archive them locally."
+        description="Run the remaining arms of the locked Stage-5 eight-arm study one at a time and archive them locally."
     )
     parser.add_argument("--host", required=True, help="Verda VM hostname or IP")
     parser.add_argument("--vm-id", required=True, help="Verda VM ID")
@@ -93,7 +95,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def _controller_command(args: argparse.Namespace, arm: str) -> list[str]:
     config = f"{args.study_dir}/{arm}.yaml"
-    remote_output = f"{args.study_dir}/results/generated/{arm}"
+    remote_output = f"{args.study_dir}/results/{arm}"
     local_output = (args.local_root / arm).resolve()
     command = [
         str(_repo_root() / "scripts" / "start-and-watch"),

@@ -6,7 +6,7 @@ recirculation_destination_layer: 3
 recirculation_alpha: 0.1
 model_dir: checkpoints/TinyMistral-248M-v3
 data_dir: data/dolmino/wiring_2048
-output_dir: benchmarks/development/stage_1_wiring/results/generated/recirculation_adaptive_wiring_5m
+output_dir: benchmarks/development/stage_1_wiring/results/recirculation_adaptive_wiring_5m
 device: mps
 dtype: float32
 autocast_dtype: null

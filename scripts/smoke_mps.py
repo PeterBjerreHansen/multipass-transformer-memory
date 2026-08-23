@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Hardware smoke test for the Apple-MPS local-window backend.
+"""Hardware smoke test for the Apple-MPS attention backends.
 
 Uses a tiny random Mistral configuration, so no checkpoint download is needed.
 """
@@ -12,6 +12,8 @@ import torch
 from tiny_mistral.config import MistralConfig
 from tiny_mistral.device import mps_available, synchronize
 from tiny_mistral.modeling import MistralForCausalLM
+from tiny_mistral_mptt.training.phases import configure_phase
+from tiny_mistral_mptt.variants import MultiscaleBankVariant
 
 
 def config() -> MistralConfig:
@@ -54,7 +56,24 @@ def main() -> None:
     print(f"forward max_abs_diff={diff.max().item():.8g} mean_abs_diff={diff.mean().item():.8g}")
     torch.testing.assert_close(b, a, atol=3e-2, rtol=3e-2)
 
+    ref.set_sparse_attention(stride=8, window=4, layers=[0])
+    local.set_sparse_attention(stride=8, window=4, layers=[0])
+    with torch.no_grad():
+        sparse_reference = ref(ids, use_cache=False).logits
+        sparse_local = local(ids, use_cache=False).logits
+    synchronize(device)
+    sparse_diff = (sparse_reference - sparse_local).abs()
+    print(
+        "sparse forward "
+        f"max_abs_diff={sparse_diff.max().item():.8g} "
+        f"mean_abs_diff={sparse_diff.mean().item():.8g}"
+    )
+    torch.testing.assert_close(
+        sparse_local, sparse_reference, atol=3e-2, rtol=3e-2
+    )
+
     model = local.train()
+    model.zero_grad(set_to_none=True)
     out = model(ids, labels=ids, use_cache=False)
     assert out.loss is not None and bool(torch.isfinite(out.loss).item())
     out.loss.backward()
@@ -62,7 +81,38 @@ def main() -> None:
         raise RuntimeError("no gradients produced")
     synchronize(device)
     print(f"loss={out.loss.item():.6f}")
-    print("PASS: MPS local-window forward, equivalence, and backward smoke test")
+
+    bank_backbone = MistralForCausalLM(
+        cfg, attention_backend="local"
+    ).to(device=device, dtype=torch.float16)
+    bank_backbone.load_state_dict(ref.state_dict())
+    bank = MultiscaleBankVariant(
+        bank_backbone,
+        memory_dense_window=8,
+        memory_sparse_window=4,
+        memory_sparse_stride=8,
+        memory_layers=[0],
+    ).to(device=device, dtype=torch.float16).train()
+    configure_phase(bank, "A")
+    bank_output = bank.compute_loss(
+        ids,
+        phase="A",
+        passes=2,
+        loss_weights=[0.0, 1.0],
+    )
+    if not bool(torch.isfinite(bank_output.loss).item()):
+        raise RuntimeError("non-finite Multiscale Bank loss")
+    bank_output.loss.backward()
+    if not any(
+        parameter.grad is not None
+        and bool(parameter.grad.detach().ne(0).any().item())
+        for parameter in bank.added_parameters()
+        if parameter.requires_grad
+    ):
+        raise RuntimeError("Multiscale Bank produced no added-parameter gradients")
+    synchronize(device)
+    print(f"multiscale_bank_loss={bank_output.loss.item():.6f}")
+    print("PASS: MPS local, Sparse SWA, and Multiscale Bank smoke tests")
 
 
 if __name__ == "__main__":

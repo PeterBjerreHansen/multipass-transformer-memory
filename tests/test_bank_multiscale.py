@@ -3,11 +3,79 @@ from __future__ import annotations
 import torch
 
 from conftest import micro_config
+from tiny_mistral.attention.multiresolution import (
+    fast_multiresolution_key_value_windows,
+    multiresolution_key_indices,
+)
 from tiny_mistral.modeling import MistralForCausalLM
 from tiny_mistral_mptt.feedback import BankState
 from tiny_mistral_mptt.inference import exact_decode_step, prefill_exact
 from tiny_mistral_mptt.variants.bank import BankVariant
 from tiny_mistral_mptt.variants.bank_multiscale import MultiscaleBankVariant
+
+
+def test_fast_multiresolution_windows_match_reference_gather_for_both_causal_modes():
+    torch.manual_seed(96)
+    batch, heads, sequence, head_dim = 2, 2, 13, 4
+    key = torch.randn(batch, heads, sequence, head_dim)
+    value = torch.randn_like(key)
+    positions = torch.arange(sequence)[None, :].expand(batch, -1)
+    mask = torch.ones(batch, sequence, dtype=torch.bool)
+    mask[0, 1] = False
+    mask[1, 8] = False
+
+    for include_current in (False, True):
+        indices, index_valid = multiresolution_key_indices(
+            positions,
+            recent_window=4,
+            sparse_stride=3,
+            sparse_window=3,
+            include_current=include_current,
+        )
+        safe_indices = indices.clamp(max=sequence - 1)
+        gather_index = safe_indices[:, None, :, :, None].expand(
+            -1, heads, -1, -1, head_dim
+        )
+        expected_key = torch.gather(
+            key[:, :, None, :, :].expand(-1, -1, sequence, -1, -1),
+            dim=3,
+            index=gather_index,
+        )
+        expected_value = torch.gather(
+            value[:, :, None, :, :].expand(-1, -1, sequence, -1, -1),
+            dim=3,
+            index=gather_index,
+        )
+        expected_valid = index_valid & torch.gather(
+            mask,
+            dim=1,
+            index=safe_indices.reshape(batch, -1),
+        ).reshape(batch, sequence, -1)
+
+        actual_key, actual_value, actual_valid = fast_multiresolution_key_value_windows(
+            key,
+            value,
+            positions,
+            recent_window=4,
+            sparse_stride=3,
+            sparse_window=3,
+            include_current=include_current,
+            key_padding_mask=mask,
+        )
+        torch.testing.assert_close(actual_valid, expected_valid, atol=0, rtol=0)
+        valid_5d = actual_valid[:, None, :, :, None].expand_as(actual_key)
+        torch.testing.assert_close(
+            actual_key.masked_select(valid_5d),
+            expected_key.masked_select(valid_5d),
+            atol=0,
+            rtol=0,
+        )
+        torch.testing.assert_close(
+            actual_value.masked_select(valid_5d),
+            expected_value.masked_select(valid_5d),
+            atol=0,
+            rtol=0,
+        )
 
 
 def backbone(seed: int) -> MistralForCausalLM:

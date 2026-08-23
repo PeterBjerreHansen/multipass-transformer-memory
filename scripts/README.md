@@ -51,7 +51,7 @@ generate.py
 
 `run_study.py` is the common executor for colocated development/core studies.
 It validates the manifest, exercises every sampled pass depth with a one-batch
-forward/backward preflight, and then runs selected arms sequentially:
+forward/backward preflight, and then runs selected arms sequentially.
 
 `start-and-watch` is the unattended cloud wrapper. It starts a remote
 `train.py --resume-auto` process, waits for a durable completed segment,
@@ -60,8 +60,9 @@ the Verda compute instance. It leaves the VM untouched when a run is
 interrupted or transfer verification fails. Run `--help` for the full
 interface; use `--transfer metadata` only for small smoke checks.
 
-`run-cloud-campaign` applies that lifecycle to the locked Stage-5 100M arms
-sequentially. It skips locally complete arms, transfers full artifacts, deletes
+`run-cloud-campaign` applies that lifecycle to the locked Stage-5 eight-arm
+study and its remaining 100M arms.
+It skips locally complete arms, transfers full artifacts, deletes
 each verified remote run directory, shuts down between arms, and deletes the
 compute instance after the selected campaign. A lock file prevents two
 campaigns from using the same VM concurrently.

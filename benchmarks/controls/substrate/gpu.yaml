@@ -2,7 +2,7 @@ variant: vanilla
 phase: B
 model_dir: checkpoints/TinyMistral-248M-v3
 data_dir: data/dolmino/gpu_2048
-output_dir: benchmarks/controls/substrate/results/generated/gpu
+output_dir: benchmarks/controls/substrate/results/gpu
 device: cuda
 dtype: float32
 autocast_dtype: bfloat16

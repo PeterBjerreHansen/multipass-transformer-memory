@@ -15,15 +15,12 @@ Research infrastructure must not change ordinary vanilla behavior silently.
 Baseline tests, HF-comparison scripts, and `VANILLA_SOURCE.sha256` are the
 guardrails.
 
-The Bank work adds explicitly tested substrate capabilities: self-attention
-K/V entries can carry a boolean validity mask, and selected layers can opt into
-a bounded dense-recent/fixed-periodic-old mask. The validity mask allows write-only `<MEM>`
-positions to retain physical/RoPE/cache coordinates while remaining unavailable
-as K/V. Ordinary inputs use all-valid keys. Reference attention was also hardened
-so a genuinely empty allowed row produces exact zero, matching the local/flex
-mask contract instead of softmaxing an all-masked row to a uniform distribution.
-Ordinary vanilla layers use the original local path; the sparse control reuses
-the pretrained projections and one union softmax.
+Bank and Sparse SWA add two tested substrate capabilities. Self-attention K/V
+entries can carry a validity mask, and selected layers can use a bounded
+dense-recent/fixed-periodic-old mask. Write-only `<MEM>` positions retain their
+physical, RoPE, and cache coordinates while remaining unavailable as K/V. An
+empty attention row returns exact zero in every backend. Ordinary layers retain
+the original local path, while Sparse SWA reuses the pretrained projections.
 
 ## FBT architecture reference
 
@@ -37,9 +34,9 @@ pretraining recipe.
 `PeterBjerreHansen/multi-pass-transformer-training` at
 `79398be4ac33a7489029e6075bdce930a0ec44b2` is a design reference for
 previous-pass top-state feedback, strict recurrence causality, retired
-MemoryAdd, and
-per-layer bank cross-attention. Current implementations are written directly
-against this repository's Mistral/GQA/local-attention interfaces.
+MemoryAdd, and per-layer Bank cross-attention. Current implementations are
+written directly against this repository's Mistral/GQA/local-attention
+interfaces.
 
 ## Training data
 

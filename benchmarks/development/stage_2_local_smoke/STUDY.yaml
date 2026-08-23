@@ -1,10 +1,12 @@
 name: stage_2_local_smoke
 status: planned
-question: Do the wired feedback models remain stable when the backbone is unfrozen?
+question: Do the feedback models and one-pass attention control remain stable during Phase B?
 arms:
   - {id: recirculation_adaptive_smoke, config: recirculation_adaptive_smoke.yaml}
   - {id: bank_dense_smoke, config: bank_dense_smoke.yaml}
   - {id: bank_periodic32_smoke, config: bank_periodic32_smoke.yaml}
   - {id: bank_memory_token32_smoke, config: bank_memory_token32_smoke.yaml}
   - {id: hybrid_recirculation_smoke, config: hybrid_recirculation_smoke.yaml}
+  - {id: bank_multiscale_smoke, config: bank_multiscale_smoke.yaml}
+  - {id: sparse_swa_smoke, config: sparse_swa_smoke.yaml}
 comparisons: []

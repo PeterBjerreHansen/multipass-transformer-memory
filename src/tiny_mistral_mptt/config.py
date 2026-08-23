@@ -69,17 +69,17 @@ def _coerce_pass_loss_weights_by_k(
     return dict(sorted(result.items()))
 
 
-def _coerce_memory_layers(raw: Any) -> str | list[int]:
-    """Canonicalize Bank reader placement while retaining an ``all`` shorthand."""
+def _coerce_layer_indices(raw: Any, *, field_name: str) -> str | list[int]:
+    """Canonicalize selected layer indices while retaining an ``all`` shorthand."""
     if raw == "all":
         return "all"
     if not isinstance(raw, (list, tuple)) or not raw:
-        raise ValueError("memory_layers must be 'all' or a non-empty list of indices")
+        raise ValueError(f"{field_name} must be 'all' or a non-empty list of indices")
     layers = [int(value) for value in raw]
     if any(layer < 0 for layer in layers):
-        raise ValueError("memory_layers indices must be non-negative")
+        raise ValueError(f"{field_name} indices must be non-negative")
     if len(layers) != len(set(layers)):
-        raise ValueError("memory_layers indices must be unique")
+        raise ValueError(f"{field_name} indices must be unique")
     return sorted(layers)
 
 
@@ -168,7 +168,7 @@ class ExperimentConfig:
     variant: str = "vanilla"
     model_dir: str = "checkpoints/TinyMistral-248M-v3"
     data_dir: str = "data/dolmino/wiring_2048"
-    output_dir: str = "benchmarks/controls/smoke/results/generated/vanilla"
+    output_dir: str = "benchmarks/controls/smoke/results/vanilla"
     device: str = "auto"
     dtype: str = "float32"
     autocast_dtype: str | None = None
@@ -287,14 +287,27 @@ class ExperimentConfig:
             "bank_add_hybrid",
             "bank_recirculation_hybrid",
         }:
-            self.memory_layers = _coerce_memory_layers(
-                "all" if self.memory_layers is None else self.memory_layers
+            self.memory_layers = _coerce_layer_indices(
+                "all" if self.memory_layers is None else self.memory_layers,
+                field_name="memory_layers",
             )
             if self.memory_position_encoding is None:
                 self.memory_position_encoding = "rope"
+            if (
+                self.variant == "bank_multiscale"
+                and self.memory_dense_window is not None
+                and self.memory_sparse_window is not None
+                and self.memory_dense_window >= 0
+                and self.memory_sparse_window >= 0
+                and self.memory_dense_window + self.memory_sparse_window > 0
+            ):
+                self.memory_window = (
+                    self.memory_dense_window + self.memory_sparse_window
+                )
         if self.variant == "sparse_swa":
-            self.sparse_attention_layers = _coerce_memory_layers(
-                "all" if self.sparse_attention_layers is None else self.sparse_attention_layers
+            self.sparse_attention_layers = _coerce_layer_indices(
+                "all" if self.sparse_attention_layers is None else self.sparse_attention_layers,
+                field_name="sparse_attention_layers",
             )
 
     def normalized_pass_schedule(self) -> list[dict[str, Any]]:
@@ -529,7 +542,9 @@ class ExperimentConfig:
                     )
             if self.memory_layers is None:
                 raise ValueError("bank configs require memory_layers")
-            self.memory_layers = _coerce_memory_layers(self.memory_layers)
+            self.memory_layers = _coerce_layer_indices(
+                self.memory_layers, field_name="memory_layers"
+            )
             if self.memory_position_encoding not in {"rope", "none"}:
                 raise ValueError(
                     "bank configs require memory_position_encoding: rope|none"
@@ -562,7 +577,9 @@ class ExperimentConfig:
                 raise ValueError("bank_multiscale requires positive memory_sparse_stride")
             if self.memory_layers is None:
                 raise ValueError("bank_multiscale configs require memory_layers")
-            self.memory_layers = _coerce_memory_layers(self.memory_layers)
+            self.memory_layers = _coerce_layer_indices(
+                self.memory_layers, field_name="memory_layers"
+            )
             if self.memory_position_encoding not in {"rope", "none"}:
                 raise ValueError(
                     "bank_multiscale requires memory_position_encoding: rope|none"
@@ -586,8 +603,9 @@ class ExperimentConfig:
                 raise ValueError("sparse_swa requires positive sparse_attention_window")
             if self.sparse_attention_layers is None:
                 raise ValueError("sparse_swa requires sparse_attention_layers")
-            self.sparse_attention_layers = _coerce_memory_layers(
-                self.sparse_attention_layers
+            self.sparse_attention_layers = _coerce_layer_indices(
+                self.sparse_attention_layers,
+                field_name="sparse_attention_layers",
             )
         elif (
             self.sparse_attention_stride is not None

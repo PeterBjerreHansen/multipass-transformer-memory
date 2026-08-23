@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
 
 
 def _validate_windows(
@@ -220,8 +221,115 @@ def retained_multiresolution_indices(
     return ordered.clamp(max=max(key_positions.shape[1] - 1, 0)), selected_valid
 
 
+def fast_multiresolution_key_value_windows(
+    key: torch.Tensor,
+    value: torch.Tensor,
+    query_positions: torch.Tensor,
+    *,
+    recent_window: int,
+    sparse_stride: int,
+    sparse_window: int,
+    include_current: bool,
+    key_padding_mask: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Build compact multiresolution K/V windows without an expanded gather.
+
+    This path targets packed full-sequence attention, where the dense source
+    bank contains one record per query position. The recent region uses
+    ``unfold`` and the sparse region uses ``index_select`` over the flattened
+    periodic indices. Both operations map well to CPU, MPS, and CUDA. The
+    returned tensors have shape ``[B,Hkv,Q,W,D]`` and preserve the ordering
+    from :func:`multiresolution_key_indices` (sparse records first, recent
+    records second).
+    """
+    if key.ndim != 4 or value.ndim != 4:
+        raise ValueError("key/value must be [B,Hkv,T,D]")
+    if key.shape != value.shape:
+        raise ValueError("key and value shapes must match")
+    if query_positions.ndim != 2:
+        raise ValueError("query_positions must be [B,Q]")
+    batch, heads, key_len, head_dim = key.shape
+    query_len = query_positions.shape[1]
+    if key_len != query_len:
+        raise ValueError("fast multiresolution windows require equal Q/K lengths")
+    if query_positions.shape[0] != batch:
+        raise ValueError("query/key batch sizes differ")
+    if key_padding_mask is not None:
+        if key_padding_mask.shape != (batch, key_len) or key_padding_mask.dtype != torch.bool:
+            raise ValueError("key_padding_mask must be bool [B,T]")
+
+    expected_positions = torch.arange(
+        query_len, device=query_positions.device, dtype=query_positions.dtype
+    )[None, :].expand_as(query_positions)
+    if not torch.equal(query_positions, expected_positions):
+        raise ValueError("fast multiresolution windows require dense query positions")
+
+    indices, index_valid = multiresolution_key_indices(
+        query_positions,
+        recent_window=recent_window,
+        sparse_stride=sparse_stride,
+        sparse_window=sparse_window,
+        include_current=include_current,
+    )
+    pieces_key: list[torch.Tensor] = []
+    pieces_value: list[torch.Tensor] = []
+    pieces_valid: list[torch.Tensor] = []
+
+    if sparse_window:
+        sparse_indices = indices[:, :, :sparse_window]
+        sparse_valid = index_valid[:, :, :sparse_window]
+        flat_indices = sparse_indices[0].reshape(-1)
+        sparse_key = key.index_select(2, flat_indices).reshape(
+            batch, heads, query_len, sparse_window, head_dim
+        )
+        sparse_value = value.index_select(2, flat_indices).reshape(
+            batch, heads, query_len, sparse_window, head_dim
+        )
+        if key_padding_mask is not None:
+            sparse_mask = key_padding_mask.index_select(1, flat_indices).reshape(
+                batch, query_len, sparse_window
+            )
+            sparse_valid = sparse_valid & sparse_mask
+        pieces_key.append(sparse_key)
+        pieces_value.append(sparse_value)
+        pieces_valid.append(sparse_valid)
+
+    if recent_window:
+        pad_left = recent_window - 1 if include_current else recent_window
+        padded_key = F.pad(key, (0, 0, pad_left, 0))
+        padded_value = F.pad(value, (0, 0, pad_left, 0))
+        recent_key = padded_key.unfold(
+            dimension=-2, size=recent_window, step=1
+        ).permute(0, 1, 2, 4, 3)[:, :, :query_len]
+        recent_value = padded_value.unfold(
+            dimension=-2, size=recent_window, step=1
+        ).permute(0, 1, 2, 4, 3)[:, :, :query_len]
+        positions = torch.arange(query_len, device=query_positions.device)
+        offsets = torch.arange(recent_window, device=query_positions.device)
+        recent_valid = (
+            positions[:, None] - pad_left + offsets[None, :]
+        ) >= 0
+        recent_valid = recent_valid[None, :, :].expand(batch, -1, -1)
+        if key_padding_mask is not None:
+            padded_mask = F.pad(key_padding_mask, (pad_left, 0), value=False)
+            recent_mask = padded_mask.unfold(
+                dimension=-1, size=recent_window, step=1
+            )[:, :query_len]
+            recent_valid = recent_valid & recent_mask
+        pieces_key.append(recent_key)
+        pieces_value.append(recent_value)
+        pieces_valid.append(recent_valid)
+
+    return (
+        torch.cat(pieces_key, dim=3),
+        torch.cat(pieces_value, dim=3),
+        torch.cat(pieces_valid, dim=2),
+    )
+
+
 __all__ = [
     "multiresolution_allowed_mask",
+    "fast_multiresolution_key_value_windows",
     "multiresolution_key_indices",
     "retained_multiresolution_indices",
 ]

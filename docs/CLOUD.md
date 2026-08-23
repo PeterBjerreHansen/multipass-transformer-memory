@@ -17,7 +17,7 @@ uv sync --extra data --extra eval
 make check
 make efficiency-cuda-batch-qualification
 make select-cuda-batch \
-  RESULT=benchmarks/efficiency/results/generated/cuda_batch_qualification.json
+  RESULT=benchmarks/efficiency/results/cuda_batch_qualification.json
 ```
 
 The qualification compares K=2 adaptive Recirculation and dense Bank with BF16
@@ -55,7 +55,7 @@ The preflight checks:
 - output directory containment beneath the persistent root;
 - free disk space for durable checkpoint rotation;
 - linguistic versus physical batching quantities for memory-token runs;
-- the exact bank write/visibility configuration.
+- the exact Bank or Sparse SWA attention configuration.
 
 ## Spot-safe checkpoint policy
 
@@ -127,7 +127,7 @@ are retained. Optional `snapshot_at_tokens` writes weights-only safetensors to
 
 For a locked campaign, Phase-A initialization and Phase-B training should use
 the same pinned core data artifact as the reported validation split. Keep the
-entire generated run directory on persistent storage and back it up separately
+entire run directory on persistent storage and back it up separately
 from an ephemeral instance.
 
 ## Unattended start, transfer, and cleanup
@@ -150,9 +150,9 @@ Example for a serious run:
 ./scripts/start-and-watch \
   --host <vm-ip> \
   --vm-id <verda-vm-id> \
-  --config benchmarks/development/stage_5_cloud_100m/vanilla_100m.yaml \
-  --remote-output benchmarks/development/stage_5_cloud_100m/results/generated/vanilla_100m \
-  --local-output benchmarks/core/stage_5_cloud_100m_baseline/results/generated/vanilla_100m \
+  --config benchmarks/core/stage_5_cloud_100m/vanilla_100m.yaml \
+  --remote-output benchmarks/core/stage_5_cloud_100m/results/vanilla_100m \
+  --local-output benchmarks/core/stage_5_cloud_100m/results/vanilla_100m \
   --start-vm \
   --cleanup delete
 ```
@@ -171,8 +171,8 @@ The script sends a macOS notification on success or failure when
 `osascript` is available. It continues independently of Codex and does not
 consume model tokens while waiting between status checks.
 
-For a sequential campaign, use `scripts/run-cloud-campaign`. It applies the
-same transfer and checksum boundary to each selected Stage-5 arm, removes the
+For the locked Stage-5 eight-arm campaign, use `scripts/run-cloud-campaign`. It applies
+the same transfer and checksum boundary to each selected arm, removes the
 verified remote run directory before shutdown, and deletes the compute instance
 after all arms complete. It is restartable because locally complete arms are
 skipped:
@@ -189,3 +189,6 @@ The campaign keeps the persistent OS volume by omitting `--with-volumes` from
 the final Verda delete operation. On failure it shuts down the compute
 instance but retains remote artifacts for recovery; it does not delete a
 failed run's data.
+
+The campaign wrapper has a fixed list of the remaining Stage-5 arms, including
+Multiscale Bank and Sparse SWA. Use `--arm` to run only the selected controls.

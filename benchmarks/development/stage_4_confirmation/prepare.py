@@ -76,7 +76,7 @@ def main() -> None:
             config["seed"] = seed
             config["output_dir"] = (
                 "benchmarks/development/stage_4_confirmation/"
-                f"results/generated/{arm_id}"
+                f"results/{arm_id}"
             )
             (stage_dir / config_name).write_text(
                 yaml.safe_dump(config, sort_keys=False), encoding="utf-8"

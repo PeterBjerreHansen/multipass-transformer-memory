@@ -25,8 +25,7 @@ The suite must enforce:
 
 - ordinary pass 1 matches the vanilla backbone path;
 - FBT exact cached inference matches full-prefix multipass recomputation;
-- retired one-state controls remain vanilla fixed points at zero projection
-  initialization;
+- retired checkpoint controls retain their focused compatibility tests;
 - adaptive recirculation starts at the configured fixed mixture;
 - adaptive recirculation Phase A freezes the TinyMistral backbone and trains
   only its coefficient controller;
@@ -59,16 +58,6 @@ For `A <MEM> B`:
   used as self-attention K/V;
 - cached write-only key validity preserves the MEM physical position.
 
-## Hybrid gates
-
-For BankAddHybrid in memory-token mode:
-
-- both MEM and the following ordinary token use the same last-ordinary fast
-  source from the previous stream;
-- MEM can write the bank but cannot advance `fast_hidden`;
-- the following ordinary token advances `fast_hidden`;
-- fast and bank intervention paths remain independently diagnosable.
-
 ## Cached/recurrent gates
 
 - exact incremental K-pass equals full-prefix recomputation for multiple K;
@@ -77,7 +66,7 @@ For BankAddHybrid in memory-token mode:
 - the first recurrent continuation transition equals exact K-pass;
 - bank state remains chronological and bounded;
 - write-only cache validity persists across decode;
-- K=1 remains the vanilla cached boundary.
+- K=1 remains the vanilla cached boundary;
 - sparse SWA adds no parameters, changes only selected self-attention masks,
   and cached decoding equals full-sequence execution.
 
@@ -92,14 +81,12 @@ The spot-safe trainer is tested for:
 - incomplete `.tmp` files being ignored;
 - metrics repair back to checkpointed progress;
 - source-code/environment identity checks on resume;
-- interruption/resume of memory-token Bank and BankAddHybrid producing the same
-  final model/optimizer/sampler/counters as uninterrupted training.
+- interruption/resume produces the same final model, optimizer, sampler, and
+  counters as uninterrupted training.
 
-Data preparation is tested for deterministic source allocation, checksum
-verification, and recorded source-balanced training offsets. The active wiring
-and pilot recipes must share validation settings, the pilot offset must equal
-the complete wiring training slice, and each stage budget must equal its stored
-training-token count.
+Data preparation is tested for deterministic source allocation, checksums, and
+recorded source-balanced offsets. Related recipes must share validation
+settings, avoid overlapping training slices, and match their declared budgets.
 
 ## Study and hardware gates
 

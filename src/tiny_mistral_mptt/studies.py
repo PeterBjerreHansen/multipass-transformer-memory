@@ -144,9 +144,7 @@ def verify_study(path: str | Path) -> StudyVerification:
         and status != "locked"
     ):
         raise StudyValidationError("core studies must use status=locked before execution")
-    expected_generated_root = (
-        study_dir / "results" / "generated"
-    ).relative_to(repo_root).as_posix()
+    expected_results_root = (study_dir / "results").relative_to(repo_root).as_posix()
 
     arms_raw = _sequence(raw.get("arms", []), label="arms")
     if status != "planned" and not arms_raw:
@@ -173,7 +171,7 @@ def verify_study(path: str | Path) -> StudyVerification:
         if config_path.name == "STUDY.yaml" or not config_path.is_file():
             raise StudyValidationError(f"arm config does not exist: {config_path}")
         config = load_experiment_config(config_path)
-        expected_output = f"{expected_generated_root}/{arm_id}"
+        expected_output = f"{expected_results_root}/{arm_id}"
         if Path(config.output_dir).as_posix() != expected_output:
             raise StudyValidationError(
                 f"arm {arm_id!r} output_dir must be {expected_output!r}; "

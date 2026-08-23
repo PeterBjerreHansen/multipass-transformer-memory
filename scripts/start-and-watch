@@ -369,7 +369,7 @@ def _notify(message: str, *, enabled: bool) -> None:
         [
             "osascript",
             "-e",
-            f'display notification "{escaped}" with title "TinyMistralMPTT"',
+            f'display notification "{escaped}" with title "multipass-transformer-memory"',
         ],
         check=False,
     )
@@ -383,7 +383,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--vm-id", help="Verda VM ID; required for --start-vm or cleanup")
     parser.add_argument("--remote-user", default="root")
     parser.add_argument("--ssh-key", type=Path, default=Path("~/.ssh/id_ed25519").expanduser())
-    parser.add_argument("--remote-root", default="/root/TinyMistralMPTT")
+    parser.add_argument("--remote-root", default="/root/multipass-transformer-memory")
     parser.add_argument("--config", required=True, help="config path relative to --remote-root")
     parser.add_argument(
         "--remote-output",

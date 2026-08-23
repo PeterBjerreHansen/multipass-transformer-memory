@@ -1,18 +1,17 @@
 # Bank memory and explicit `<MEM>` slots
 
 This is the authoritative contract for the active `bank` and
-`bank_multiscale` variants. The
-`bank_add_hybrid` sections are retained only to document historical checkpoints
-and are not part of the active experiment pipeline.
+`bank_multiscale` variants. See [ARCHITECTURES.md](ARCHITECTURES.md) for the
+retired `bank_add_hybrid` interface.
 
 ## 1. Shared bank architecture
 
 All write policies use the same components:
 
-- one shared `BankWriter`: bias-free `Linear(D,D)`, initialized to identity;
-- one independent `BankReader` at each configured `memory_layers` index;
-- one chronological bank of writer outputs from the previous pass during
-  full-sequence multipass execution;
+- one shared, identity-initialized, bias-free `BankWriter`.
+- one independent `BankReader` at each configured `memory_layers` index.
+- one chronological bank of previous-pass writer outputs during full-sequence
+  execution.
 - a bounded chronological `BankState` during cached/recurrent execution.
 
 Every layer performs ordinary self-attention first, adds its residual, reads the
@@ -26,7 +25,7 @@ original linguistic sequence position before it enters the cache. Subsequent
 cached reads project and rotate only the query. The raw-memory and projected
 cache paths are required to be numerically identical.
 
-Reader output projections are zero-initialized. Bank therefore starts as an
+Reader output projections are zero-initialized. Bank starts as an
 exact no-op retrofit: pass 2 and deeper passes equal vanilla at construction.
 The output projections learn on the first optimizer step; Q/K/V and writer
 gradients become active after those projections move away from zero.
@@ -37,9 +36,9 @@ A bank record is
 m_s = W_write h_s
 ```
 
-where `h_s` is a top-layer source-stream state. `memory_window=W` is the maximum
-number of committed records presented to a query. It is not a token-distance
-window.
+where `h_s` is a top-layer source-stream state. For `variant: bank`,
+`memory_window=W` is the maximum number of committed records presented to a
+query. It is not a token-distance window. Multiscale Bank has capacity `D+S`.
 
 ## 2. Reader placement and memory positions
 
@@ -64,7 +63,7 @@ incremental decoding.
 The three policies below apply to `variant: bank`. `bank_multiscale` instead
 uses a dense source stream and the retention policy in section 3.4.
 
-### Dense
+### 3.1 Dense
 
 ```yaml
 memory_write_mode: dense
@@ -73,7 +72,7 @@ memory_write_mode: dense
 Every ordinary physical position writes. This is also the C=1 endpoint of the
 periodic policy.
 
-### Periodic
+### 3.2 Periodic
 
 ```yaml
 memory_write_mode: periodic
@@ -84,7 +83,7 @@ For zero-based physical position `t`, a write occurs when
 `(t + 1) % C == 0`. With no control positions this means C=8 writes at
 7, 15, 23, ... .
 
-### Explicit memory token
+### 3.3 Explicit memory token
 
 ```yaml
 memory_write_mode: memory_token
@@ -96,7 +95,7 @@ The data view inserts one `<MEM>` after each complete group of C linguistic
 tokens when another linguistic token remains in that block. Only MEM positions
 write the bank.
 
-### Multiscale dense-recent/sparse-old retention
+### 3.4 Multiscale dense-recent/sparse-old retention
 
 ```yaml
 variant: bank_multiscale
@@ -110,9 +109,9 @@ memory_position_encoding: rope
 Every previous-pass top state is written through the shared `BankWriter`.
 Query `t` reads dense positions `[t-D,t)` plus the last `S` positions strictly
 older than `t-D` for which `(s+1) % C == 0`. The regions are concatenated in
-chronological order and processed by one Bank-reader projection set and one
-softmax. The sparse region is a retention policy over the dense source stream,
-not a second periodic writer or a second reader.
+chronological order and processed by one Bank reader and one softmax. The
+sparse region is a retention policy over the dense source stream, not a second
+writer or reader.
 
 `memory_dense_window + memory_sparse_window` is the cached Bank capacity.
 During decode, an aging dense record survives only when it meets the periodic
@@ -204,33 +203,7 @@ A <MEM> B
 `h_MEM` may write a bank record, and B is the first physical position that can
 read that record.
 
-## 8. BankAddHybrid and `<MEM>`
-
-The hybrid has a fast MemoryAdd channel and the same bank channel. In
-memory-token mode the fast channel advances only on ordinary tokens.
-
-For
-
-```text
-A <MEM> B
-```
-
-the previous-stream alignment is:
-
-```text
-current <MEM> Add source = previous-stream h_A
-current B     Add source = previous-stream h_A
-```
-
-`h_MEM` writes `W_write h_MEM` to the bank but does not become the fast state.
-After B computes, B becomes the next fast state.
-
-During full-sequence multipass training this is implemented by gathering the
-nearest strictly preceding ordinary state from the previous pass. During cached
-recurrent execution a MEM step simply leaves `fast_hidden` unchanged while
-conditionally appending the slow bank.
-
-## 9. Full-sequence versus recurrent execution
+## 8. Full-sequence versus recurrent execution
 
 During training and exact K-pass evaluation, pass k reads bank/fast feedback
 constructed from completed pass k-1. The same-position source state is never
@@ -248,7 +221,7 @@ feedback machinery.
 If a cached decode step consumes `<MEM>`, `next_token_logits` remain the logits
 from the preceding ordinary position because MEM itself predicts nothing.
 
-## 10. Data view and compute accounting
+## 9. Data view and compute accounting
 
 The stored Dolmino artifacts contain only ordinary linguistic IDs. A deterministic
 `MemoryTokenPackedDataset` view inserts ID V at load time, preserving the
@@ -277,7 +250,7 @@ token_equivalent_compute physical positions x effective passes
 Run budgets and LR schedules use linguistic tokens. Throughput should report
 both linguistic tokens/s and model positions/s.
 
-## 11. Phase A wrinkle
+## 10. Phase A wrinkle
 
 In dense/periodic Phase A, pass 1 contains no architecture-added parameter, so
 it can run under `no_grad()` while the frozen backbone supplies the source state.
@@ -288,27 +261,8 @@ backbone parameters stay frozen. With zero-initialized reader outputs, the MEM
 embedding and writer have zero gradient on the first update and receive
 nonzero bank-mediated gradients after the reader output path activates.
 
-## 12. Required semantic tests
+## 11. Validation
 
-Before interpreting quality results, the repository requires:
-
-- dense bank == periodic C1 with matching weights;
-- multiscale dense-only == Dense Bank and sparse-only == Periodic Bank with
-  matching weights (up to floating-point projection batching order);
-- multiscale selection is non-overlapping and uses one reader softmax;
-- selected reader layers allocate/read/cache only at their declared indices;
-- sequence RoPE uses original query/write coordinates rather than bank indices;
-- zero-initialized Bank is exact vanilla at every tested pass depth;
-- strict-past bank visibility for periodic and MEM writes;
-- A `<MEM>` B label alignment and exact zero direct loss gradient at MEM;
-- LM output dimension remains V while MEM input ID is V;
-- MEM embedding receives Phase-A gradient after the zero-output reader activates;
-- visible MEM can influence later ordinary states through self-attention;
-- write-only MEM can read preceding context but is absent as self-attention K/V;
-- cached write-only validity preserves physical cache positions;
-- BankAddHybrid leaves fast state unchanged on MEM and advances it on ordinary tokens;
-- exact cached K-pass == full-prefix recomputation across the bank modes;
-- multiscale cached state retains at most `D+S` chronological records and exact
-  cached K-pass matches full-prefix recomputation;
-- the first collapsed recurrent transition == exact K-pass;
-- interrupted/resumed MEM training is trajectory-equivalent to uninterrupted training.
+The required causality, endpoint-equivalence, masking, gradient, cache, and
+resume checks are listed in [VALIDATION.md](VALIDATION.md). Run `make check`
+before interpreting quality results.

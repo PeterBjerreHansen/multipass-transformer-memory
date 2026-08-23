@@ -1,12 +1,9 @@
 # Architecture contracts
 
-Experiment-specific learning rates, token budgets, pass depth, initialization,
-and checkpoint ancestry belong under `benchmarks/`. This file defines only the
-reusable architecture surface. The full bank/control-token contract is in
-`BANK_MEMORY.md`.
-
-The optional training-only latent objective is specified in
-`NEXT_MEMORY_PREDICTION.md`.
+This file defines the reusable model interfaces. Study-specific settings belong
+under `benchmarks/`. See [BANK_MEMORY.md](BANK_MEMORY.md) for the Bank contract
+and [NEXT_MEMORY_PREDICTION.md](NEXT_MEMORY_PREDICTION.md) for the optional
+training-only objective.
 
 ## Vanilla
 
@@ -43,10 +40,8 @@ recurrent inference interfaces as the other one-state feedback variants.
 
 ## Retired one-state controls
 
-MemoryAdd and BankAddHybrid are retained only as historical implementation
-controls. They are not part of the active experiment pipeline or current
-results; new comparisons use adaptive Recirculation and the
-Recirculation–Bank hybrid instead.
+MemoryAdd and BankAddHybrid remain for historical checkpoint compatibility.
+They are not part of new studies.
 
 ### MemoryAdd
 
@@ -110,8 +105,8 @@ m = W_write h
 ```
 
 and one independent GQA bank reader at each configured `memory_layers` index.
-`memory_layers: all` expands to every decoder layer; `[3, 7]` is the default in
-the active experimental pipeline. Every selected reader consumes the same
+`memory_layers: all` expands to every decoder layer. The original study used
+`[3, 7]` for standalone Bank models. Every selected reader consumes the same
 previous-pass top-layer bank. Within a selected decoder layer the bank residual
 is applied after the ordinary self-attention residual and before the MLP.
 
@@ -145,8 +140,8 @@ numerically identical with matching weights.
 analogue of a short/long-range recurrent–Bank hybrid. It writes the same dense
 previous-pass top-state stream as Dense Bank, then presents each reader with a
 non-overlapping union of the preceding `D` records and the last `S` older
-fixed-periodic records. A single `BankReader` Q/K/V projection set and a single
-softmax compete over both regions; there are not two reader residuals.
+fixed-periodic records. A single `BankReader` and softmax cover both regions.
+The model does not add a second reader residual.
 
 ```yaml
 variant: bank_multiscale
@@ -159,14 +154,8 @@ memory_position_encoding: rope
 
 At query `t`, the dense region is `[t-D,t)`. Sparse positions satisfy
 `s < t-D` and `(s+1) % C == 0`, with only the most recent `S` retained. The
-maximum Bank capacity is `D+S`; the approximate oldest direct reach is
+maximum Bank capacity is `D+S`. The approximate oldest direct reach is
 `D + C*S` tokens. Vanilla SWA is unchanged.
-
-For full-sequence MPS training, dense writes use the direct strict-past local
-window path because the bank is already one record per token. This avoids the
-compact-bank gather used by sparse periodic writes. It makes dense Bank faster
-than periodic-32 Bank on the development Mac, although the per-layer readers
-still make it more expensive than the retired one-state control.
 
 ### BankAddHybrid (retired)
 

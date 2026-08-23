@@ -4,12 +4,14 @@ Use this directory for structured studies that inform the protocol without
 being the final claim-establishing campaign. A development study should exist
 only when it answers a protocol question worth retaining.
 
-The active program is defined in `experimental_pipeline.md` and split into:
+Stages 0 through 4 contain the development protocol. The locked eight-arm
+Stage-5 core study contains the two attention controls alongside the original
+six arms:
 
-- `stage_0_implementation_gates/`: code, test, and wiring preflight gates;
-- `stage_1_wiring/`: local Phase-A adaptation of added feedback pathways;
-- `stage_2_local_smoke/`: 1M-token local Phase-B integration checks;
-- `stage_3_cloud_pilot/`: resumable 5M/10M seed-1337 cloud pilots;
+- `stage_0_implementation_gates/`: code, test, and wiring preflight gates.
+- `stage_1_wiring/`: local Phase-A adaptation of added feedback pathways.
+- `stage_2_local_smoke/`: 1M-token local Phase-B integration checks.
+- `stage_3_cloud_pilot/`: resumable 5M/10M seed-1337 cloud pilots.
 - `stage_4_confirmation/`: two additional seeds for promoted arms.
 
 Pass-depth stability, memory interventions, and exact-vs-recurrent drift are

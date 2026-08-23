@@ -32,7 +32,10 @@ data/dolmino/gpu_2048_staged/*
 !data/dolmino/gpu_2048_staged/config.yaml
 
 # Training outputs remain colocated with their study/control but are not source.
-benchmarks/**/results/generated/
+# Keep the results README files visible, while ignoring every run directory or
+# result file directly below the owning results directory.
+benchmarks/**/results/*
+!benchmarks/**/results/README.md
 
 # Historical benchmark artifacts are local review material, not branch source.
 benchmarks/historical/
