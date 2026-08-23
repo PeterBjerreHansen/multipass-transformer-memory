@@ -15,12 +15,15 @@ Research infrastructure must not change ordinary vanilla behavior silently.
 Baseline tests, HF-comparison scripts, and `VANILLA_SOURCE.sha256` are the
 guardrails.
 
-The bank work adds one explicitly tested substrate capability: self-attention
-K/V entries can carry a boolean validity mask. This allows write-only `<MEM>`
+The Bank work adds explicitly tested substrate capabilities: self-attention
+K/V entries can carry a boolean validity mask, and selected layers can opt into
+a bounded dense-recent/fixed-periodic-old mask. The validity mask allows write-only `<MEM>`
 positions to retain physical/RoPE/cache coordinates while remaining unavailable
 as K/V. Ordinary inputs use all-valid keys. Reference attention was also hardened
 so a genuinely empty allowed row produces exact zero, matching the local/flex
 mask contract instead of softmaxing an all-masked row to a uniform distribution.
+Ordinary vanilla layers use the original local path; the sparse control reuses
+the pretrained projections and one union softmax.
 
 ## FBT architecture reference
 

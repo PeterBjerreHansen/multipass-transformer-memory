@@ -16,6 +16,8 @@ except Exception:  # pragma: no cover - old torch import path
 def _cached_local_block_mask(
     seq_len: int,
     sliding_window: int | None,
+    sparse_stride: int | None,
+    sparse_window: int,
     device_type: str,
     device_index: int | None,
     block_size: int,
@@ -24,7 +26,23 @@ def _cached_local_block_mask(
         raise RuntimeError("FlexAttention is unavailable; install PyTorch >= 2.5")
     device = torch.device(device_type, device_index) if device_index is not None else torch.device(device_type)
 
-    if sliding_window is None:
+    if sparse_window:
+        if sliding_window is None or sparse_stride is None:
+            raise ValueError("sparse attention requires finite local window and stride")
+        window = int(sliding_window)
+        stride = int(sparse_stride)
+        count = int(sparse_window)
+
+        def mask_mod(b, h, q_idx, kv_idx):
+            age = q_idx - kv_idx
+            local = (age >= 0) & (age < window)
+            sparse = (
+                (age >= window)
+                & (age < window + stride * count)
+                & ((kv_idx + 1) % stride == 0)
+            )
+            return local | sparse
+    elif sliding_window is None:
         def mask_mod(b, h, q_idx, kv_idx):
             return kv_idx <= q_idx
     else:
@@ -61,6 +79,8 @@ def flex_local_attention(
     key_padding_mask: torch.Tensor | None = None,
     compile_kernel: bool = True,
     block_size: int = 128,
+    sparse_stride: int | None = None,
+    sparse_window: int = 0,
 ) -> torch.Tensor:
     """Sparse causal local attention for full, unpadded sequence forwards.
 
@@ -77,6 +97,13 @@ def flex_local_attention(
         raise ValueError("query head count must be divisible by KV head count")
     if block_size <= 0 or block_size & (block_size - 1):
         raise ValueError("block_size must be a positive power of two")
+    sparse_window = int(sparse_window)
+    if sparse_window < 0:
+        raise ValueError("sparse_window must be non-negative")
+    if sparse_window and (
+        sliding_window is None or sparse_stride is None or int(sparse_stride) <= 0
+    ):
+        raise ValueError("sparse attention requires finite local window and positive stride")
 
     seq_len = query.shape[-2]
     device = query.device
@@ -85,7 +112,21 @@ def flex_local_attention(
             raise ValueError("key_padding_mask must be bool [B,T]")
         if create_block_mask is None:
             raise RuntimeError("FlexAttention is unavailable; install PyTorch >= 2.5")
-        if sliding_window is None:
+        if sparse_window:
+            window = int(sliding_window)
+            stride = int(sparse_stride)
+            count = sparse_window
+
+            def mask_mod(b, h, q_idx, kv_idx):
+                age = q_idx - kv_idx
+                local = (age >= 0) & (age < window)
+                sparse = (
+                    (age >= window)
+                    & (age < window + stride * count)
+                    & ((kv_idx + 1) % stride == 0)
+                )
+                return (local | sparse) & key_padding_mask[b, kv_idx]
+        elif sliding_window is None:
             def mask_mod(b, h, q_idx, kv_idx):
                 return (kv_idx <= q_idx) & key_padding_mask[b, kv_idx]
         else:
@@ -106,6 +147,8 @@ def flex_local_attention(
         block_mask = _cached_local_block_mask(
             seq_len,
             sliding_window,
+            sparse_stride,
+            sparse_window,
             device.type,
             device.index,
             block_size,

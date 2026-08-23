@@ -7,6 +7,8 @@ from .bank import BankBatch, BankReader, BankVariant, BankWriter
 from .bank_add_hybrid import BankAddHybridVariant
 from .bank_recirculation_hybrid import BankRecirculationHybridVariant
 from .bank_recurrent_hybrid import BankRecurrentHybridVariant
+from .bank_multiscale import MultiscaleBankVariant
+from .sparse_swa import SparseSWAVariant
 from .vanilla import VanillaVariant
 
 __all__ = [
@@ -24,8 +26,10 @@ __all__ = [
     "BankRecirculationHybridVariant",
     "BankRecurrentHybridVariant",
     "BankVariant",
+    "MultiscaleBankVariant",
     "BankWriter",
     "TrainOutput",
     "VanillaVariant",
+    "SparseSWAVariant",
     "shift_previous_hidden",
 ]

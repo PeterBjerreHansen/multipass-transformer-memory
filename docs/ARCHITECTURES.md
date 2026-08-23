@@ -12,6 +12,27 @@ The optional training-only latent objective is specified in
 
 One ordinary TinyMistral causal pass with no architecture-added parameters.
 
+## Sparse SWA control
+
+`SparseSWAVariant` is a one-pass, parameter-free Transformer control. At the
+selected `sparse_attention_layers`, the existing Mistral self-attention uses
+one softmax over the union of its ordinary SWA keys and a bounded set of older
+fixed-periodic keys. It reuses the pretrained Q/K/V/O projections and does not
+add a Bank reader or any cross-attention parameters.
+
+For query `t`, SWA width `W`, sparse stride `C`, and sparse count `S`, the added
+keys are the last `S` positions satisfying `(s + 1) % C == 0` and `s < t-W+1`.
+The sparse region never duplicates a key in the local region. Cached decoding
+retains `W-1` recent K/V entries plus at most `S` older periodic entries with
+their absolute RoPE positions.
+
+```yaml
+variant: sparse_swa
+sparse_attention_stride: 32
+sparse_attention_window: 32
+sparse_attention_layers: [3, 7]
+```
+
 ## FBT
 
 An independent multipass comparison based on asymmetric latent feedback. It is
@@ -117,6 +138,29 @@ first available to position `t+1`.
 
 Dense and periodic C=1 are the same implementation and are required to be
 numerically identical with matching weights.
+
+### Multiscale Bank control
+
+`MultiscaleBankVariant` (`variant: bank_multiscale`) is the attention-only
+analogue of a short/long-range recurrent–Bank hybrid. It writes the same dense
+previous-pass top-state stream as Dense Bank, then presents each reader with a
+non-overlapping union of the preceding `D` records and the last `S` older
+fixed-periodic records. A single `BankReader` Q/K/V projection set and a single
+softmax compete over both regions; there are not two reader residuals.
+
+```yaml
+variant: bank_multiscale
+memory_dense_window: 32
+memory_sparse_stride: 32
+memory_sparse_window: 32
+memory_layers: [4, 7]
+memory_position_encoding: rope
+```
+
+At query `t`, the dense region is `[t-D,t)`. Sparse positions satisfy
+`s < t-D` and `(s+1) % C == 0`, with only the most recent `S` retained. The
+maximum Bank capacity is `D+S`; the approximate oldest direct reach is
+`D + C*S` tokens. Vanilla SWA is unchanged.
 
 For full-sequence MPS training, dense writes use the direct strict-past local
 window path because the bank is already one record per token. This avoids the

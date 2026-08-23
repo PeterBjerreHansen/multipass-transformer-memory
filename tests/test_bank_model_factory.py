@@ -8,6 +8,7 @@ from tiny_mistral_mptt.variants.bank_add_hybrid import BankAddHybridVariant
 from tiny_mistral_mptt.variants.bank_recirculation_hybrid import (
     BankRecirculationHybridVariant,
 )
+from tiny_mistral_mptt.variants.bank_multiscale import MultiscaleBankVariant
 from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
 
 
@@ -54,6 +55,30 @@ def test_factory_selects_only_requested_memory_layers_and_defaults_to_rope():
             memory_write_mode="periodic",
             memory_write_stride=8,
             memory_layers=[2],
+        )
+
+
+def test_factory_builds_multiscale_bank_without_a_write_policy_axis():
+    model = build_variant(
+        "bank_multiscale",
+        MistralForCausalLM(
+            micro_config(num_hidden_layers=3), attention_backend="reference"
+        ),
+        memory_dense_window=4,
+        memory_sparse_window=3,
+        memory_sparse_stride=8,
+        memory_layers=[1, 2],
+    )
+    assert isinstance(model, MultiscaleBankVariant)
+    assert model.memory_window == 7
+    assert model.memory_layers == (1, 2)
+    assert model.memory_write_mode == "dense"
+
+    with pytest.raises(ValueError, match="does not accept memory_write"):
+        build_variant(
+            "bank_multiscale",
+            backbone(),
+            memory_write_mode="dense",
         )
 
 

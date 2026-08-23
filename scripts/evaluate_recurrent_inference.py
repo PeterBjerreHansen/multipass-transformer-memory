@@ -60,6 +60,7 @@ def main() -> None:
         "memory_add",
         "recirculation",
         "bank",
+        "bank_multiscale",
         "bank_add_hybrid",
         "bank_recirculation_hybrid",
     }:

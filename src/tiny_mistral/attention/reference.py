@@ -5,6 +5,8 @@ import math
 import torch
 import torch.nn.functional as F
 
+from .multiresolution import multiresolution_allowed_mask
+
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """Expand GQA K/V heads to query-head count, matching HF Mistral semantics."""
@@ -23,6 +25,8 @@ def make_allowed_mask(
     *,
     sliding_window: int | None,
     key_padding_mask: torch.Tensor | None = None,
+    sparse_stride: int | None = None,
+    sparse_window: int = 0,
 ) -> torch.Tensor:
     """Return [B, Q, K] boolean allowed-attention mask.
 
@@ -32,6 +36,22 @@ def make_allowed_mask(
     """
     if query_positions.ndim != 2 or key_positions.ndim != 2:
         raise ValueError("query_positions/key_positions must be [B, T]")
+    sparse_window = int(sparse_window)
+    if sparse_window:
+        if sliding_window is None:
+            raise ValueError("sparse attention requires a finite sliding_window")
+        if sparse_stride is None or int(sparse_stride) <= 0:
+            raise ValueError("sparse attention requires a positive sparse_stride")
+        return multiresolution_allowed_mask(
+            query_positions,
+            key_positions,
+            recent_window=int(sliding_window),
+            sparse_stride=int(sparse_stride),
+            sparse_window=sparse_window,
+            include_current=True,
+            key_padding_mask=key_padding_mask,
+        )
+
     q = query_positions[:, :, None]
     k = key_positions[:, None, :]
     allowed = k <= q
@@ -58,6 +78,8 @@ def reference_attention(
     key_padding_mask: torch.Tensor | None = None,
     dropout_p: float = 0.0,
     training: bool = False,
+    sparse_stride: int | None = None,
+    sparse_window: int = 0,
 ) -> torch.Tensor:
     """Obvious O(QK) correctness implementation; not intended for long training."""
     if query.ndim != 4 or key.ndim != 4 or value.ndim != 4:
@@ -79,6 +101,8 @@ def reference_attention(
         key_positions,
         sliding_window=sliding_window,
         key_padding_mask=key_padding_mask,
+        sparse_stride=sparse_stride,
+        sparse_window=sparse_window,
     )
     scores = scores.masked_fill(~allowed[:, None, :, :], torch.finfo(scores.dtype).min)
     probs = F.softmax(scores, dim=-1, dtype=torch.float32).to(query.dtype)

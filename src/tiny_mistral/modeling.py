@@ -11,7 +11,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .attention import flex_local_attention, local_window_attention, reference_attention
+from .attention import (
+    flex_local_attention,
+    local_window_attention,
+    reference_attention,
+    retained_multiresolution_indices,
+)
 from .config import MistralConfig
 
 AttentionBackend = Literal["auto", "reference", "flex", "local"]
@@ -23,11 +28,20 @@ class LayerKVCache:
     value: torch.Tensor  # [B, Hkv, S, D]
     start_pos: int
     key_valid: torch.Tensor | None = None  # optional bool [B,S]
+    positions: torch.Tensor | None = None  # optional explicit integer [B,S]
+    next_pos: int | None = None
 
     def __post_init__(self) -> None:
         if self.key_valid is not None:
             if self.key_valid.dtype != torch.bool or self.key_valid.shape != (self.key.shape[0], self.key.shape[-2]):
                 raise ValueError("LayerKVCache.key_valid must be bool [B,S]")
+        if self.positions is not None:
+            if self.positions.shape != (self.key.shape[0], self.key.shape[-2]) or (
+                self.positions.dtype not in (torch.int32, torch.int64)
+            ):
+                raise ValueError("LayerKVCache.positions must be integer [B,S]")
+        if self.next_pos is not None and int(self.next_pos) < 0:
+            raise ValueError("LayerKVCache.next_pos must be non-negative")
 
     @property
     def seq_len(self) -> int:
@@ -35,6 +49,8 @@ class LayerKVCache:
 
     @property
     def next_position(self) -> int:
+        if self.next_pos is not None:
+            return int(self.next_pos)
         return self.start_pos + self.seq_len
 
 
@@ -161,6 +177,27 @@ class MistralAttention(nn.Module):
             max_position_embeddings=self.max_position_embeddings,
             base=self.rope_theta,
         )
+        self.sparse_attention_stride: int | None = None
+        self.sparse_attention_window = 0
+
+    def configure_sparse_attention(
+        self,
+        *,
+        stride: int | None,
+        window: int,
+    ) -> None:
+        window = int(window)
+        if window < 0:
+            raise ValueError("sparse attention window must be non-negative")
+        if window:
+            if self.config.sliding_window is None:
+                raise ValueError("sparse SWA requires a finite sliding_window")
+            if stride is None or int(stride) <= 0:
+                raise ValueError("sparse attention stride must be positive")
+            self.sparse_attention_stride = int(stride)
+        else:
+            self.sparse_attention_stride = None
+        self.sparse_attention_window = window
 
     def _resolve_backend(
         self,
@@ -247,12 +284,17 @@ class MistralAttention(nn.Module):
                 raise ValueError("cached decoding requires common absolute positions across the batch")
             all_key_states = torch.cat((past_key_value.key, key_states), dim=-2)
             all_value_states = torch.cat((past_key_value.value, value_states), dim=-2)
-            old_positions = torch.arange(
-                past_key_value.start_pos,
-                past_key_value.start_pos + past_key_value.seq_len,
-                device=position_ids.device,
-                dtype=position_ids.dtype,
-            )[None, :].expand(bsz, -1)
+            if past_key_value.positions is None:
+                old_positions = torch.arange(
+                    past_key_value.start_pos,
+                    past_key_value.start_pos + past_key_value.seq_len,
+                    device=position_ids.device,
+                    dtype=position_ids.dtype,
+                )[None, :].expand(bsz, -1)
+            else:
+                old_positions = past_key_value.positions.to(
+                    device=position_ids.device, dtype=position_ids.dtype
+                )
             key_positions = torch.cat((old_positions, position_ids), dim=-1)
 
         # `attention_mask` marks whether the *current* sequence positions may
@@ -294,6 +336,8 @@ class MistralAttention(nn.Module):
                 key_padding_mask=key_padding_mask,
                 compile_kernel=self.compile_flex,
                 block_size=self.flex_block_size,
+                sparse_stride=self.sparse_attention_stride,
+                sparse_window=self.sparse_attention_window,
             )
         elif backend == "local":
             attn_output = local_window_attention(
@@ -304,6 +348,8 @@ class MistralAttention(nn.Module):
                 key_padding_mask=key_padding_mask,
                 dropout_p=self.attention_dropout,
                 training=self.training,
+                sparse_stride=self.sparse_attention_stride,
+                sparse_window=self.sparse_attention_window,
             )
         else:
             attn_output = reference_attention(
@@ -316,6 +362,8 @@ class MistralAttention(nn.Module):
                 key_padding_mask=key_padding_mask,
                 dropout_p=self.attention_dropout,
                 training=self.training,
+                sparse_stride=self.sparse_attention_stride,
+                sparse_window=self.sparse_attention_window,
             )
 
         attn_output = attn_output.transpose(1, 2).contiguous().view(bsz, q_len, -1)
@@ -323,22 +371,61 @@ class MistralAttention(nn.Module):
 
         new_cache = None
         if use_cache:
-            keep = all_key_states.shape[-2]
-            if self.config.sliding_window is not None:
-                # v4.45.2 full-mask semantics allow W total visible keys,
-                # including the current query. Therefore the next decode step
-                # needs at most W-1 cached previous keys.
-                keep = min(keep, max(self.config.sliding_window - 1, 0))
-            if keep:
-                cache_key = all_key_states[:, :, -keep:, :].detach()
-                cache_value = all_value_states[:, :, -keep:, :].detach()
-                start_pos = int(key_positions[0, -keep].item())
+            next_position = int(position_ids[0, -1].item()) + 1
+            if self.sparse_attention_window:
+                assert self.sparse_attention_stride is not None
+                recent_cache = max(int(self.config.sliding_window) - 1, 0)
+                selection, selection_valid = retained_multiresolution_indices(
+                    key_positions,
+                    key_padding_mask,
+                    torch.full(
+                        (bsz,),
+                        next_position,
+                        device=key_positions.device,
+                        dtype=key_positions.dtype,
+                    ),
+                    recent_window=recent_cache,
+                    sparse_stride=self.sparse_attention_stride,
+                    sparse_window=self.sparse_attention_window,
+                )
+                gather_key = selection[:, None, :, None].expand(
+                    -1, self.num_key_value_heads, -1, self.head_dim
+                )
+                cache_key = torch.gather(all_key_states, 2, gather_key).detach()
+                cache_value = torch.gather(all_value_states, 2, gather_key).detach()
+                cache_positions = torch.gather(key_positions, 1, selection).detach()
+                gathered_valid = torch.gather(key_padding_mask, 1, selection)
+                cache_valid = (selection_valid & gathered_valid).detach()
+                if bool(selection_valid[0].any()):
+                    first = int(selection_valid[0].long().argmax().item())
+                    start_pos = int(cache_positions[0, first].item())
+                else:
+                    start_pos = next_position
+                new_cache = LayerKVCache(
+                    cache_key,
+                    cache_value,
+                    start_pos,
+                    cache_valid,
+                    cache_positions,
+                    next_position,
+                )
             else:
-                cache_key = all_key_states[:, :, :0, :].detach()
-                cache_value = all_value_states[:, :, :0, :].detach()
-                start_pos = int(position_ids[0, -1].item()) + 1
-            cache_valid = key_padding_mask[:, -keep:].detach() if keep else key_padding_mask[:, :0].detach()
-            new_cache = LayerKVCache(cache_key, cache_value, start_pos, cache_valid)
+                keep = all_key_states.shape[-2]
+                if self.config.sliding_window is not None:
+                    # v4.45.2 full-mask semantics allow W total visible keys,
+                    # including the current query. Therefore the next decode step
+                    # needs at most W-1 cached previous keys.
+                    keep = min(keep, max(self.config.sliding_window - 1, 0))
+                if keep:
+                    cache_key = all_key_states[:, :, -keep:, :].detach()
+                    cache_value = all_value_states[:, :, -keep:, :].detach()
+                    start_pos = int(key_positions[0, -keep].item())
+                else:
+                    cache_key = all_key_states[:, :, :0, :].detach()
+                    cache_value = all_value_states[:, :, :0, :].detach()
+                    start_pos = next_position
+                cache_valid = key_padding_mask[:, -keep:].detach() if keep else key_padding_mask[:, :0].detach()
+                new_cache = LayerKVCache(cache_key, cache_value, start_pos, cache_valid)
 
         return attn_output, new_cache
 
@@ -562,6 +649,32 @@ class MistralForCausalLM(nn.Module):
             layer.self_attn.attention_backend = backend
             if compile_flex is not None:
                 layer.self_attn.compile_flex = compile_flex
+
+    def set_sparse_attention(
+        self,
+        *,
+        stride: int,
+        window: int,
+        layers: str | Sequence[int] = "all",
+    ) -> tuple[int, ...]:
+        layer_count = len(self.model.layers)
+        if layers == "all":
+            selected = tuple(range(layer_count))
+        elif isinstance(layers, Sequence) and not isinstance(layers, (str, bytes)):
+            selected = tuple(sorted(int(index) for index in layers))
+            if not selected or len(selected) != len(set(selected)):
+                raise ValueError("sparse attention layers must be non-empty and unique")
+            if selected[0] < 0 or selected[-1] >= layer_count:
+                raise ValueError(f"sparse attention layers must lie in [0, {layer_count - 1}]")
+        else:
+            raise ValueError("sparse attention layers must be 'all' or a sequence")
+        selected_set = set(selected)
+        for index, layer in enumerate(self.model.layers):
+            layer.self_attn.configure_sparse_attention(
+                stride=stride if index in selected_set else None,
+                window=window if index in selected_set else 0,
+            )
+        return selected
 
     def forward(
         self,

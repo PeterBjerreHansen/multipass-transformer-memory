@@ -1,7 +1,8 @@
 # Exact incremental and collapsed recurrent inference
 
 This document defines cached inference for the active `recirculation` and
-`bank` variants. The retired `memory_add` and `bank_add_hybrid` controls remain
+`bank` and `bank_multiscale` variants. The retired `memory_add` and
+`bank_add_hybrid` controls remain
 documented only for loading historical checkpoints. Prompt refinement depth K
 is an inference-time parameter and need not equal the K used during training.
 
@@ -48,6 +49,11 @@ triggered append evicts the oldest record.
 Dense writes every ordinary position. Periodic writes use the absolute physical
 position and configured stride. Memory-token mode writes only when the observed
 input token is ID V.
+
+Multiscale Bank also writes every ordinary position, but its bounded state is
+the chronological union of the last `D` positions and the last `S` older
+fixed-periodic positions. Every append recomputes retention relative to the
+next query coordinate while preserving cached per-reader projected K/V.
 
 ## Memory-token decode
 
@@ -105,6 +111,7 @@ Before interpreting recurrent quality:
 - K=1 must reduce to ordinary cached TinyMistral;
 - the first collapsed recurrent transition must match exact K-pass;
 - bank state must remain bounded and strict-past;
+- multiscale Bank state must retain the exact sparse-old/dense-recent union;
 - write-only MEM validity must survive KV caching without changing physical
   positions;
 - BankAddHybrid must preserve fast state across MEM and advance it on ordinary

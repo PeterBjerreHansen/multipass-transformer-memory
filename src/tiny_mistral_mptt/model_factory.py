@@ -15,7 +15,9 @@ from .variants import (
     RecirculationVariant,
     BankAddHybridVariant,
     BankRecirculationHybridVariant,
+    MultiscaleBankVariant,
     BankVariant,
+    SparseSWAVariant,
     VanillaVariant,
 )
 
@@ -34,6 +36,12 @@ def build_variant(
     memory_token_visibility: str | None = None,
     memory_layers: str | list[int] = "all",
     memory_position_encoding: str = "rope",
+    memory_dense_window: int = 32,
+    memory_sparse_window: int = 32,
+    memory_sparse_stride: int = 32,
+    sparse_attention_stride: int | None = None,
+    sparse_attention_window: int | None = None,
+    sparse_attention_layers: str | list[int] = "all",
     prefix_mixin_probability: float = 0.0,
     recirculation_source_layer: int | None = None,
     recirculation_destination_layer: int | None = None,
@@ -46,6 +54,18 @@ def build_variant(
 ) -> ExperimentalVariant:
     if name == "vanilla":
         variant: ExperimentalVariant = VanillaVariant(backbone)
+    elif name == "sparse_swa":
+        if sparse_attention_stride is None or sparse_attention_window is None:
+            raise ValueError(
+                "sparse_swa requires sparse_attention_stride and "
+                "sparse_attention_window"
+            )
+        variant = SparseSWAVariant(
+            backbone,
+            sparse_attention_stride=sparse_attention_stride,
+            sparse_attention_window=sparse_attention_window,
+            sparse_attention_layers=sparse_attention_layers,
+        )
     elif name == "fbt":
         variant = FBTVariant(
             backbone,
@@ -66,6 +86,25 @@ def build_variant(
             destination_layer=recirculation_destination_layer,
             alpha=recirculation_alpha,
             mode=recirculation_mode,
+            initialization_seed=architecture_seed,
+        )
+    elif name == "bank_multiscale":
+        if (
+            memory_write_mode is not None
+            or memory_write_stride is not None
+            or memory_token_visibility is not None
+        ):
+            raise ValueError(
+                "bank_multiscale uses dense source states and does not accept "
+                "memory_write_* controls"
+            )
+        variant = MultiscaleBankVariant(
+            backbone,
+            memory_dense_window=memory_dense_window,
+            memory_sparse_window=memory_sparse_window,
+            memory_sparse_stride=memory_sparse_stride,
+            memory_layers=memory_layers,
+            memory_position_encoding=memory_position_encoding,
             initialization_seed=architecture_seed,
         )
     elif name in {"bank", "bank_add_hybrid", "bank_recirculation_hybrid"}:
@@ -158,6 +197,12 @@ def load_variant(
     memory_token_visibility: str | None = None,
     memory_layers: str | list[int] = "all",
     memory_position_encoding: str = "rope",
+    memory_dense_window: int = 32,
+    memory_sparse_window: int = 32,
+    memory_sparse_stride: int = 32,
+    sparse_attention_stride: int | None = None,
+    sparse_attention_window: int | None = None,
+    sparse_attention_layers: str | list[int] = "all",
     prefix_mixin_probability: float = 0.0,
     recirculation_source_layer: int | None = None,
     recirculation_destination_layer: int | None = None,
@@ -185,6 +230,12 @@ def load_variant(
         memory_token_visibility=memory_token_visibility,
         memory_layers=memory_layers,
         memory_position_encoding=memory_position_encoding,
+        memory_dense_window=memory_dense_window,
+        memory_sparse_window=memory_sparse_window,
+        memory_sparse_stride=memory_sparse_stride,
+        sparse_attention_stride=sparse_attention_stride,
+        sparse_attention_window=sparse_attention_window,
+        sparse_attention_layers=sparse_attention_layers,
         prefix_mixin_probability=prefix_mixin_probability,
         recirculation_source_layer=recirculation_source_layer,
         recirculation_destination_layer=recirculation_destination_layer,
@@ -216,6 +267,22 @@ def load_variant_from_config(
         memory_layers="all" if cfg.memory_layers is None else cfg.memory_layers,
         memory_position_encoding=(
             "rope" if cfg.memory_position_encoding is None else cfg.memory_position_encoding
+        ),
+        memory_dense_window=(
+            32 if cfg.memory_dense_window is None else cfg.memory_dense_window
+        ),
+        memory_sparse_window=(
+            32 if cfg.memory_sparse_window is None else cfg.memory_sparse_window
+        ),
+        memory_sparse_stride=(
+            32 if cfg.memory_sparse_stride is None else cfg.memory_sparse_stride
+        ),
+        sparse_attention_stride=cfg.sparse_attention_stride,
+        sparse_attention_window=cfg.sparse_attention_window,
+        sparse_attention_layers=(
+            "all"
+            if cfg.sparse_attention_layers is None
+            else cfg.sparse_attention_layers
         ),
         prefix_mixin_probability=cfg.prefix_mixin_probability,
         recirculation_source_layer=cfg.recirculation_source_layer,

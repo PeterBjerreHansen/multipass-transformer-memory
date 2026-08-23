@@ -18,6 +18,7 @@ from ..attention.memory_local import (
     memory_bank_attention,
     strict_past_local_attention,
     strict_past_bank_attention,
+    strict_past_multiscale_bank_attention,
 )
 from ..feedback import BankState
 from .multipass import MultiPassVariant
@@ -303,6 +304,44 @@ class BankReader(nn.Module):
             dropout_p=self.dropout_p,
             training=self.training,
             dense=dense,
+        )
+        output = output.transpose(1, 2).contiguous().view(bsz, query_len, -1)
+        return self.o_proj(output)
+
+    def forward_multiscale_bank(
+        self,
+        hidden_states: torch.Tensor,
+        memory_states: torch.Tensor,
+        *,
+        memory_mask: torch.Tensor,
+        dense_window: int,
+        sparse_stride: int,
+        sparse_window: int,
+        query_position_ids: torch.Tensor,
+        memory_position_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Attend once over the dense-recent/sparse-old memory union."""
+        if hidden_states.ndim != 3 or memory_states.ndim != 3:
+            raise ValueError("hidden_states and memory_states must be [B,T,D]")
+        bsz, query_len, _ = hidden_states.shape
+        query, key, value = self._project(
+            hidden_states,
+            memory_states,
+            query_position_ids=query_position_ids,
+            memory_position_ids=memory_position_ids,
+        )
+        output = strict_past_multiscale_bank_attention(
+            query,
+            key,
+            value,
+            query_positions=query_position_ids,
+            memory_positions=memory_position_ids,
+            memory_mask=memory_mask,
+            dense_window=dense_window,
+            sparse_stride=sparse_stride,
+            sparse_window=sparse_window,
+            dropout_p=self.dropout_p,
+            training=self.training,
         )
         output = output.transpose(1, 2).contiguous().view(bsz, query_len, -1)
         return self.o_proj(output)
@@ -783,20 +822,11 @@ class BankVariant(MultiPassVariant):
                         )
                 else:
                     assert isinstance(bank, BankBatch)
-                    memory_delta = memory_reader.forward_full_bank(
+                    memory_delta = self._full_bank_memory_delta(
+                        memory_reader,
                         hidden_states,
-                        bank.memories,
-                        writes_before=bank.writes_before,
-                        memory_mask=bank.valid,
+                        bank,
                         query_position_ids=memory_query_positions,
-                        memory_position_ids=bank.memory_positions,
-                        dense=(
-                            self.memory_write_mode == "dense"
-                            or (
-                                self.memory_write_mode == "periodic"
-                                and self.memory_write_stride == 1
-                            )
-                        ),
                     )
                 hidden_states = hidden_states + memory_delta
             residual = hidden_states
@@ -814,6 +844,31 @@ class BankVariant(MultiPassVariant):
             hidden_states=hidden_states,
             past_key_values=(tuple(new_caches) if new_caches is not None else None),
             captured_hidden=captured_hidden,
+        )
+
+    def _full_bank_memory_delta(
+        self,
+        memory_reader: BankReader,
+        hidden_states: torch.Tensor,
+        bank: BankBatch,
+        *,
+        query_position_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Read a full-sequence bank; specialized retention policies override this."""
+        return memory_reader.forward_full_bank(
+            hidden_states,
+            bank.memories,
+            writes_before=bank.writes_before,
+            memory_mask=bank.valid,
+            query_position_ids=query_position_ids,
+            memory_position_ids=bank.memory_positions,
+            dense=(
+                self.memory_write_mode == "dense"
+                or (
+                    self.memory_write_mode == "periodic"
+                    and self.memory_write_stride == 1
+                )
+            ),
         )
 
     def _run_bank_feedback_core(

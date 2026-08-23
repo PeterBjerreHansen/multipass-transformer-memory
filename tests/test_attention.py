@@ -68,3 +68,29 @@ def test_flex_key_validity_mask_matches_reference_when_available():
         yr, _ = ref(x, attention_mask=valid, position_ids=pos, use_cache=False)
         yf, _ = flex(x, attention_mask=valid, position_ids=pos, use_cache=False)
     torch.testing.assert_close(yf, yr, atol=3e-5, rtol=3e-5)
+
+
+def test_sparse_swa_flex_mask_matches_reference_union():
+    cfg = micro_config(sliding_window=4)
+    ref = MistralAttention(cfg, 0, attention_backend="reference")
+    flex = MistralAttention(
+        cfg,
+        0,
+        attention_backend="flex",
+        compile_flex=False,
+        flex_block_size=16,
+    )
+    flex.load_state_dict(ref.state_dict())
+    ref.configure_sparse_attention(stride=3, window=2)
+    flex.configure_sparse_attention(stride=3, window=2)
+    ref.eval()
+    flex.eval()
+    x = torch.randn(2, 19, cfg.hidden_size)
+    pos = torch.arange(19)[None, :].expand(2, -1)
+    valid = torch.ones(2, 19, dtype=torch.bool)
+    valid[1, [2, 11]] = False
+    with torch.no_grad(), warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        expected, _ = ref(x, attention_mask=valid, position_ids=pos)
+        actual, _ = flex(x, attention_mask=valid, position_ids=pos)
+    torch.testing.assert_close(actual, expected, atol=3e-5, rtol=3e-5)

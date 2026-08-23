@@ -196,6 +196,16 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
     if memory_layers is None:
         memory_layers = "all"
     memory_position_encoding = str(case.get("memory_position_encoding", "rope"))
+    memory_dense_window = int(case.get("memory_dense_window", 32))
+    memory_sparse_window = int(case.get("memory_sparse_window", 32))
+    memory_sparse_stride = int(case.get("memory_sparse_stride", 32))
+    sparse_attention_stride = case.get("sparse_attention_stride")
+    if sparse_attention_stride is not None:
+        sparse_attention_stride = int(sparse_attention_stride)
+    sparse_attention_window = case.get("sparse_attention_window")
+    if sparse_attention_window is not None:
+        sparse_attention_window = int(sparse_attention_window)
+    sparse_attention_layers = case.get("sparse_attention_layers", "all")
     recirculation_source_layer = case.get("recirculation_source_layer")
     if recirculation_source_layer is not None:
         recirculation_source_layer = int(recirculation_source_layer)
@@ -207,10 +217,23 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
 
     is_bank = variant in {
         "bank",
+        "bank_multiscale",
         "bank_add_hybrid",
         "bank_recirculation_hybrid",
     }
-    if is_bank:
+    if variant == "bank_multiscale":
+        if any(
+            value is not None
+            for value in (
+                memory_write_mode,
+                memory_write_stride,
+                memory_token_visibility,
+            )
+        ):
+            raise ValueError("bank_multiscale efficiency cases do not use memory_write_* fields")
+        if min(memory_dense_window + memory_sparse_window, memory_sparse_stride) <= 0:
+            raise ValueError("bank_multiscale efficiency cases require valid retention fields")
+    elif is_bank:
         if memory_write_mode not in {"dense", "periodic", "memory_token"}:
             raise ValueError("bank efficiency cases require memory_write_mode: dense|periodic|memory_token")
         if memory_write_mode == "dense":
@@ -230,10 +253,18 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
 
     if passes not in WEIGHTS_BY_K:
         raise ValueError("efficiency benchmark currently supports K=1,2,3")
-    if variant == "vanilla" and passes != 1:
-        raise ValueError("vanilla efficiency cases require passes=1")
-    if variant != "vanilla" and passes < 2:
+    single_pass = variant in {"vanilla", "sparse_swa"}
+    if single_pass and passes != 1:
+        raise ValueError(f"{variant} efficiency cases require passes=1")
+    if not single_pass and passes < 2:
         raise ValueError("multipass efficiency cases require passes>=2")
+    if variant == "sparse_swa" and (
+        sparse_attention_stride is None
+        or sparse_attention_stride <= 0
+        or sparse_attention_window is None
+        or sparse_attention_window <= 0
+    ):
+        raise ValueError("sparse_swa efficiency cases require positive sparse attention fields")
     if min(sequence_length, batch_size, grad_accum_steps, measure_steps) <= 0 or warmup_steps < 0:
         raise ValueError(
             "sequence_length, batch_size, grad_accum_steps, and measure_steps must be positive"
@@ -263,6 +294,12 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
         "memory_token_visibility": memory_token_visibility,
         "memory_layers": memory_layers,
         "memory_position_encoding": memory_position_encoding,
+        "memory_dense_window": memory_dense_window,
+        "memory_sparse_window": memory_sparse_window,
+        "memory_sparse_stride": memory_sparse_stride,
+        "sparse_attention_stride": sparse_attention_stride,
+        "sparse_attention_window": sparse_attention_window,
+        "sparse_attention_layers": sparse_attention_layers,
         "recirculation_source_layer": recirculation_source_layer,
         "recirculation_destination_layer": recirculation_destination_layer,
         "recirculation_alpha": recirculation_alpha,
@@ -289,6 +326,12 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
             memory_token_visibility=memory_token_visibility,
             memory_layers=memory_layers,
             memory_position_encoding=memory_position_encoding,
+            memory_dense_window=memory_dense_window,
+            memory_sparse_window=memory_sparse_window,
+            memory_sparse_stride=memory_sparse_stride,
+            sparse_attention_stride=sparse_attention_stride,
+            sparse_attention_window=sparse_attention_window,
+            sparse_attention_layers=sparse_attention_layers,
             recirculation_source_layer=recirculation_source_layer,
             recirculation_destination_layer=recirculation_destination_layer,
             recirculation_alpha=recirculation_alpha,

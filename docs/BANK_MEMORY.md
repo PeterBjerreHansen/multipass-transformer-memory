@@ -1,6 +1,7 @@
 # Bank memory and explicit `<MEM>` slots
 
-This is the authoritative contract for the active `bank` variant. The
+This is the authoritative contract for the active `bank` and
+`bank_multiscale` variants. The
 `bank_add_hybrid` sections are retained only to document historical checkpoints
 and are not part of the active experiment pipeline.
 
@@ -60,6 +61,9 @@ incremental decoding.
 
 ## 3. Write policies
 
+The three policies below apply to `variant: bank`. `bank_multiscale` instead
+uses a dense source stream and the retention policy in section 3.4.
+
 ### Dense
 
 ```yaml
@@ -91,6 +95,29 @@ memory_token_visibility: visible   # or write_only
 The data view inserts one `<MEM>` after each complete group of C linguistic
 tokens when another linguistic token remains in that block. Only MEM positions
 write the bank.
+
+### Multiscale dense-recent/sparse-old retention
+
+```yaml
+variant: bank_multiscale
+memory_dense_window: 32
+memory_sparse_stride: 32
+memory_sparse_window: 32
+memory_layers: [4, 7]
+memory_position_encoding: rope
+```
+
+Every previous-pass top state is written through the shared `BankWriter`.
+Query `t` reads dense positions `[t-D,t)` plus the last `S` positions strictly
+older than `t-D` for which `(s+1) % C == 0`. The regions are concatenated in
+chronological order and processed by one Bank-reader projection set and one
+softmax. The sparse region is a retention policy over the dense source stream,
+not a second periodic writer or a second reader.
+
+`memory_dense_window + memory_sparse_window` is the cached Bank capacity.
+During decode, an aging dense record survives only when it meets the periodic
+policy and remains among the last `S` sparse records. Raw memory and per-reader
+projected K/V stay aligned with their original linguistic positions.
 
 ## 4. `<MEM>` is input-only
 
@@ -266,6 +293,9 @@ nonzero bank-mediated gradients after the reader output path activates.
 Before interpreting quality results, the repository requires:
 
 - dense bank == periodic C1 with matching weights;
+- multiscale dense-only == Dense Bank and sparse-only == Periodic Bank with
+  matching weights (up to floating-point projection batching order);
+- multiscale selection is non-overlapping and uses one reader softmax;
 - selected reader layers allocate/read/cache only at their declared indices;
 - sequence RoPE uses original query/write coordinates rather than bank indices;
 - zero-initialized Bank is exact vanilla at every tested pass depth;
@@ -278,5 +308,7 @@ Before interpreting quality results, the repository requires:
 - cached write-only validity preserves physical cache positions;
 - BankAddHybrid leaves fast state unchanged on MEM and advances it on ordinary tokens;
 - exact cached K-pass == full-prefix recomputation across the bank modes;
+- multiscale cached state retains at most `D+S` chronological records and exact
+  cached K-pass matches full-prefix recomputation;
 - the first collapsed recurrent transition == exact K-pass;
 - interrupted/resumed MEM training is trajectory-equivalent to uninterrupted training.

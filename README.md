@@ -50,6 +50,42 @@ memory_token_visibility: visible   # visible | write_only
 
 Memory models can optionally continue NTP training with a causal next-memory prediction head. The head sees only `h_t`, targets detached final-pass future memory features, and is absent from inference. See `docs/NEXT_MEMORY_PREDICTION.md` for alignment, gradient, checkpoint, and leakage contracts.
 
+### The memory-bank models
+The bank models replace the narrow recurrent feedback path with cross-attention over a bounded set of states from the preceding pass. In adaptive Recirculation, token (t) on pass (k) receives essentially one shifted state, (m_{t-1}^{k-1}). A bank reader instead chooses among up to (W) strictly earlier memory records:
+
+```text
+# recurrent feedback
+feedback_t = m[k-1][t-1]
+h_t = mix(h_t, feedback_t)
+
+# memory-bank feedback
+bank_t = last_W({ Writer(h[k-1][s]) for s < t if write(s) })
+h_t += CrossAttention(query=h_t, key_value=bank_t)
+```
+
+![Memory Access Through Cross-attention](/docs/memory_attn.png)
+
+Recirculation fixes the feedback source in advance, while Bank attention lets each token content-select which previous-pass representations are useful. The bank readers are separate GQA cross-attention residuals inserted at selected decoder layers; memory positions retain their original sequence coordinates for RoPE. The three bank variants differ only in **what gets written**:
+
+| Variant               | Write policy               | Effective memory                |
+| --------------------- | -------------------------- | ------------------------------- |
+| **Dense Bank**        | every token                | dense, relatively local         |
+| **Periodic Bank**     | every (s)-th token         | sparse, longer-range            |
+| **Memory-token Bank** | explicit `<MEM>` positions | sparse, dedicated memory states |
+
+`memory_window: 32` means **32 retained memory records**, not 32 tokens. Thus a sparse periodic bank with stride 32 can expose a token to memories spread over roughly $32\times$ the sequence range of a dense bank with the same capacity. The hybrid combines both routes: adaptive Recirculation provides a **fast**, local feedback channel, while the sparse bank provides a **slow**, longer-range content-addressed memory. This is the motivation for viewing the two mechanisms as complementary rather than mutually exclusive.
+
+```yaml
+variant: bank
+memory_window: 32
+memory_write_mode: dense       # dense | periodic | memory_token
+memory_layers: [3, 7]
+memory_position_encoding: rope
+```
+
+Periodic and memory-token banks additionally set `memory_write_stride`. In memory-token mode, `<MEM>` is input-only: it is not part of the LM output vocabulary and receives no direct LM loss. In the `write_only` configuration used in the main comparison, later tokens can access its state only through the bank. See `docs/BANK_MEMORY.md` for the exact attention masks, write timing, cached-inference behavior, and hybrid contracts.
+
+
 ### A Note on Efficiency
 `Relative training FLOPs` is normalized to the vanilla K=1 run at 1.000x. It uses the 90% K=2 / 10% K=3 training schedule, so most of the $>2x$ multiplier is because I chose to always run at least two passes. This policy puts more pressure on the memory-adaptations (which is what I wanted to study most), but is presumably computationally suboptimal since single passes will adapt the backbone to the training distribution more efficiently. The measure counts mostly the dominant dense matrix products in the forward and backward passes, and you can see the estimator is `scripts/estimate_training_flops.py`.
 

@@ -79,6 +79,38 @@ def _causal_pairs(
     return pairs
 
 
+def _multiresolution_pairs(
+    key_valid: tuple[bool, ...],
+    *,
+    recent_window: int,
+    sparse_stride: int,
+    sparse_window: int,
+    include_current: bool,
+) -> int:
+    """Count pairs in the dense-recent/fixed-periodic-old union."""
+    recent_window = int(recent_window)
+    sparse_window = int(sparse_window)
+    sparse_stride = _validate_positive("sparse_stride", sparse_stride)
+    if recent_window < 0 or sparse_window < 0:
+        raise ValueError("multiresolution windows must be non-negative")
+    if recent_window + sparse_window <= 0:
+        raise ValueError("at least one multiresolution window must be non-zero")
+    pairs = 0
+    for query_position in range(len(key_valid)):
+        recent_stop = query_position + (1 if include_current else 0)
+        recent_start = max(0, recent_stop - recent_window)
+        selected = list(range(recent_start, recent_stop))
+        sparse = [
+            position
+            for position in range(recent_start)
+            if (position + 1) % sparse_stride == 0
+        ][-sparse_window:]
+        if sparse_window == 0:
+            sparse = []
+        pairs += sum(key_valid[position] for position in (*sparse, *selected))
+    return pairs
+
+
 def _bank_pairs(
     sequence_length: int,
     write_positions: tuple[int, ...],
@@ -240,6 +272,9 @@ def _backbone_pass_breakdown(
     config: MistralConfig,
     *,
     key_valid: tuple[bool, ...],
+    sparse_attention_stride: int | None = None,
+    sparse_attention_window: int = 0,
+    sparse_attention_layers: int = 0,
 ) -> FlopBreakdown:
     sequence_length = len(key_valid)
     hidden_size = int(config.hidden_size)
@@ -252,10 +287,29 @@ def _backbone_pass_breakdown(
         + 2 * _linear_flops(sequence_length, hidden_size, kv_width)
         + _linear_flops(sequence_length, hidden_size, hidden_size)
     )
-    self_attention_products = layers * (
+    local_pairs = _causal_pairs(key_valid, config.sliding_window)
+    total_pairs = layers * local_pairs
+    if sparse_attention_window:
+        if config.sliding_window is None:
+            raise ValueError("sparse SWA requires a finite sliding_window")
+        if sparse_attention_stride is None:
+            raise ValueError("sparse SWA requires sparse_attention_stride")
+        if not 0 < int(sparse_attention_layers) <= layers:
+            raise ValueError("sparse_attention_layers count is outside the backbone")
+        multiresolution_pairs = _multiresolution_pairs(
+            key_valid,
+            recent_window=int(config.sliding_window),
+            sparse_stride=sparse_attention_stride,
+            sparse_window=sparse_attention_window,
+            include_current=True,
+        )
+        total_pairs += int(sparse_attention_layers) * (
+            multiresolution_pairs - local_pairs
+        )
+    self_attention_products = (
         FLOPS_PER_MATMUL
         * int(hidden_size)
-        * _causal_pairs(key_valid, config.sliding_window)
+        * total_pairs
         * 2
     )
     mlp_projections = layers * (
@@ -278,11 +332,28 @@ def _bank_breakdown(
     write_positions: tuple[int, ...],
     memory_window: int,
     reader_layers: int,
+    memory_dense_window: int | None = None,
+    memory_sparse_stride: int | None = None,
+    memory_sparse_window: int | None = None,
 ) -> FlopBreakdown:
     hidden_size = int(config.hidden_size)
     kv_width = int(config.num_key_value_heads) * int(config.head_dim)
     memory_length = len(write_positions)
-    pairs = _bank_pairs(sequence_length, write_positions, memory_window)
+    multiscale = memory_dense_window is not None
+    if multiscale:
+        if memory_sparse_stride is None or memory_sparse_window is None:
+            raise ValueError("multiscale Bank FLOPs require all retention fields")
+        if write_positions != tuple(range(sequence_length)):
+            raise ValueError("multiscale Bank writes every source position")
+        pairs = _multiresolution_pairs(
+            (True,) * sequence_length,
+            recent_window=memory_dense_window,
+            sparse_stride=memory_sparse_stride,
+            sparse_window=memory_sparse_window,
+            include_current=False,
+        )
+    else:
+        pairs = _bank_pairs(sequence_length, write_positions, memory_window)
     reader_projections = (
         _linear_flops(sequence_length, hidden_size, hidden_size)
         + 2 * _linear_flops(memory_length, hidden_size, kv_width)
@@ -336,6 +407,12 @@ def estimate_pass(
     memory_write_stride: int | None = None,
     memory_token_visibility: str = "visible",
     memory_layers: Iterable[int] | str = "all",
+    memory_dense_window: int | None = None,
+    memory_sparse_window: int | None = None,
+    memory_sparse_stride: int | None = None,
+    sparse_attention_stride: int | None = None,
+    sparse_attention_window: int | None = None,
+    sparse_attention_layers: Iterable[int] | str = "all",
     recirculation_mode: str = "fixed",
 ) -> PassFlopEstimate:
     """Estimate forward/training FLOPs for one fixed K-pass optimizer step."""
@@ -345,25 +422,44 @@ def estimate_pass(
     )
     if variant not in {
         "vanilla",
+        "sparse_swa",
         "memory_add",
         "recirculation",
         "bank",
+        "bank_multiscale",
         "bank_add_hybrid",
         "bank_recirculation_hybrid",
     }:
         raise ValueError(f"unsupported variant {variant!r}")
-    if variant == "vanilla" and passes != 1:
-        raise ValueError("vanilla FLOP estimation only supports passes=1")
-    if variant != "vanilla" and passes < 2:
+    single_pass = variant in {"vanilla", "sparse_swa"}
+    if single_pass and passes != 1:
+        raise ValueError(f"{variant} FLOP estimation only supports passes=1")
+    if not single_pass and passes < 2:
         raise ValueError("research variants require at least two passes")
 
-    uses_bank = variant in {"bank", "bank_add_hybrid", "bank_recirculation_hybrid"}
-    if uses_bank and memory_write_mode is None:
+    uses_bank = variant in {
+        "bank",
+        "bank_multiscale",
+        "bank_add_hybrid",
+        "bank_recirculation_hybrid",
+    }
+    multiscale_bank = variant == "bank_multiscale"
+    if uses_bank and not multiscale_bank and memory_write_mode is None:
         raise ValueError("Bank variants require memory_write_mode")
-    if not uses_bank and memory_write_mode is not None:
+    if (not uses_bank or multiscale_bank) and memory_write_mode is not None:
         raise ValueError("memory_write_mode only applies to Bank variants")
 
-    if uses_bank:
+    if multiscale_bank:
+        if (
+            memory_dense_window is None
+            or memory_sparse_window is None
+            or memory_sparse_stride is None
+        ):
+            raise ValueError("bank_multiscale requires all multiscale retention fields")
+        writes = tuple(range(linguistic_sequence_length))
+        physical_length = linguistic_sequence_length
+        key_valid = (True,) * physical_length
+    elif uses_bank:
         uses_control_tokens, writes, layout = bank_write_positions(
             linguistic_length=linguistic_sequence_length,
             memory_write_mode=str(memory_write_mode),
@@ -387,9 +483,28 @@ def estimate_pass(
         physical_length = linguistic_sequence_length
         key_valid = (True,) * physical_length
 
-    base = _backbone_pass_breakdown(config, key_valid=key_valid)
+    if variant == "sparse_swa":
+        if sparse_attention_stride is None or sparse_attention_window is None:
+            raise ValueError("sparse_swa requires stride and window")
+        sparse_layer_count = (
+            int(config.num_hidden_layers)
+            if sparse_attention_layers == "all"
+            else len(tuple(sparse_attention_layers))
+        )
+    else:
+        sparse_layer_count = 0
+    base = _backbone_pass_breakdown(
+        config,
+        key_valid=key_valid,
+        sparse_attention_stride=sparse_attention_stride,
+        sparse_attention_window=(
+            0 if sparse_attention_window is None else sparse_attention_window
+        ),
+        sparse_attention_layers=sparse_layer_count,
+    )
     if uses_bank:
-        assert memory_write_mode is not None
+        if not multiscale_bank:
+            assert memory_write_mode is not None
         bank = _bank_breakdown(
             config,
             sequence_length=physical_length,
@@ -400,6 +515,9 @@ def estimate_pass(
                 if memory_layers == "all"
                 else len(tuple(memory_layers))
             ),
+            memory_dense_window=memory_dense_window if multiscale_bank else None,
+            memory_sparse_stride=memory_sparse_stride if multiscale_bank else None,
+            memory_sparse_window=memory_sparse_window if multiscale_bank else None,
         )
     else:
         bank = FlopBreakdown()
@@ -438,6 +556,12 @@ def estimate_schedule(
     memory_write_stride: int | None = None,
     memory_token_visibility: str = "visible",
     memory_layers: Iterable[int] | str = "all",
+    memory_dense_window: int | None = None,
+    memory_sparse_window: int | None = None,
+    memory_sparse_stride: int | None = None,
+    sparse_attention_stride: int | None = None,
+    sparse_attention_window: int | None = None,
+    sparse_attention_layers: Iterable[int] | str = "all",
     recirculation_mode: str = "fixed",
 ) -> ScheduledFlopEstimate:
     """Estimate a pass schedule and normalize it to vanilla K=1."""
@@ -464,6 +588,12 @@ def estimate_schedule(
             memory_write_stride=memory_write_stride,
             memory_token_visibility=memory_token_visibility,
             memory_layers=memory_layers,
+            memory_dense_window=memory_dense_window,
+            memory_sparse_window=memory_sparse_window,
+            memory_sparse_stride=memory_sparse_stride,
+            sparse_attention_stride=sparse_attention_stride,
+            sparse_attention_window=sparse_attention_window,
+            sparse_attention_layers=sparse_attention_layers,
             recirculation_mode=recirculation_mode,
         )
         for passes in probabilities

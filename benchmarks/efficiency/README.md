@@ -177,6 +177,14 @@ periodic C=1/4/8/16/32 at W=32.
 These are engineering measurements only; they do not select the scientific
 write cadence.
 
+## Attention-control suite
+
+`benchmarks/efficiency/suites/attention_controls.yaml` covers the two controls
+without changing the locked Stage-5 suite: one-pass `sparse_swa`, multipass
+`bank_multiscale`, the sparse Periodic Bank endpoint, and the existing
+Recirculation–Periodic Bank hybrid. Run it with the shared efficiency runner or
+pass it to `scripts/estimate_training_flops.py` for dominant-matmul accounting.
+
 For ordinary/dense/periodic cases, `sequence_length` is both the linguistic and
 physical length. If a future efficiency case uses `memory_token`, the runner
 interprets `sequence_length` as linguistic length, inserts deterministic MEM

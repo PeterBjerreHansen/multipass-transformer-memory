@@ -21,6 +21,7 @@ def test_efficiency_suites_are_explicit_and_non_scientific():
         "cuda_batch_qualification.yaml",
         "bank_write_scaling.yaml",
         "stage_5_architectures.yaml",
+        "attention_controls.yaml",
     }
     assert {path.name for path in SUITES.glob("*.yaml")} == expected
     assert (ROOT / "benchmarks" / "efficiency" / "README.md").exists()
@@ -36,8 +37,10 @@ def test_efficiency_suite_cases_have_required_dimensions():
             merged = {**defaults, **case}
             assert merged["variant"] in {
                 "vanilla",
+                "sparse_swa",
                 "recirculation",
                 "bank",
+                "bank_multiscale",
                 "bank_recirculation_hybrid",
             }
             assert merged["passes"] in {1, 2, 3}

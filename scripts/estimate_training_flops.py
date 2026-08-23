@@ -24,6 +24,12 @@ ARCHITECTURE_FIELDS = (
     "memory_token_visibility",
     "memory_layers",
     "memory_position_encoding",
+    "memory_dense_window",
+    "memory_sparse_window",
+    "memory_sparse_stride",
+    "sparse_attention_stride",
+    "sparse_attention_window",
+    "sparse_attention_layers",
     "recirculation_mode",
     "recirculation_source_layer",
     "recirculation_destination_layer",
@@ -86,7 +92,7 @@ def _config(path: str | None) -> MistralConfig:
 
 def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[int, float]):
     variant = str(case["variant"])
-    if variant == "vanilla":
+    if variant in {"vanilla", "sparse_swa"}:
         probabilities = {1: 1.0}
     else:
         probabilities = schedule
@@ -101,6 +107,12 @@ def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[i
         memory_write_stride=case.get("memory_write_stride"),
         memory_token_visibility=str(case.get("memory_token_visibility", "visible")),
         memory_layers=memory_layers,
+        memory_dense_window=case.get("memory_dense_window"),
+        memory_sparse_window=case.get("memory_sparse_window"),
+        memory_sparse_stride=case.get("memory_sparse_stride"),
+        sparse_attention_stride=case.get("sparse_attention_stride"),
+        sparse_attention_window=case.get("sparse_attention_window"),
+        sparse_attention_layers=case.get("sparse_attention_layers", "all"),
         recirculation_mode=str(case.get("recirculation_mode", "fixed")),
     )
 
@@ -121,7 +133,9 @@ def build_report(
     for group_cases in grouped.values():
         first = group_cases[0]
         observed_passes = {int(case["passes"]) for case in group_cases}
-        expected_passes = {1} if first["variant"] == "vanilla" else set(schedule)
+        expected_passes = (
+            {1} if first["variant"] in {"vanilla", "sparse_swa"} else set(schedule)
+        )
         if not expected_passes.issubset(observed_passes):
             raise ValueError(
                 f"suite architecture {first['variant']!r} lacks required pass rows: "

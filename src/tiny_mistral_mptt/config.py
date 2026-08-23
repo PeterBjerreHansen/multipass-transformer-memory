@@ -15,8 +15,10 @@ SUPPORTED_VARIANTS = {
     "memory_add",
     "recirculation",
     "bank",
+    "bank_multiscale",
     "bank_add_hybrid",
     "bank_recirculation_hybrid",
+    "sparse_swa",
 }
 SUPPORTED_LR_SCHEDULES = {"constant", "cosine", "piecewise_linear"}
 SUPPORTED_AUTOCAST_DTYPES = {"bfloat16"}
@@ -213,6 +215,15 @@ class ExperimentConfig:
     memory_token_visibility: str | None = None
     memory_layers: str | list[int] | None = None
     memory_position_encoding: str | None = None
+    # Multiscale Bank retains a dense recent region plus fixed-periodic old
+    # records from the same dense previous-pass source stream.
+    memory_dense_window: int | None = None
+    memory_sparse_window: int | None = None
+    memory_sparse_stride: int | None = None
+    # Parameter-free one-pass control that widens selected self-attention masks.
+    sparse_attention_stride: int | None = None
+    sparse_attention_window: int | None = None
+    sparse_attention_layers: str | list[int] | None = None
     prefix_mixin_probability: float = 0.0
     recirculation_source_layer: int | None = None
     recirculation_destination_layer: int | None = None
@@ -270,12 +281,21 @@ class ExperimentConfig:
             self.pass_loss_weights_by_k = self.ntp_pass_loss_weights_by_k
         if self.snapshot_at_tokens is not None:
             self.snapshot_at_tokens = sorted({int(value) for value in self.snapshot_at_tokens})
-        if self.variant in {"bank", "bank_add_hybrid", "bank_recirculation_hybrid"}:
+        if self.variant in {
+            "bank",
+            "bank_multiscale",
+            "bank_add_hybrid",
+            "bank_recirculation_hybrid",
+        }:
             self.memory_layers = _coerce_memory_layers(
                 "all" if self.memory_layers is None else self.memory_layers
             )
             if self.memory_position_encoding is None:
                 self.memory_position_encoding = "rope"
+        if self.variant == "sparse_swa":
+            self.sparse_attention_layers = _coerce_memory_layers(
+                "all" if self.sparse_attention_layers is None else self.sparse_attention_layers
+            )
 
     def normalized_pass_schedule(self) -> list[dict[str, Any]]:
         return normalize_pass_schedule(self.pass_schedule)
@@ -432,7 +452,12 @@ class ExperimentConfig:
             "bank_add_hybrid",
             "bank_recirculation_hybrid",
         }
-        bank_nmp_variants = {"bank", "bank_add_hybrid", "bank_recirculation_hybrid"}
+        bank_nmp_variants = {
+            "bank",
+            "bank_multiscale",
+            "bank_add_hybrid",
+            "bank_recirculation_hybrid",
+        }
         if self.recurrent_nmp_weight > 0 and self.variant not in recurrent_nmp_variants:
             raise ValueError(f"variant={self.variant} does not support recurrent NMP")
         if self.bank_nmp_weight > 0 and self.variant not in bank_nmp_variants:
@@ -509,14 +534,67 @@ class ExperimentConfig:
                 raise ValueError(
                     "bank configs require memory_position_encoding: rope|none"
                 )
+            if any(
+                value is not None
+                for value in (
+                    self.memory_dense_window,
+                    self.memory_sparse_window,
+                    self.memory_sparse_stride,
+                )
+            ):
+                raise ValueError("multiscale memory fields require variant=bank_multiscale")
+        elif self.variant == "bank_multiscale":
+            if (
+                self.memory_write_mode is not None
+                or self.memory_write_stride is not None
+                or self.memory_token_visibility is not None
+            ):
+                raise ValueError("bank_multiscale uses dense retention, not memory_write_* fields")
+            if self.memory_dense_window is None or self.memory_sparse_window is None:
+                raise ValueError(
+                    "bank_multiscale requires memory_dense_window and memory_sparse_window"
+                )
+            if self.memory_dense_window < 0 or self.memory_sparse_window < 0:
+                raise ValueError("multiscale memory windows must be non-negative")
+            if self.memory_dense_window + self.memory_sparse_window <= 0:
+                raise ValueError("bank_multiscale requires at least one non-zero memory window")
+            if self.memory_sparse_stride is None or self.memory_sparse_stride <= 0:
+                raise ValueError("bank_multiscale requires positive memory_sparse_stride")
+            if self.memory_layers is None:
+                raise ValueError("bank_multiscale configs require memory_layers")
+            self.memory_layers = _coerce_memory_layers(self.memory_layers)
+            if self.memory_position_encoding not in {"rope", "none"}:
+                raise ValueError(
+                    "bank_multiscale requires memory_position_encoding: rope|none"
+                )
         elif (
             self.memory_write_mode is not None
             or self.memory_write_stride is not None
             or self.memory_token_visibility is not None
             or self.memory_layers is not None
             or self.memory_position_encoding is not None
+            or self.memory_dense_window is not None
+            or self.memory_sparse_window is not None
+            or self.memory_sparse_stride is not None
         ):
             raise ValueError("memory_* fields are supported only for bank variants")
+
+        if self.variant == "sparse_swa":
+            if self.sparse_attention_stride is None or self.sparse_attention_stride <= 0:
+                raise ValueError("sparse_swa requires positive sparse_attention_stride")
+            if self.sparse_attention_window is None or self.sparse_attention_window <= 0:
+                raise ValueError("sparse_swa requires positive sparse_attention_window")
+            if self.sparse_attention_layers is None:
+                raise ValueError("sparse_swa requires sparse_attention_layers")
+            self.sparse_attention_layers = _coerce_memory_layers(
+                self.sparse_attention_layers
+            )
+        elif (
+            self.sparse_attention_stride is not None
+            or self.sparse_attention_window is not None
+            or self.sparse_attention_layers is not None
+        ):
+            raise ValueError("sparse_attention_* fields require variant=sparse_swa")
         if (
             not math.isfinite(float(self.prefix_mixin_probability))
             or not 0.0 <= float(self.prefix_mixin_probability) <= 1.0
@@ -528,12 +606,13 @@ class ExperimentConfig:
             )
         schedule = self.normalized_pass_schedule()
         pass_counts = {passes for stage in schedule for passes in stage["probabilities"]}
-        if self.variant == "vanilla" and pass_counts != {1}:
-            raise ValueError("vanilla supports only one-pass training")
-        if self.variant == "vanilla" and self.eval_passes != 1:
-            raise ValueError("vanilla supports eval_passes=1 only")
-        if self.phase == "A" and self.variant == "vanilla":
-            raise ValueError("vanilla has no Phase-A parameters")
+        single_pass_variants = {"vanilla", "sparse_swa"}
+        if self.variant in single_pass_variants and pass_counts != {1}:
+            raise ValueError(f"{self.variant} supports only one-pass training")
+        if self.variant in single_pass_variants and self.eval_passes != 1:
+            raise ValueError(f"{self.variant} supports eval_passes=1 only")
+        if self.phase == "A" and self.variant in single_pass_variants:
+            raise ValueError(f"{self.variant} has no Phase-A parameters")
         if self.phase == "A" and any(passes < 2 for passes in pass_counts):
             raise ValueError("Phase A for multipass variants requires at least two passes on every batch")
         if self.ntp_pass_loss_weights is not None and self.ntp_pass_loss_weights_by_k is not None:

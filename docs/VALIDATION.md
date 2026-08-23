@@ -15,6 +15,10 @@ vanilla numerical behavior. Reference, local O(TW), and FlexAttention masks are
 tested for parity, including an all-masked query row returning exact zero rather
 than NaN/uniform leakage.
 
+The sparse-SWA control adds an opt-in multiresolution mask to selected layers.
+The ordinary all-local path remains unchanged. Compact local attention,
+reference masking, and cached explicit-position retention must agree.
+
 ## Multipass/bank gates
 
 The suite must enforce:
@@ -27,6 +31,8 @@ The suite must enforce:
 - adaptive recirculation Phase A freezes the TinyMistral backbone and trains
   only its coefficient controller;
 - dense bank and periodic C1 are identical with matching weights;
+- multiscale Bank reduces to Dense Bank when `S=0` and Periodic Bank when
+  `D=0`, and uses one softmax over a non-overlapping union otherwise;
 - zero-initialized Bank is an exact vanilla fixed point at all pass depths;
 - Bank reader allocation and projected caches match `memory_layers`;
 - memory RoPE retains original linguistic write/query positions through cached eviction;
@@ -72,6 +78,8 @@ For BankAddHybrid in memory-token mode:
 - bank state remains chronological and bounded;
 - write-only cache validity persists across decode;
 - K=1 remains the vanilla cached boundary.
+- sparse SWA adds no parameters, changes only selected self-attention masks,
+  and cached decoding equals full-sequence execution.
 
 ## Training/recovery gates
 

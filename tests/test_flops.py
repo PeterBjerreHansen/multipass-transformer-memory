@@ -93,3 +93,43 @@ def test_fixed_recursion_does_not_charge_adaptive_controller():
     )
     assert fixed.forward.recurrent_controller == 0
     assert adaptive.forward.recurrent_controller > 0
+
+
+def test_sparse_swa_adds_only_sparse_attention_products():
+    config = tiny_mistral_248m_config()
+    vanilla = estimate_pass(
+        config,
+        variant="vanilla",
+        passes=1,
+        linguistic_sequence_length=128,
+    )
+    sparse = estimate_pass(
+        config,
+        variant="sparse_swa",
+        passes=1,
+        linguistic_sequence_length=128,
+        sparse_attention_stride=32,
+        sparse_attention_window=2,
+        sparse_attention_layers=[3, 7],
+    )
+    assert sparse.forward.self_attention_projections == vanilla.forward.self_attention_projections
+    assert sparse.forward.self_attention_products > vanilla.forward.self_attention_products
+    assert sparse.forward.mlp_projections == vanilla.forward.mlp_projections
+
+
+def test_multiscale_bank_flops_count_dense_writes_and_union_reads():
+    config = tiny_mistral_248m_config()
+    estimate = estimate_pass(
+        config,
+        variant="bank_multiscale",
+        passes=2,
+        linguistic_sequence_length=128,
+        memory_dense_window=32,
+        memory_sparse_window=2,
+        memory_sparse_stride=32,
+        memory_layers=[4, 7],
+    )
+    assert estimate.bank_write_positions == 128
+    assert estimate.memory_positions == 0
+    assert estimate.forward.bank_writer > 0
+    assert estimate.forward.bank_reader_products > 0

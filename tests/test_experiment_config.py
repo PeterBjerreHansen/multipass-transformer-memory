@@ -170,6 +170,68 @@ def test_bank_fields_cannot_silently_change_other_variants():
         _config(variant="memory_add", memory_layers=[3])
 
 
+def test_multiscale_bank_config_uses_explicit_dense_and_sparse_windows():
+    cfg = _config(
+        variant="bank_multiscale",
+        memory_dense_window=32,
+        memory_sparse_window=32,
+        memory_sparse_stride=32,
+        memory_layers=[7, 4],
+    )
+    assert cfg.memory_layers == [4, 7]
+    assert cfg.memory_position_encoding == "rope"
+
+    with pytest.raises(ValueError, match="requires memory_dense_window"):
+        _config(variant="bank_multiscale")
+    with pytest.raises(ValueError, match="at least one non-zero"):
+        _config(
+            variant="bank_multiscale",
+            memory_dense_window=0,
+            memory_sparse_window=0,
+            memory_sparse_stride=32,
+        )
+    with pytest.raises(ValueError, match="not memory_write"):
+        _config(
+            variant="bank_multiscale",
+            memory_write_mode="dense",
+            memory_dense_window=32,
+            memory_sparse_window=32,
+            memory_sparse_stride=32,
+        )
+
+
+def test_sparse_swa_config_is_single_pass_and_rejects_bank_fields():
+    cfg = _config(
+        variant="sparse_swa",
+        pass_schedule=[{"probabilities": {1: 1.0}}],
+        sparse_attention_stride=32,
+        sparse_attention_window=32,
+        sparse_attention_layers=[7, 3],
+    )
+    assert cfg.sparse_attention_layers == [3, 7]
+
+    with pytest.raises(ValueError, match="requires positive sparse_attention_stride"):
+        _config(
+            variant="sparse_swa",
+            pass_schedule=[{"probabilities": {1: 1.0}}],
+            sparse_attention_window=32,
+        )
+    with pytest.raises(ValueError, match="only one-pass"):
+        _config(
+            variant="sparse_swa",
+            sparse_attention_stride=32,
+            sparse_attention_window=32,
+        )
+    with pytest.raises(ValueError, match="supported only for bank variants"):
+        _config(
+            variant="sparse_swa",
+            pass_schedule=[{"probabilities": {1: 1.0}}],
+            sparse_attention_stride=32,
+            sparse_attention_window=32,
+            memory_layers=[3],
+        )
+
+
 def test_bank_memory_layer_and_position_configuration_is_validated():
     cfg = _config(
         variant="bank",
