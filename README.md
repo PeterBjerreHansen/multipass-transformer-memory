@@ -22,7 +22,7 @@ I think there are three notable patterns in these results:
 The experiment is riddled with confounders such as differing compute budgets, parameter count, and starting-point inequality (some mechanisms are more easily slotted into a pretrained model, and the vanilla backbone had no pre-run adaptation). Moreover, I simply do not have the computational resources to provide the exhaustive sweeps and ablations one needs to make convincing optimality arguments. However, I do think the results point towards potential improvements to the existing architectures. 
 
 ### The memory-bank models
-The bank models replace the narrow recurrent feedback path with cross-attention over a bounded set of states from the preceding pass. In adaptive Recirculation, token (t) on pass (k) receives essentially one shifted state, (m_{t-1}^{k-1}). A bank reader instead chooses among up to (W) strictly earlier memory records:
+The bank models replace the narrow recurrent feedback path with cross-attention over a bounded set of states from the preceding pass. In adaptive Recirculation, token $t$ on pass $k$ receives essentially one shifted state, $m_{t-1}^{k-1}$. A bank reader instead chooses among up to $W$ strictly earlier memory records:
 
 ```text
 # recurrent feedback
