@@ -26,7 +26,7 @@ class BatchQualification:
 def recommend_cuda_microbatch(
     benchmark_document: dict[str, Any],
     *,
-    variants: Iterable[str] = ("memory_add", "tape"),
+    variants: Iterable[str] = ("recirculation", "tape"),
     passes: int = 2,
     sequence_length: int = 2048,
     autocast_dtype: str | None = "bfloat16",

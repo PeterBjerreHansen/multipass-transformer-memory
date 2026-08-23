@@ -17,7 +17,6 @@ import sys
 
 
 ARMS = (
-    "memory_add_100m",
     "recirculation_adaptive_100m",
     "tape_dense_100m",
     "tape_periodic32_100m",

@@ -1,8 +1,9 @@
 # Exact incremental and collapsed recurrent inference
 
-This document defines cached inference for `memory_add`, `recirculation`,
-`tape`, and `tape_add_hybrid`. Prompt refinement depth K is an inference-time
-parameter and need not equal the K used during training.
+This document defines cached inference for the active `recirculation` and
+`tape` variants. The retired `memory_add` and `tape_add_hybrid` controls remain
+documented only for loading historical checkpoints. Prompt refinement depth K
+is an inference-time parameter and need not equal the K used during training.
 
 ## Exact incremental K
 

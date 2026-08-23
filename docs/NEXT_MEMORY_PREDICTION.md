@@ -23,9 +23,10 @@ Recurrent NMP predicts the memory emitted at the next linguistic token:
 P_recurrent(h_t^k) -> stop_gradient(RMS(r_(t+1)^K))
 ```
 
-`r` is semantic and architecture-specific. MemoryAdd uses the top hidden state;
-Recirculation uses its captured source-layer state. Hybrids use their recurrent
-component. The default target RMS-normalization uses the same parameter-free
+`r` is semantic and architecture-specific. Adaptive Recirculation uses its
+captured source-layer state; the active hybrid uses its recurrent component.
+The retired MemoryAdd/TapeAddHybrid controls use their historical recurrent
+states only for checkpoint compatibility. The default target RMS-normalization uses the same parameter-free
 variance calculation as Mistral RMSNorm, without applying a learned gain. This
 removes the arbitrary residual-stream amplitude that `_norm_match` discards at
 routing time. Set `recurrent_nmp_target_normalization: none` for the raw-state
@@ -90,10 +91,8 @@ Supported objectives are:
 
 | Variant | Recurrent NMP | Tape NMP |
 | --- | ---: | ---: |
-| `memory_add` | yes | no |
 | `recirculation` | yes | no |
 | `tape` | no | yes |
-| `tape_add_hybrid` | yes | yes |
 | `tape_recirculation_hybrid` | yes | yes |
 | `vanilla`, `fbt` | no | no |
 

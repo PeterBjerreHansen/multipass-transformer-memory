@@ -33,7 +33,8 @@ pretraining recipe.
 
 `PeterBjerreHansen/multi-pass-transformer-training` at
 `79398be4ac33a7489029e6075bdce930a0ec44b2` is a design reference for
-previous-pass top-state feedback, strict recurrence causality, MemoryAdd, and
+previous-pass top-state feedback, strict recurrence causality, retired
+MemoryAdd, and
 per-layer tape cross-attention. Current implementations are written directly
 against this repository's Mistral/GQA/local-attention interfaces.
 

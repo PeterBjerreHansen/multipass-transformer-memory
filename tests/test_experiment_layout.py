@@ -63,7 +63,7 @@ def test_development_studies_verify_semantically():
         verify_study(manifest)
 
 
-def test_active_pipeline_shelves_fbt_and_covers_all_tape_policies():
+def test_active_pipeline_shelves_retired_controls_and_covers_all_tape_policies():
     development = ROOT / "benchmarks" / "development"
     expected_tape_modes = {"dense", "periodic", "memory_token"}
 
@@ -79,7 +79,10 @@ def test_active_pipeline_shelves_fbt_and_covers_all_tape_policies():
             for arm in manifest["arms"]
         ]
 
-        assert all(cfg.variant != "fbt" for cfg in configs)
+        assert all(
+            cfg.variant not in {"fbt", "memory_add", "tape_add_hybrid"}
+            for cfg in configs
+        )
         assert {
             cfg.variant for cfg in configs if "hybrid" in cfg.variant
         } == {"tape_recirculation_hybrid"}
@@ -91,6 +94,17 @@ def test_active_pipeline_shelves_fbt_and_covers_all_tape_policies():
         assert explicit.memory_write_stride == 32
         assert explicit.memory_token_visibility == "write_only"
         assert all(cfg.checkpoint_keep_last == expected_retention for cfg in configs)
+
+    stage5 = development / "stage_5_cloud_100m"
+    manifest = yaml.safe_load((stage5 / "STUDY.yaml").read_text(encoding="utf-8"))
+    configs = [
+        load_experiment_config(stage5 / arm["config"])
+        for arm in manifest["arms"]
+    ]
+    assert all(
+        cfg.variant not in {"fbt", "memory_add", "tape_add_hybrid"}
+        for cfg in configs
+    )
 
 
 def test_wiring_and_pilot_each_consume_one_complete_training_split():

@@ -2,7 +2,6 @@ name: stage_2_local_smoke
 status: planned
 question: Do the wired feedback models remain stable when the backbone is unfrozen?
 arms:
-  - {id: memory_add_smoke, config: memory_add_smoke.yaml}
   - {id: recirculation_adaptive_smoke, config: recirculation_adaptive_smoke.yaml}
   - {id: tape_dense_smoke, config: tape_dense_smoke.yaml}
   - {id: tape_periodic32_smoke, config: tape_periodic32_smoke.yaml}

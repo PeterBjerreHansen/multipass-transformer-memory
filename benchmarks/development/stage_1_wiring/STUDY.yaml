@@ -2,7 +2,6 @@ name: stage_1_wiring
 status: planned
 question: Can each added feedback pathway learn a stable frozen-backbone prior?
 arms:
-  - {id: memory_add_wiring_5m, config: memory_add_wiring.yaml}
   - {id: recirculation_adaptive_wiring_5m, config: recirculation_adaptive_wiring.yaml}
   - {id: tape_dense_wiring_5m, config: tape_dense_wiring.yaml}
   - {id: tape_periodic32_wiring_5m, config: tape_periodic32_wiring.yaml}

@@ -3,7 +3,6 @@ status: planned
 question: Which fast, slow, and hybrid feedback models justify confirmation compute?
 arms:
   - {id: vanilla_seed1337, config: vanilla_seed1337.yaml}
-  - {id: memory_add_seed1337, config: memory_add_seed1337.yaml}
   - {id: recirculation_adaptive_seed1337, config: recirculation_adaptive_seed1337.yaml}
   - {id: tape_dense_seed1337, config: tape_dense_seed1337.yaml}
   - {id: tape_periodic32_seed1337, config: tape_periodic32_seed1337.yaml}

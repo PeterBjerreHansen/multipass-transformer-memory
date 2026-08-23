@@ -39,13 +39,13 @@ Example:
 ```yaml
 name: k_selection
 status: complete
-question: Does K=3 justify its extra compute over K=2?
+question: Does K=3 justify its extra compute for adaptive Recirculation?
 arms:
-  - {id: memory_add_k2, config: memory_add_k2.yaml}
-  - {id: memory_add_k3, config: memory_add_k3.yaml}
+  - {id: recirculation_k2, config: recirculation_k2.yaml}
+  - {id: recirculation_k3, config: recirculation_k3.yaml}
 comparisons:
-  - name: memory_add_k
-    arms: [memory_add_k2, memory_add_k3]
+  - name: recirculation_k
+    arms: [recirculation_k2, recirculation_k3]
     experimental_axes: [pass_schedule, pass_loss_weights]
 ```
 

@@ -22,7 +22,7 @@ For the first serious dense-memory comparison, do not infer batching from GPU
 capacity. The 2048-context development reference is 2,048 unique tokens per
 optimizer update. Run `make efficiency-cuda-batch-qualification` on the target
 GPU and use `scripts/select_cuda_batch.py` to identify the smallest common
-efficient K=2 microbatch for MemoryAdd and dense Tape. If that recommendation
+efficient K=2 microbatch for adaptive Recirculation and dense Tape. If that recommendation
 is larger than batch 1, treat the resulting optimizer-batch change as a protocol
 question before locking the core study; do not automatically add gradient
 accumulation to reach an arbitrary larger batch.

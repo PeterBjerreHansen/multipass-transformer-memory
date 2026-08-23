@@ -20,11 +20,12 @@ make select-cuda-batch \
   RESULT=benchmarks/efficiency/results/generated/cuda_batch_qualification.json
 ```
 
-The qualification compares K=2 MemoryAdd and dense Tape with BF16 autocast and
-accumulation 1 over microbatches 1/2/4/8. OOM cases are retained. The selector
-chooses the smallest common successful batch reaching the configured efficiency
-threshold for both architectures. If this is larger than 1, the scientific
-optimizer batch has changed and must be qualified before a core study is locked.
+The qualification compares K=2 adaptive Recirculation and dense Tape with BF16
+autocast and accumulation 1 over microbatches 1/2/4/8. OOM cases are retained.
+The selector chooses the smallest common successful batch reaching the
+configured efficiency threshold for both architectures. If this is larger than
+1, the scientific optimizer batch has changed and must be qualified before a
+core study is locked.
 
 For memory-token models, benchmark output distinguishes linguistic sequence
 length from expanded physical model positions.

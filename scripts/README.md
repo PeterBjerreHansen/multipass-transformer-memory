@@ -29,8 +29,9 @@ cloud_preflight.py
 The efficiency runner performs real optimizer steps and reports linguistic-token
 and physical-position throughput when they differ. Tape cases must state their
 write policy explicitly. `select_cuda_batch.py` consumes the dedicated CUDA K=2
-qualification and chooses the smallest common efficient MemoryAdd/dense-Tape
-microbatch rather than assuming maximum feasible batch is scientifically valid.
+qualification and chooses the smallest common efficient adaptive-Recirculation/
+dense-Tape microbatch rather than assuming maximum feasible batch is
+scientifically valid.
 
 `cloud_preflight.py` checks CUDA/model/data/source/run compatibility, persistent
 storage, free space, and memory-token-expanded batching before a paid run.
@@ -78,7 +79,8 @@ load time.
 
 Pass-depth, memory interventions, and recurrent-inference scripts are reusable
 checkpoint diagnostics. `evaluate_memory_interventions.py` can independently
-intervene on either hybrid's recurrent source and slow tape source.
+intervene on the active Recirculation–Tape hybrid's recurrent source and slow
+tape source.
 
 Public `generate.py`/model generation remain ordinary language generation. The
 low-level recurrent API can consume explicit MEM control steps, but no sampler

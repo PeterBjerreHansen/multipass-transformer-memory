@@ -36,7 +36,3 @@ cases:
   memory_window: 32
   memory_write_mode: periodic
   memory_write_stride: 32
-- variant: tape_add_hybrid
-  memory_window: 32
-  memory_write_mode: periodic
-  memory_write_stride: 8

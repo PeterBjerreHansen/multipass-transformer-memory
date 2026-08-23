@@ -13,12 +13,20 @@ cases:
 - variant: vanilla
   passes: 1
   sequence_length: 2048
-- variant: memory_add
+- variant: recirculation
   passes: 2
   sequence_length: 2048
-- variant: memory_add
+  recirculation_mode: adaptive
+  recirculation_source_layer: 6
+  recirculation_destination_layer: 3
+  recirculation_alpha: 0.1
+- variant: recirculation
   passes: 3
   sequence_length: 2048
+  recirculation_mode: adaptive
+  recirculation_source_layer: 6
+  recirculation_destination_layer: 3
+  recirculation_alpha: 0.1
 - variant: tape
   passes: 2
   sequence_length: 2048

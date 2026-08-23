@@ -1,0 +1,77 @@
+name: stage_5_architecture_efficiency_2048_bf16
+defaults:
+  device: cuda
+  model_dir: checkpoints/TinyMistral-248M-v3
+  parameter_dtype: float32
+  autocast_dtype: bfloat16
+  attention_backend: auto
+  warmup_steps: 2
+  measure_steps: 5
+  sequence_length: 2048
+  batch_size: 1
+  grad_accum_steps: 1
+  memory_window: 32
+  memory_position_encoding: rope
+cases:
+- variant: vanilla
+  passes: 1
+- variant: recirculation
+  passes: 2
+  recirculation_mode: adaptive
+  recirculation_source_layer: 6
+  recirculation_destination_layer: 3
+  recirculation_alpha: 0.1
+- variant: recirculation
+  passes: 3
+  recirculation_mode: adaptive
+  recirculation_source_layer: 6
+  recirculation_destination_layer: 3
+  recirculation_alpha: 0.1
+- variant: tape
+  passes: 2
+  memory_layers: [3, 7]
+  memory_write_mode: dense
+- variant: tape
+  passes: 3
+  memory_layers: [3, 7]
+  memory_write_mode: dense
+- variant: tape
+  passes: 2
+  memory_layers: [3, 7]
+  memory_write_mode: periodic
+  memory_write_stride: 32
+- variant: tape
+  passes: 3
+  memory_layers: [3, 7]
+  memory_write_mode: periodic
+  memory_write_stride: 32
+- variant: tape
+  passes: 2
+  memory_layers: [3, 7]
+  memory_write_mode: memory_token
+  memory_write_stride: 32
+  memory_token_visibility: write_only
+- variant: tape
+  passes: 3
+  memory_layers: [3, 7]
+  memory_write_mode: memory_token
+  memory_write_stride: 32
+  memory_token_visibility: write_only
+- variant: tape_recirculation_hybrid
+  passes: 2
+  memory_layers: [4, 7]
+  memory_write_mode: periodic
+  memory_write_stride: 32
+  recirculation_mode: adaptive
+  recirculation_source_layer: 6
+  recirculation_destination_layer: 3
+  recirculation_alpha: 0.1
+- variant: tape_recirculation_hybrid
+  passes: 3
+  memory_layers: [4, 7]
+  memory_write_mode: periodic
+  memory_write_stride: 32
+  recirculation_mode: adaptive
+  recirculation_source_layer: 6
+  recirculation_destination_layer: 3
+  recirculation_alpha: 0.1

@@ -1,9 +1,8 @@
 name: stage_5_cloud_100m
 status: locked
-question: How do the seven active feedback architectures compare after a 100M-token Phase-B continuation from the canonical wiring setup?
+question: How do the six active feedback architectures compare after a 100M-token Phase-B continuation from the canonical wiring setup?
 arms:
   - {id: vanilla_100m, config: vanilla_100m.yaml}
-  - {id: memory_add_100m, config: memory_add_100m.yaml}
   - {id: recirculation_adaptive_100m, config: recirculation_adaptive_100m.yaml}
   - {id: tape_dense_100m, config: tape_dense_100m.yaml}
   - {id: tape_periodic32_100m, config: tape_periodic32_100m.yaml}

@@ -12,7 +12,6 @@ import yaml
 SEEDS = (2027, 4099)
 PILOT_CONFIGS = {
     "vanilla": "vanilla_seed1337.yaml",
-    "memory_add": "memory_add_seed1337.yaml",
     "recirculation_adaptive": "recirculation_adaptive_seed1337.yaml",
     "tape_dense": "tape_dense_seed1337.yaml",
     "tape_periodic32": "tape_periodic32_seed1337.yaml",
@@ -26,7 +25,7 @@ def main() -> None:
     parser.add_argument(
         "--fast",
         required=True,
-        choices=("memory_add", "recirculation_adaptive"),
+        choices=("recirculation_adaptive",),
     )
     parser.add_argument(
         "--tape",

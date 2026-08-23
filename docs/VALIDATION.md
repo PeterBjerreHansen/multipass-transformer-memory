@@ -21,7 +21,8 @@ The suite must enforce:
 
 - ordinary pass 1 matches the vanilla backbone path;
 - FBT exact cached inference matches full-prefix multipass recomputation;
-- MemoryAdd remains a vanilla fixed point at zero projection initialization;
+- retired one-state controls remain vanilla fixed points at zero projection
+  initialization;
 - adaptive recirculation starts at the configured fixed mixture;
 - adaptive recirculation Phase A freezes the TinyMistral backbone and trains
   only its coefficient controller;

@@ -1,6 +1,8 @@
 # Tape memory and explicit `<MEM>` slots
 
-This is the authoritative contract for `tape` and `tape_add_hybrid`.
+This is the authoritative contract for the active `tape` variant. The
+`tape_add_hybrid` sections are retained only to document historical checkpoints
+and are not part of the active experiment pipeline.
 
 ## 1. Shared tape architecture
 

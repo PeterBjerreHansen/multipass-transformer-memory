@@ -19,18 +19,34 @@ cases:
 - variant: vanilla
   passes: 1
   batch_size: 4
-- variant: memory_add
+- variant: recirculation
   passes: 2
   batch_size: 1
-- variant: memory_add
+  recirculation_mode: adaptive
+  recirculation_source_layer: 6
+  recirculation_destination_layer: 3
+  recirculation_alpha: 0.1
+- variant: recirculation
   passes: 2
   batch_size: 2
-- variant: memory_add
+  recirculation_mode: adaptive
+  recirculation_source_layer: 6
+  recirculation_destination_layer: 3
+  recirculation_alpha: 0.1
+- variant: recirculation
   passes: 3
   batch_size: 1
-- variant: memory_add
+  recirculation_mode: adaptive
+  recirculation_source_layer: 6
+  recirculation_destination_layer: 3
+  recirculation_alpha: 0.1
+- variant: recirculation
   passes: 3
   batch_size: 2
+  recirculation_mode: adaptive
+  recirculation_source_layer: 6
+  recirculation_destination_layer: 3
+  recirculation_alpha: 0.1
 - variant: tape
   passes: 2
   batch_size: 1

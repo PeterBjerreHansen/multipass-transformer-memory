@@ -16,12 +16,20 @@ cases:
 - variant: vanilla
   passes: 1
   autocast_dtype: bfloat16
-- variant: memory_add
+- variant: recirculation
   passes: 2
   autocast_dtype: null
-- variant: memory_add
+  recirculation_mode: adaptive
+  recirculation_source_layer: 6
+  recirculation_destination_layer: 3
+  recirculation_alpha: 0.1
+- variant: recirculation
   passes: 2
   autocast_dtype: bfloat16
+  recirculation_mode: adaptive
+  recirculation_source_layer: 6
+  recirculation_destination_layer: 3
+  recirculation_alpha: 0.1
 - variant: tape
   passes: 3
   autocast_dtype: null

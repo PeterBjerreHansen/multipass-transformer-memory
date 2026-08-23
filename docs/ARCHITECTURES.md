@@ -20,7 +20,14 @@ entering the backbone, while position zero retains its ordinary token
 embedding. FBT implements the same exact cached K-stream and collapsed
 recurrent inference interfaces as the other one-state feedback variants.
 
-## MemoryAdd
+## Retired one-state controls
+
+MemoryAdd and TapeAddHybrid are retained only as historical implementation
+controls. They are not part of the active experiment pipeline or current
+results; new comparisons use adaptive Recirculation and the
+Recirculation–Tape hybrid instead.
+
+### MemoryAdd
 
 For pass `k > 1`, current token embedding `e_t` receives the immediately
 preceding previous-pass top state:
@@ -115,9 +122,9 @@ For full-sequence MPS training, dense writes use the direct strict-past local
 window path because the tape is already one record per token. This avoids the
 compact-bank gather used by sparse periodic writes. It makes dense Tape faster
 than periodic-32 Tape on the development Mac, although the per-layer readers
-still make it more expensive than one-state MemoryAdd.
+still make it more expensive than the retired one-state control.
 
-## TapeAddHybrid
+### TapeAddHybrid (retired)
 
 `TapeAddHybridVariant` is the same tape plus the MemoryAdd path. There is no
 gate, controller, or fusion MLP between the channels.

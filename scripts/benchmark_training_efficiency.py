@@ -192,6 +192,18 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
     memory_token_visibility = case.get("memory_token_visibility")
     if memory_token_visibility is not None:
         memory_token_visibility = str(memory_token_visibility)
+    memory_layers = case.get("memory_layers", "all")
+    if memory_layers is None:
+        memory_layers = "all"
+    memory_position_encoding = str(case.get("memory_position_encoding", "rope"))
+    recirculation_source_layer = case.get("recirculation_source_layer")
+    if recirculation_source_layer is not None:
+        recirculation_source_layer = int(recirculation_source_layer)
+    recirculation_destination_layer = case.get("recirculation_destination_layer")
+    if recirculation_destination_layer is not None:
+        recirculation_destination_layer = int(recirculation_destination_layer)
+    recirculation_alpha = float(case.get("recirculation_alpha", 0.1))
+    recirculation_mode = str(case.get("recirculation_mode", "fixed"))
 
     is_tape = variant in {
         "tape",
@@ -249,6 +261,12 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
         "memory_write_mode": memory_write_mode,
         "memory_write_stride": memory_write_stride,
         "memory_token_visibility": memory_token_visibility,
+        "memory_layers": memory_layers,
+        "memory_position_encoding": memory_position_encoding,
+        "recirculation_source_layer": recirculation_source_layer,
+        "recirculation_destination_layer": recirculation_destination_layer,
+        "recirculation_alpha": recirculation_alpha,
+        "recirculation_mode": recirculation_mode,
         "warmup_steps": warmup_steps,
         "measure_steps": measure_steps,
         "status": "running",
@@ -269,10 +287,20 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
             memory_write_mode=memory_write_mode,
             memory_write_stride=memory_write_stride,
             memory_token_visibility=memory_token_visibility,
+            memory_layers=memory_layers,
+            memory_position_encoding=memory_position_encoding,
+            recirculation_source_layer=recirculation_source_layer,
+            recirculation_destination_layer=recirculation_destination_layer,
+            recirculation_alpha=recirculation_alpha,
+            recirculation_mode=recirculation_mode,
         )
         configure_phase(model, "B")
         model.train()
         optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-6, foreach=False)
+        result["total_parameters"] = sum(parameter.numel() for parameter in model.parameters())
+        result["added_parameters_total"] = sum(
+            parameter.numel() for parameter in model.added_parameters()
+        )
 
         backbone = getattr(model, "backbone", None)
         vocab_size = int(getattr(getattr(backbone, "config", None), "vocab_size", 32005))

@@ -21,6 +21,34 @@ Changing `batch_size` can therefore be both an engineering change and a
 scientific optimizer-batch change. The benchmark tooling reports the distinction
 rather than hiding it.
 
+## Relative training FLOP estimates
+
+The README results table uses a configuration-aware relative training-FLOP
+estimate rather than the measured A6000 runtime multiplier. Generate the Stage-5
+estimate with:
+
+```bash
+make estimate-flops-stage5
+```
+
+The estimator reads the model configuration and counts the dominant matrix
+products for each full-sequence optimizer step: backbone Q/K/V/O projections,
+local self-attention score/value products, SwiGLU projections, every pass's
+LM-head projection, Tape writer/reader projections and attention, and adaptive
+recirculation controller matrices. It accounts for the exact physical sequence
+length and memory-write positions, including the 2,111-position Memory-token
+sequence produced from 2,048 linguistic tokens. K=2 and K=3 are combined with
+the study's 90%/10% schedule.
+
+The convention is two FLOPs per multiply-add and 3x forward FLOPs for training
+to approximate the forward plus input/weight-gradient matmuls. LayerNorm,
+activations, softmax, RoPE, masking/gathering, residual operations, embedding
+lookups, and optimizer arithmetic are excluded rather than assigned arbitrary
+costs. The output is therefore a reproducible dominant-matmul estimate, not a
+hardware-instruction trace or a wall-clock prediction. Runtime measurements
+remain useful for GPU-specific scheduling decisions and are retained in the
+JSON efficiency results.
+
 ## Serious CUDA batching qualification
 
 The 2048-token development evidence was trained with `batch_size=1` and
@@ -37,7 +65,7 @@ make select-cuda-batch \
   RESULT=benchmarks/efficiency/results/cuda_batch_qualification.json
 ```
 
-The qualification suite tests K=2 MemoryAdd and dense Tape at 2048 context,
+The qualification suite tests K=2 adaptive Recirculation and dense Tape at 2048 context,
 FP32 parameter/optimizer storage, BF16 autocast, `grad_accum_steps=1`, and
 microbatches 1/2/4/8. OOM cases are recorded rather than aborting the suite.
 
@@ -119,6 +147,22 @@ reports peak allocated/reserved memory. MPS currently reports allocator/driver
 memory at the end of the measured window because PyTorch does not expose the
 same peak API.
 
+### Stage-5 architecture comparison
+
+For a measured comparison of the exact 100M study architectures, run:
+
+```bash
+make efficiency-cuda-stage5
+```
+
+This suite measures K=1 for vanilla and K=2/K=3 for each multipass method at
+2048 tokens, batch size 1, FP32 parameter/optimizer storage, and BF16 autocast.
+It includes the study's actual Tape reader layers and adaptive recirculation
+source/destination layers. Combine the K=2 and K=3 rows using the study's
+90%/10% pass schedule to estimate wall-clock hours per 100M linguistic tokens;
+do not use the nominal pass-count multiplier as a substitute for this measured
+quantity.
+
 A case that exceeds memory is recorded as `status: oom` and the suite continues.
 An unavailable BF16 mode is recorded as `status: unsupported` rather than
 invalidating the whole precision suite.
@@ -128,8 +172,8 @@ Compact retained results live under `benchmarks/efficiency/results/`. See
 
 ## Tape write-scaling suite
 
-`benchmarks/efficiency/suites/tape_write_scaling.yaml` compares dense Tape,
-periodic C=1/4/8/16/32 at W=32, and an initial periodic TapeAddHybrid case.
+`benchmarks/efficiency/suites/tape_write_scaling.yaml` compares dense Tape and
+periodic C=1/4/8/16/32 at W=32.
 These are engineering measurements only; they do not select the scientific
 write cadence.
 

@@ -3,6 +3,8 @@
   efficiency-mps efficiency-cuda efficiency-mps-training efficiency-mps-precision \
   efficiency-mps-context efficiency-mps-batch efficiency-cuda-training \
   efficiency-cuda-precision efficiency-cuda-context efficiency-cuda-batch \
+  efficiency-cuda-stage5 \
+  estimate-flops-stage5 \
   efficiency-cuda-batch-qualification efficiency-tape-write \
   select-cuda-batch cloud-preflight
 
@@ -98,6 +100,17 @@ efficiency-cuda-batch:
 	uv run python scripts/benchmark_training_efficiency.py \
 		--suite benchmarks/efficiency/suites/batch_scaling.yaml --device cuda --autocast-dtype bfloat16 \
 		--output benchmarks/efficiency/results/generated/cuda_batch.json
+
+efficiency-cuda-stage5:
+	uv run python scripts/benchmark_training_efficiency.py \
+		--suite benchmarks/efficiency/suites/stage_5_architectures.yaml \
+		--output benchmarks/efficiency/results/generated/stage_5_architectures.json
+
+estimate-flops-stage5:
+	uv run python scripts/estimate_training_flops.py \
+		--suite benchmarks/efficiency/suites/stage_5_architectures.yaml \
+		--model-config checkpoints/TinyMistral-248M-v3/config.json \
+		--output benchmarks/efficiency/results/generated/stage_5_training_flops.json
 
 
 # Engineering-only tape write-cadence scaling. This does not select C.
