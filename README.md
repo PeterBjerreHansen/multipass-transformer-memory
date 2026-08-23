@@ -22,35 +22,6 @@ I think there are three notable patterns in these results:
 The experiment is riddled with confounders such as differing compute budgets, parameter count, and starting-point inequality (some mechanisms are more easily slotted into a pretrained model, and the vanilla backbone had no pre-run adaptation). Moreover, I simply do not have the computational resources to provide the exhaustive sweeps and ablations one needs to make convincing optimality arguments. However, I do think the results point towards potential improvements to the existing architectures. 
 
 ### The memory-bank models
-
-![Memory Access Through Cross-attention](/docs/memory_attn.png)
-
-All bank policies share the same identity-initialized learned writer and GQA readers at configurable decoder layers. Reader outputs are zero-initialized, and sequence-anchored RoPE is the default:
-
-```yaml
-variant: bank
-memory_window: 32
-memory_write_mode: dense       # dense | periodic | memory_token
-memory_layers: [3, 7]          # or: all
-memory_position_encoding: rope # default; explicit ablation: none
-```
-
-Periodic writes additionally require `memory_write_stride`. Explicit memory
-slots use:
-
-```yaml
-variant: bank
-memory_window: 32
-memory_write_mode: memory_token
-memory_write_stride: 8
-memory_token_visibility: visible   # visible | write_only
-```
-
-`<MEM>` is an input-only architecture position with ID equal to the base vocabulary size `V`; it is not added to the LM output head. For physical input `A <MEM> B`, the language target at A is B, the MEM position has no LM loss, and `h_MEM` writes one bank record. See `docs/BANK_MEMORY.md` for the exact attention, loss, cached-inference, and hybrid contracts.
-
-Memory models can optionally continue NTP training with a causal next-memory prediction head. The head sees only `h_t`, targets detached final-pass future memory features, and is absent from inference. See `docs/NEXT_MEMORY_PREDICTION.md` for alignment, gradient, checkpoint, and leakage contracts.
-
-### The memory-bank models
 The bank models replace the narrow recurrent feedback path with cross-attention over a bounded set of states from the preceding pass. In adaptive Recirculation, token (t) on pass (k) receives essentially one shifted state, (m_{t-1}^{k-1}). A bank reader instead chooses among up to (W) strictly earlier memory records:
 
 ```text
