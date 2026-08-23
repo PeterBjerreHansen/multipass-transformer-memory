@@ -7,10 +7,12 @@ I retrofitted a [tiny pretrained LLM](https://huggingface.co/Locutusque/TinyMist
 |---|---:|---:|---:|---:|
 | Transformer baseline | 7.778 | 0.110 (1.40%) | 248.024M | - |
 | Adaptive Recirculation | 7.678 | 0.110 (1.42%) | 253.275M | 2.127x |
+| Sparse SWA baseline (missing) | - | - | -| - |
 | Sparse Memory-token Bank | 7.616 | 0.133 (1.72%) | 254.321M | 2.187x |
 | Sparse Periodic Bank | 7.599 | 0.113 (1.46%) | 254.320M | 2.122x |
 | Dense SWA Bank | 7.534 | 0.112 (1.46%) | 254.320M | 2.133x |
 | Adaptive Recirculation + Sparse Periodic Bank | 7.519 | 0.120 (1.57%) | 259.571M | 2.149x |
+| Multi-scale Memory Bank (missing) | - | - | -| - |
 
 The "Bank" variants use cross-attention is cross-attention over a bounded bank of memory states produced by the preceding pass $[m_{t-c}^{k-1}, ... ,m_{t-1}^{k-1}]$, whereas recurrent variants like the recirculation method only use $m_{t-1}^{k-1}$. `Dense`, `Periodic`, and `Memory-token` describe the write policy. Sparse Bank variants attends to memories spread out with a stride of $s$, and the hybrid model combines adaptive recirculation with a sparse Bank.
 
@@ -85,10 +87,7 @@ other large execution artifacts belong under the owning study/control's `results
 
 ## Training and cloud execution
 
-The trainer supports exact resume on interruptible/spot instances: durable
-checkpoint generations, newest-corrupt fallback, metrics repair, source/data
-provenance, wall-clock and token checkpoint triggers, SIGINT/SIGTERM graceful
-checkpointing, and weights-only scientific snapshots. See `docs/CLOUD.md`.
+The trainer supports exact resume on interruptible/spot instances: durable checkpoint generations, newest-corrupt fallback, metrics repair, source/data provenance, wall-clock and token checkpoint triggers, SIGINT/SIGTERM graceful checkpointing, and weights-only scientific snapshots. See `docs/CLOUD.md`.
 
 Memory-token runs distinguish linguistic data dose from physical transformer
 work:
@@ -99,27 +98,13 @@ model_positions_seen     = ordinary + <MEM> physical positions
 token_equivalent_compute = model positions x effective passes
 ```
 
-Learning-rate schedules and run token budgets use linguistic tokens. Throughput
-telemetry reports both linguistic tokens/s and model positions/s.
+Learning-rate schedules and run token budgets use linguistic tokens. Throughput telemetry reports both linguistic tokens/s and model positions/s.
 
 ## Current research status
 
-The active compute-conscious program is defined in
-`benchmarks/development/experimental_pipeline.md`: local frozen-backbone
-wiring, local Phase-B smoke tests, a resumable cloud pilot, selected
-confirmation runs, and the locked six-arm Stage-5 continuation. It compares
-vanilla, adaptive Recirculation, Dense Bank, Periodic Bank, write-only
-Memory-token Bank, and their Recirculation–Periodic Bank hybrid. Bank readers
-use layers `[3, 7]` except for the
-hybrid's locked `[4, 7]` placement; no spacing, reader-placement, or controller
-placement sweep is active.
+The active compute-conscious program is defined in `benchmarks/development/experimental_pipeline.md`: local frozen-backbone wiring, local Phase-B smoke tests, a resumable cloud pilot, selected confirmation runs, and the locked six-arm Stage-5 continuation. It compares vanilla, adaptive Recirculation, Dense Bank, Periodic Bank, write-only Memory-token Bank, and their Recirculation–Periodic Bank hybrid. Bank readers use layers `[3, 7]` except for the hybrid's locked `[4, 7]` placement; no spacing, reader-placement, or controller placement sweep is active.
 
-FBT and MemoryAdd are retired controls. Their implementations and focused
-correctness tests remain only for historical checkpoint/provenance
-compatibility, like other archived research controls, but neither appears in
-the active studies, efficiency qualifications, cloud campaign, or current
-results. BankAddHybrid, which uses the same MemoryAdd fast channel, is also
-retired from the active experiment surface.
+FBT and MemoryAdd are retired controls. Their implementations and focused correctness tests remain only for historical checkpoint/provenance compatibility, like other archived research controls, but neither appears in the active studies, efficiency qualifications, cloud campaign, or current results. BankAddHybrid, which uses the same MemoryAdd fast channel, is also retired from the active experiment surface.
 
 Historical benchmark results remain read-only evidence; they do not define the
 active architecture API.
@@ -131,8 +116,7 @@ uv sync --extra data --extra eval
 make check
 ```
 
-Without dependency installation, the source tree can also be tested in an
-environment that already provides the locked dependencies with:
+Without dependency installation, the source tree can also be tested in an environment that already provides the locked dependencies with:
 
 ```bash
 PYTHONPATH=src pytest -q
@@ -147,5 +131,4 @@ uv run python scripts/prepare_data.py --config data/dolmino/pilot_2048/config.ya
 uv run python scripts/verify_data.py data/dolmino/pilot_2048
 ```
 
-Before paid CUDA training, qualify batching using `benchmarks/efficiency/`, then
-run the provider-agnostic preflight described in `docs/CLOUD.md`.
+Before paid CUDA training, qualify batching using `benchmarks/efficiency/`, then run the provider-agnostic preflight described in `docs/CLOUD.md`.
