@@ -19,40 +19,50 @@ I think there are three notable patterns in these results:
 
 1. The attention-based mechanisms outperform the recurrent mechanisms almost uniformly. Since replacing recurrent connections with attention has a solid track record, I'd wager this trick would work at scale as well.
 
-2. The sparse attention to far-away memories outperformed models with only the recurrent connections to memories. To me this result slightly favours the notion that the performance gains reported in the FBT and recirculation papers stem from *mere greater effective depth* rather than *unlocking recurrent computation patterns*.
+2. The sparse attention to far-away memories outperformed models with only the recurrent connections to memories. To me this result slightly favours the notion that the performance gains reported in the FBT and recirculation papers stem from **mere greater effective depth** rather than **unlocking recurrent computation patterns**.
 
 3. The recurrent/attention hybrid performs on par with the dense attention model, and so attention over a sparse memory bank could provide a valuable "slow" (long-range) memory for multi-pass models with only the "fast" (short-term) recurrent pattern.
 
 The experiment is riddled with confounders such as differing compute budgets, parameter count, and starting-point inequality (some mechanisms are more easily slotted into a pretrained model, and the vanilla backbone had no pre-run adaptation). Moreover, I simply do not have the computational resources to provide the exhaustive sweeps and ablations one needs to make convincing optimality arguments. However, I do think the results point towards potential improvements to the existing architectures.
 
 ### The memory-bank models
-In recurrent patterns, like that those of FBT and adaptive Recirculation, token $t$ on pass $k$ receives essentially one shifted state, $m_{t-1}^{k-1}$.
+
+In recurrent patterns, like those of FBT and adaptive Recirculation, token $t$ on pass $k$ receives essentially one predetermined shifted state, $m_{t-1}^{k-1}$:
+
 > **Recurrent feedback:**<br>
 > $`h_t^{(k)} = \mathrm{Mix}\left(h_t^{(k)}, m_{t-1}^{(k-1)}\right)`$
 
-The bank models replace the narrow recurrent feedback path with cross-attention over a bounded set of states from the preceding pass. A bank reader instead chooses among up to $W$ strictly earlier memory records:
-> $`\textbf{Memory Bank:}`$<br>
-> &nbsp;&nbsp; $`B_t^{(k)} = \left[\mathrm{Writer}\left(h_s^{(k-1)}\right) \;\middle|\; s<t,\ \mathrm{write}(s)\right]_{\text{ W most recent} }`$<br>
-> &nbsp;&nbsp; $`h_t^{(k)} = h_t^{(k)} + \mathrm{CrossAttention}\left(Q=h_t^{(k)},\ KV=B_t^{(k)}\right)`$
+The Bank models instead expose previous-pass memory states as a separately addressable key/value source. Token $t$ may attend to some causally valid subset of the previous-pass memory tape, which I denote by the access pattern $A_t$:
 
-where the writer is some policy for selecting what subset of memories should be in the bank. Our writer also applies a linear transformation to the selected latent states.
+> **Memory Bank:**<br>
+>    $`h_t^{(k)} = h_t^{(k)} + \mathrm{CrossAttention}\left(Q=h_t^{(k)},\ KV=M^{(k-1)};\ \mathrm{mask}=A_t\right)`$
+
+Here $M^{(k-1)}$ denotes the previous-pass memory states and $A_t$ determines which of those states token $t$ is allowed to access. The core distinction from recurrence is therefore not how the memory is physically stored, but that the feedback source is **content-addressed rather than structurally predetermined**.
 
 ![Memory Access Through Cross-attention](/docs/memory_attn.png)
 
-Recirculation fixes the feedback source in advance, while Bank attention lets each token content-select which previous-pass representations are useful. The bank readers are separate GQA cross-attention residuals inserted at selected decoder layers; memory positions retain their original sequence coordinates for RoPE. The original Bank variants differ in **what gets written**. Multiscale Bank instead changes which dense writes the reader retains:
+Recirculation fixes the feedback source in advance, while Bank attention lets each token content-select among the previous-pass representations made available to it. The Bank readers are separate GQA cross-attention residuals inserted at selected decoder layers; memory positions retain their original sequence coordinates for RoPE.
 
-| Variant               | Storage policy             | Attention type                     |
-| --------------------- | -------------------------- | ---------------------------------- |
-| **Dense Bank**        | every token                | local dense SWA                    |
-| **Periodic Bank**     | every $s$-th token         | long-range sparse                  |
-| **Memory-token Bank** | explicit `<MEM>` positions | long-range sparse on memory states |
-| **Multiscale Bank**   | every token                | dense SWA plus sparse older        |
+The Bank variants differ primarily in their **memory access pattern**:
 
-`memory_window: 32` means **32 retained memory records**, not 32 tokens. Thus a sparse periodic bank with stride 32 can expose a token to memories spread over roughly $32\times$ the sequence range of a dense bank with the same capacity.
+| Variant               | Accessible memories                      | Attention pattern |
+| --------------------- | ---------------------------------------- | ----------------- |
+| **Dense Bank**        | recent previous-pass states              | local dense SWA   |
+| **Periodic Bank**     | periodically spaced previous-pass states | long-range sparse |
+| **Memory-token Bank** | explicit `<MEM>` states                  | long-range sparse |
+| **Multiscale Bank**   | dense recent + sparse older states       | multiscale        |
 
-The hybrid combines both routes: adaptive Recirculation provides a **fast**, local feedback channel, while the sparse bank provides a **slow**, longer-range content-addressed memory. This is the motivation for viewing the two mechanisms as complementary rather than mutually exclusive. Multiscale Bank is the attention-only control for the recurrent/Bank hybrid. It gives each Bank reader both dense recent records and sparse older records in one softmax, but removes the recurrent channel.
+These access patterns admit several equivalent conceptual realizations. For example, a sparse Bank can be understood either as retaining only the memory states that will be addressable, or as retaining a denser tape and masking the inaccessible states during attention. The implementation uses selective memory writes and bounded retained KV records for efficiency, but that is not essential to the Bank abstraction itself.
+
+`memory_window: 32` therefore refers to the implementation's capacity of **32 retained addressable memory records**, not a 32-token receptive field. For a periodic Bank with stride 32, those 32 records can represent memories spread over roughly $32\times$ the sequence range of a dense Bank with the same retained capacity.
+
+The hybrid combines both routes: adaptive Recirculation provides a **fast**, local feedback channel, while the sparse Bank provides a **slow**, longer-range content-addressed memory. This is the motivation for viewing the two mechanisms as complementary rather than mutually exclusive.
+
+Multiscale Bank is the attention-only control for the recurrent/Bank hybrid. It gives each Bank reader access to both dense recent memories and sparse older memories in one softmax, but removes the recurrent channel.
 
 Sparse SWA is the vanilla Transformer control. At selected layers, it extends ordinary sliding-window self-attention with sparse attention to fixed past tokens. It is one-pass, reads current-pass token states rather than a previous-pass Bank, and adds no parameters.
+
+The current implementation configures these access patterns through the memory-write policy:
 
 ```yaml
 variant: bank
@@ -66,7 +76,9 @@ memory_layers: [3, 7]
 memory_position_encoding: rope
 ```
 
-Periodic and memory-token banks additionally set `memory_write_stride`. In memory-token mode, `<MEM>` is input-only: it is not part of the LM output vocabulary and receives no direct LM loss. In the `write_only` configuration used in the main comparison, later tokens can access its state only through the bank. See `docs/BANK_MEMORY.md` for the exact attention masks, write timing, cached-inference behavior, and hybrid contracts. See `docs/ARCHITECTURES.md` for the two attention-control architectures.
+Periodic and memory-token Banks additionally set `memory_write_stride`. In memory-token mode, `<MEM>` is input-only: it is not part of the LM output vocabulary and receives no direct LM loss. In the `write_only` configuration used in the main comparison, later tokens can access its state only through the Bank.
+
+See `docs/BANK_MEMORY.md` for the exact implementation-level attention masks, retention/write timing, cached-inference behavior, and hybrid contracts. See `docs/ARCHITECTURES.md` for the two attention-control architectures.
 
 ### A Note on Efficiency
 
@@ -74,7 +86,7 @@ Periodic and memory-token banks additionally set `memory_write_stride`. In memor
 
 ### More Ideas, Future Work
 
-1. **Next Memory Prediction.** This branch implements a training-only auxiliary objective inspired by [NextLat](https://arxiv.org/abs/2511.05963), with future memory representations as targets. I have a strong and unproven suspicion that this will work nicely: since there is a lot of pressure on the memory latents to be useful *inputs* to the model, they should contain information that is already useful for NTP prediction and so should be less prone to collapse. In some sense, predicting these memories amounts to predicting features that the model will think are useful later. I like this notion that one should want to predict what is itself predictive. The implementation is tested, but I have not yet evaluated whether NMP improves language-model quality. See `docs/NEXT_MEMORY_PREDICTION.md`.
+1. **Next Memory Prediction.** This branch implements a training-only auxiliary objective inspired by [NextLat](https://arxiv.org/abs/2511.05963), with future memory representations as targets. I have a strong and unproven suspicion that this will work nicely: since there is a lot of pressure on the memory latents to be useful **inputs** to the model, they should contain information that is already useful for NTP prediction and so should be less prone to collapse. In some sense, predicting these memories amounts to predicting features that the model will think are useful later. I like this notion that one should want to predict what is itself predictive. The implementation is tested, but I have not yet evaluated whether NMP improves language-model quality. See `docs/NEXT_MEMORY_PREDICTION.md`.
 
 2. The sparse SWA and Multiscale Bank controls are implemented. Their pending runs will test whether the hybrid needs a recurrent path.
 
@@ -85,10 +97,15 @@ Periodic and memory-token banks additionally set `memory_write_stride`. In memor
 ## Repository map
 
 * `src/tiny_mistral/`: validated vendored vanilla TinyMistral implementation.
+
 * `src/tiny_mistral_mptt/`: research architectures, training, evaluation, and inference.
+
 * `benchmarks/`: controls, development/core studies, and engineering efficiency measurements.
+
 * `data/`: deterministic dataset recipes; generated artifacts are local/ignored.
+
 * `evaluation/`: reusable evaluation-suite definitions.
+
 * `docs/`: architecture, data, training, inference, cloud, and validation contracts.
 
 There is intentionally no central `configs/` directory. Runnable settings live with the study or asset that owns them. Development/core studies use `STUDY.yaml` for the scientific question and comparison structure; runnable YAML files remain the execution source of truth.
@@ -113,7 +130,7 @@ Learning-rate schedules and run token budgets use linguistic tokens. Throughput 
 
 ## Current research status
 
-The locked eight-arm study compares vanilla, adaptive Recirculation, three Bank write policies, the Recirculation–Periodic Bank hybrid, Multiscale Bank, and Sparse SWA. Its configs remain under `benchmarks/core/stage_5_cloud_100m/`; the six original arms are complete and the two attention controls are the remaining runs. Multiscale Bank first needs frozen-backbone wiring. Sparse SWA has no added parameters and starts in Phase B. The runnable path is documented in `benchmarks/development/experimental_pipeline.md`.
+The locked eight-arm study compares vanilla, adaptive Recirculation, three Bank access patterns, the Recirculation–Periodic Bank hybrid, Multiscale Bank, and Sparse SWA. Its configs remain under `benchmarks/core/stage_5_cloud_100m/`; the six original arms are complete and the two attention controls are the remaining runs. Multiscale Bank first needs frozen-backbone wiring. Sparse SWA has no added parameters and starts in Phase B. The runnable path is documented in `benchmarks/development/experimental_pipeline.md`.
 
 Next Memory Prediction is implemented and tested on this branch, but does not yet have a reported language-model quality result.
 
