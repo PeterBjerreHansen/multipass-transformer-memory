@@ -18,7 +18,7 @@ All write policies use the same components:
 
 - one shared, identity-initialized, bias-free `BankWriter`.
 - one independent `BankReader` at each configured `memory_layers` index.
-- one chronological memory tape of previous-pass writer outputs during full-sequence
+- one chronological memory state of previous-pass writer outputs during full-sequence
   execution.
 - a bounded chronological `BankState` during cached/recurrent execution.
 
@@ -103,7 +103,7 @@ memory_token_visibility: visible   # or write_only
 
 The data view inserts one `<MEM>` after each complete group of C linguistic
 tokens when another linguistic token remains in that block. Only MEM positions
-write the memory tape.
+write the memory state.
 
 ### 3.4 Multiscale dense-recent/sparse-old retention
 

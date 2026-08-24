@@ -32,7 +32,7 @@ In recurrent patterns, like those of FBT and adaptive Recirculation, token $t$ o
 > **Recurrent feedback:**<br>
 > $`h_t^{(k)} = \mathrm{Mix}\left(h_t^{(k)}, m_{t-1}^{(k-1)}\right)`$
 
-Memory Attention instead exposes previous-pass states as a separately addressable key/value source. Token $t$ may attend to some causally valid subset of the previous-pass memory tape, which I denote by the access pattern $A_t$:
+Memory Attention instead exposes previous-pass states as a separately addressable key/value source. Token $t$ may attend to some causally valid subset of the previous-pass memory state, which I denote by the access pattern $A_t$:
 
 > **Cross-pass memory attention:**<br>
 >    $`h_t^{(k)} = h_t^{(k)} + \mathrm{CrossAttention}\left(Q=h_t^{(k)},\ KV=M^{(k-1)};\ \mathrm{mask}=A_t\right)`$
@@ -52,7 +52,7 @@ The Memory Attention variants differ primarily in their **memory access pattern*
 | **Memory-token Attention** | explicit `<MEM>` states                  | long-range sparse |
 | **Multiscale Memory Attention**   | dense recent + sparse older states       | multiscale        |
 
-These access patterns admit several equivalent conceptual realizations. For example, sparse Memory Attention can be understood either as retaining only the memory states that will be addressable, or as retaining a denser tape and masking the inaccessible states during attention. The implementation uses selective memory writes and bounded retained KV records for efficiency, but that is not essential to the Memory Attention abstraction itself.
+These access patterns admit several equivalent conceptual realizations. For example, sparse Memory Attention can be understood either as retaining only the memory states that will be addressable, or as retaining a denser memory and masking the inaccessible states during attention. The implementation uses selective memory writes and bounded retained KV records for efficiency, but that is not essential to the Memory Attention abstraction itself.
 
 `memory_window: 32` therefore refers to the implementation's capacity of **32 retained addressable memory records**, not a 32-token receptive field. For a periodic Memory Attention model with stride 32, those 32 records can represent memories spread over roughly $32\times$ the sequence range of a dense model with the same retained capacity. The hybrid combines both routes: adaptive Recirculation provides a **fast**, local feedback channel, while sparse Memory Attention provides a **slow**, longer-range content-addressed memory. This is the motivation for viewing the two mechanisms as complementary rather than mutually exclusive. Multiscale Memory Attention is the attention-only control for the recurrent/Memory Attention hybrid. It gives each memory-attention reader access to both dense recent memories and sparse older memories in one softmax, but removes the recurrent channel. Sparse SWA is the vanilla Transformer control. At selected layers, it extends ordinary sliding-window self-attention with sparse attention to fixed past tokens. It is one-pass, reads current-pass token states rather than previous-pass memory records, and adds no parameters.
 
