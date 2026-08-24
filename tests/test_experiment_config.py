@@ -391,3 +391,27 @@ def test_early_stop_pass_depth_gates_are_canonicalized_and_validated():
             eval_passes=3,
             early_stop={"pass_nll_max": {4: 2.33}},
         )
+
+
+def test_nmp_target_and_validation_controls_are_explicit_and_scoped():
+    common = dict(
+        variant="memory_add",
+        pass_schedule=[{"probabilities": {2: 1.0}}],
+        recurrent_nmp_weight=0.1,
+        nmp_warmup_tokens=10,
+        init_from="ntp.pt",
+    )
+    cfg = ExperimentConfig(
+        **common,
+        nmp_target_mode="same_pass",
+        nmp_detach_predictor_input=True,
+        nmp_eval_passes=[3, 2, 2],
+    )
+    cfg.validate()
+    assert cfg.nmp_eval_passes == [2, 3]
+    with pytest.raises(ValueError, match="nmp_target_mode"):
+        ExperimentConfig(**common, nmp_target_mode="moving_average").validate()
+    with pytest.raises(ValueError, match="require an enabled NMP objective"):
+        ExperimentConfig(nmp_detach_predictor_input=True).validate()
+    with pytest.raises(ValueError, match="positive pass counts"):
+        ExperimentConfig(**common, nmp_eval_passes=[0]).validate()

@@ -17,6 +17,7 @@ from ..config import ExperimentConfig
 from ..data.manifest import file_sha256, verify_artifact
 from ..data.packed_dataset import MemoryTokenPackedDataset, PackedTokenDataset, StatefulBlockSampler
 from ..evaluation.nll import evaluate_nll
+from ..evaluation.nmp import evaluate_nmp
 from ..evaluation.pass_depth import evaluate_pass_depth
 from ..precision import autocast_context
 from ..variants.base import ExperimentalVariant
@@ -204,7 +205,12 @@ class Trainer:
 
         initialization_provenance = None
         if config.init_from:
-            initialization_provenance = load_model_weights(config.init_from, model=self.model)
+            initialization_provenance = load_model_weights(
+                config.init_from,
+                model=self.model,
+                expected_experiment_config=config.to_dict(),
+                allow_nmp_warm_start=config.allow_nmp_warm_start,
+            )
             initialization_provenance["source_sha256"] = file_sha256(config.init_from)
 
         trainable = configure_phase(model, config.phase)
@@ -576,6 +582,34 @@ class Trainer:
                 "nll_by_source": result.nll_by_source,
                 "validation_blocks": result.blocks,
                 "eval_passes": result.passes,
+            }
+        if self.config.nmp_eval_passes is not None:
+            if not isinstance(self.model, MultiPassVariant):
+                raise ValueError("nmp_eval_passes requires a multipass variant")
+            by_k: dict[str, dict[str, object]] = {}
+            for passes in self.config.nmp_eval_passes:
+                nmp_result = evaluate_nmp(
+                    self.model,
+                    self.validation_data,
+                    device=self.device,
+                    passes=passes,
+                    recurrent_nmp_loss_weights=(
+                        self.config.recurrent_nmp_loss_weights_for_passes(passes)
+                    ),
+                    bank_nmp_loss_weights=(
+                        self.config.bank_nmp_loss_weights_for_passes(passes)
+                    ),
+                    max_blocks=self.config.eval_batches or None,
+                )
+                by_k[str(passes)] = {
+                    "blocks": nmp_result.blocks,
+                    "predicted_tokens": nmp_result.predicted_tokens,
+                    **nmp_result.metrics,
+                }
+            record["nmp_validation"] = {
+                "target_mode": self.config.nmp_target_mode,
+                "predictor_input_detached": self.config.nmp_detach_predictor_input,
+                "by_k": by_k,
             }
         if self.config.early_stop is not None:
             record["early_stop"] = _validation_stop_status(

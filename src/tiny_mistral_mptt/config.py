@@ -61,6 +61,7 @@ MULTISCALE_MEMORY_ATTENTION_VARIANTS = {
 }
 SUPPORTED_LR_SCHEDULES = {"constant", "cosine", "piecewise_linear"}
 SUPPORTED_AUTOCAST_DTYPES = {"bfloat16"}
+SUPPORTED_NMP_TARGET_MODES = {"shared_final", "same_pass"}
 
 
 def _coerce_pass_probabilities(raw: Any) -> dict[int, float]:
@@ -305,6 +306,7 @@ class ExperimentConfig:
     eval_every_tokens: int = 32_768
     eval_batches: int = 16
     eval_passes: int = 1
+    nmp_eval_passes: list[int] | None = None
     early_stop: dict[str, Any] | None = None
     checkpoint_every_tokens: int = 65_536
     checkpoint_every_seconds: float = 0.0
@@ -362,6 +364,9 @@ class ExperimentConfig:
     bank_nmp_pass_loss_weights_by_k: dict[int, list[float]] | None = None
     nmp_projection_factor: float = 1.3
     nmp_warmup_tokens: int = 0
+    nmp_target_mode: str = "shared_final"
+    nmp_detach_predictor_input: bool = False
+    allow_nmp_warm_start: bool = False
 
     # ``resume_from`` restores the exact run. ``init_from`` loads model weights
     # only and begins a fresh trajectory/optimizer/data schedule.
@@ -400,6 +405,8 @@ class ExperimentConfig:
             self.pass_loss_weights_by_k = self.ntp_pass_loss_weights_by_k
         if self.snapshot_at_tokens is not None:
             self.snapshot_at_tokens = sorted({int(value) for value in self.snapshot_at_tokens})
+        if self.nmp_eval_passes is not None:
+            self.nmp_eval_passes = sorted({int(value) for value in self.nmp_eval_passes})
         self.early_stop = _coerce_early_stop(self.early_stop)
         if self.variant in MEMORY_ATTENTION_VARIANTS:
             self.memory_layers = _coerce_layer_indices(
@@ -498,6 +505,17 @@ class ExperimentConfig:
             raise ValueError("phase must be 'A' or 'B'")
         if self.resume_from and self.init_from:
             raise ValueError("resume_from and init_from are mutually exclusive")
+        if not isinstance(self.allow_nmp_warm_start, bool):
+            raise ValueError("allow_nmp_warm_start must be boolean")
+        if self.allow_nmp_warm_start and not (self.init_from or self.resume_from):
+            raise ValueError("allow_nmp_warm_start requires init_from or resume_from")
+        if self.nmp_target_mode not in SUPPORTED_NMP_TARGET_MODES:
+            raise ValueError(
+                "nmp_target_mode must be one of "
+                f"{sorted(SUPPORTED_NMP_TARGET_MODES)}"
+            )
+        if not isinstance(self.nmp_detach_predictor_input, bool):
+            raise ValueError("nmp_detach_predictor_input must be boolean")
         if self.autocast_dtype is not None:
             if self.autocast_dtype not in SUPPORTED_AUTOCAST_DTYPES:
                 raise ValueError(
@@ -584,6 +602,18 @@ class ExperimentConfig:
         ):
             raise ValueError("nmp_warmup_tokens must lie in [0, max_unique_tokens]")
         nmp_enabled = self.recurrent_nmp_weight > 0 or self.bank_nmp_weight > 0
+        if self.nmp_eval_passes is not None:
+            if not self.nmp_eval_passes or any(
+                passes < 1 for passes in self.nmp_eval_passes
+            ):
+                raise ValueError("nmp_eval_passes must contain positive pass counts")
+            if not nmp_enabled:
+                raise ValueError("nmp_eval_passes requires an enabled NMP objective")
+        if not nmp_enabled and (
+            self.nmp_target_mode != "shared_final"
+            or self.nmp_detach_predictor_input
+        ):
+            raise ValueError("NMP target/input controls require an enabled NMP objective")
         if not nmp_enabled and self.nmp_warmup_tokens != 0:
             raise ValueError("nmp_warmup_tokens requires an enabled NMP objective")
         if nmp_enabled and not (self.init_from or self.resume_from):

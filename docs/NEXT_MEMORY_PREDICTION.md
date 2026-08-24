@@ -14,8 +14,8 @@ prediction at t = P(h_t)
 ```
 
 It never receives the next token, a next-token embedding, or a feature computed
-from a future position. For every pass, the target comes from the final computed
-pass and is detached.
+from a future position. Targets are always detached. The default
+`shared_final` mode uses the final computed pass as the teacher for every pass.
 
 Recurrent NMP predicts the memory emitted at the next linguistic token:
 
@@ -53,6 +53,9 @@ Memory-attention loss is target-balanced. Guesses for one write are averaged fir
 write events are then averaged within each example, and valid examples are
 averaged last. This prevents longer spacing from increasing an event's loss
 mass merely because it has more guesses.
+Headline target/error diagnostics use the same event-within-example measure.
+Explicit `event_*` and `query_*` metrics expose both measures; distance-bin
+diagnostics are likewise labeled.
 
 Both objectives use Smooth-L1 over latent dimensions. NMP pass weights are
 independent of NTP pass weights and are uniform when no objective-specific map
@@ -65,9 +68,17 @@ bank_nmp_pass_loss_weights_by_k:
   2: [0.5, 0.5]
 ```
 
-Every pass still predicts the same detached final-pass target; weighting only
-changes how the pass-specific prediction losses are combined. Per-pass metrics
-expose the individual losses and weights.
+`nmp_target_mode: shared_final` preserves the formulation above. The
+`same_pass` ablation instead pairs each predictor with the future memory from
+its own pass:
+
+```text
+P(h_t^k) -> stop_gradient(memory_(future)^k)
+```
+
+Pass weights only change how pass-specific losses are combined. A map such as
+`2: [0.0, 1.0]` implements final-pass-only NMP without another target mode.
+Every by-K vector must contain exactly K entries.
 
 ## Configuration
 
@@ -81,6 +92,9 @@ recurrent_nmp_weight: 0.05
 bank_nmp_weight: 0.0
 nmp_projection_factor: 1.3
 nmp_warmup_tokens: 262144
+nmp_target_mode: shared_final
+nmp_detach_predictor_input: false
+nmp_eval_passes: [2]
 ```
 
 The ramp multiplies both configured NMP weights linearly from zero to one. NTP
@@ -106,9 +120,9 @@ zero-initialized. Head construction uses an isolated seed derived from
 
 ## Gradients and checkpoints
 
-Targets are stop-gradient. Predictor inputs are not detached, so NMP gradients
-can shape `h_t` and any causal memory pathway that helped create it. For Memory
-Attention,
+Targets are stop-gradient. Predictor inputs normally remain connected, so NMP
+gradients can shape `h_t` and any causal memory pathway that helped create it.
+Set `nmp_detach_predictor_input: true` for the head-only placebo. For Memory Attention,
 the writer target branch is detached, while the same writer remains reachable
 through earlier written memories that contributed to later hidden states.
 
@@ -119,21 +133,31 @@ With both weights at zero, no heads are instantiated and historical state keys
 remain unchanged. Exact resume is always strict. For `init_from` only, a whole
 new head may be absent from an older checkpoint and retains its deterministic
 fresh initialization. Partial heads and every other missing or unexpected key
-remain errors. The initialization provenance records every freshly initialized
-key.
+remain errors. `init_from` also compares semantic architecture fields,
+including write policy, memory layers/windows, and Recirculation routing, after
+canonicalizing historical variant names. A source that already contains NMP is
+rejected unless `allow_nmp_warm_start: true` is recorded explicitly.
+Initialization provenance records the compatibility view and every freshly
+initialized key.
+
+When `nmp_eval_passes` is configured, validation evaluates the online detached
+target on held-out blocks at each declared fixed K. These measurements report
+generalization to unseen sequences, but the teacher still moves with the model;
+interpret them alongside target-drift diagnostics and NTP NLL.
 
 ## Leakage checks
 
 The test suite asserts that:
 
-- changing tokens after `t` cannot change any recurrent or memory-attention prediction at
-  or before `t`, across multiple pass depths;
+- changing tokens after `t` cannot change any recurrent or memory-attention
+  prediction at or before `t`, across K=2/3 adaptive Recirculation,
+  dense/periodic/memory-token/multiscale Memory Attention, and hybrid head modes;
 - recurrent controls are skipped and memory-attention targets are physically strict-future;
-- all passes use one shared detached final-pass target;
+- shared-final and same-pass modes select the declared teacher exactly;
 - Recirculation uses its internal captured source, not the top hidden state;
 - Memory Attention targets the post-writer representation;
 - sparse batches with no future write produce a zero auxiliary loss and remain
   numerically valid;
-- target tensors receive no gradient, while predictor inputs and the causal
-  writer-to-reader path do;
+- target tensors receive no gradient; the detached-input placebo removes only
+  the auxiliary backbone gradient while preserving head gradients;
 - enabled heads do not change ordinary forward logits.

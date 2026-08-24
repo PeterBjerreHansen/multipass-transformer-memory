@@ -167,6 +167,37 @@ def test_bank_nmp_uses_first_strictly_future_write_and_balances_write_events():
     torch.testing.assert_close(distances["2_4"], torch.tensor(1.0))
 
 
+def test_bank_exposes_distinct_event_and_query_weighted_diagnostics():
+    ordinary = torch.ones(1, 6, dtype=torch.bool)
+    writes = torch.tensor([[False, False, True, False, False, True]])
+    targets = torch.zeros(1, 6, 1)
+    targets[:, 5] = 2.0
+    prediction = torch.zeros_like(targets)
+    positions = torch.arange(6).view(1, 6)
+    alignment = prepare_bank_nmp_alignment(
+        targets,
+        ordinary_mask=ordinary,
+        write_mask=writes,
+        sequence_positions=positions,
+    )
+    diagnostics: dict[str, torch.Tensor] = {}
+    bank_nmp_pass_loss(
+        prediction,
+        alignment=alignment,
+        diagnostics=diagnostics,
+    )
+    torch.testing.assert_close(alignment.target_rms, torch.tensor(2.0**0.5))
+    torch.testing.assert_close(
+        alignment.query_target_rms, torch.tensor((12.0 / 5.0) ** 0.5)
+    )
+    torch.testing.assert_close(
+        diagnostics["event_error_rms"], alignment.target_rms
+    )
+    torch.testing.assert_close(
+        diagnostics["query_error_rms"], alignment.query_target_rms
+    )
+
+
 def test_memory_token_write_can_have_zero_linguistic_distance_without_leakage():
     # Physical position 1 is a future control write, but it shares the
     # linguistic boundary of ordinary position 0.
@@ -262,6 +293,106 @@ def test_bank_prediction_at_t_is_invariant_to_future_tokens():
     torch.testing.assert_close(
         left_prediction[:, :3], right_prediction[:, :3], atol=1e-6, rtol=1e-6
     )
+
+
+@pytest.mark.parametrize("passes", [2, 3])
+@pytest.mark.parametrize(
+    ("architecture", "heads"),
+    [
+        ("recirculation", "recurrent"),
+        ("dense", "bank"),
+        ("periodic", "bank"),
+        ("memory_token", "bank"),
+        ("multiscale", "bank"),
+        ("hybrid", "recurrent"),
+        ("hybrid", "bank"),
+        ("hybrid", "both"),
+    ],
+)
+def test_active_nmp_predictors_are_invariant_to_future_tokens(
+    architecture: str, heads: str, passes: int
+):
+    torch.manual_seed(222)
+    active_backbone = MistralForCausalLM(
+        micro_config(num_hidden_layers=3), attention_backend="reference"
+    )
+    recurrent_weight = 0.1 if heads in {"recurrent", "both"} else 0.0
+    bank_weight = 0.1 if heads in {"bank", "both"} else 0.0
+    if architecture == "recirculation":
+        model = build_variant(
+            "recirculation",
+            active_backbone,
+            recirculation_source_layer=2,
+            recirculation_destination_layer=0,
+            recirculation_mode="adaptive",
+            recurrent_nmp_weight=recurrent_weight,
+        )
+    elif architecture == "multiscale":
+        model = build_variant(
+            "bank_multiscale",
+            active_backbone,
+            memory_dense_window=2,
+            memory_sparse_window=2,
+            memory_sparse_stride=2,
+            memory_layers=[1],
+            bank_nmp_weight=bank_weight,
+        )
+    elif architecture == "hybrid":
+        model = build_variant(
+            "bank_recirculation_hybrid",
+            active_backbone,
+            memory_write_mode="periodic",
+            memory_write_stride=2,
+            memory_layers=[1],
+            recirculation_source_layer=2,
+            recirculation_destination_layer=0,
+            recirculation_mode="adaptive",
+            recurrent_nmp_weight=recurrent_weight,
+            bank_nmp_weight=bank_weight,
+        )
+    else:
+        mode = architecture
+        model = build_variant(
+            "bank",
+            active_backbone,
+            memory_write_mode=mode,
+            memory_write_stride=(None if mode == "dense" else 2),
+            memory_token_visibility=("write_only" if mode == "memory_token" else None),
+            memory_layers=[1],
+            bank_nmp_weight=bank_weight,
+        )
+    model.eval()
+    if model.recurrent_nmp_predictor is not None:
+        _activate_output(model.recurrent_nmp_predictor)
+    if model.bank_nmp_predictor is not None:
+        _activate_output(model.bank_nmp_predictor)
+
+    if architecture == "memory_token":
+        memory_token = model.memory_token_id
+        assert memory_token is not None
+        left = torch.tensor([[1, 2, memory_token, 3, 4, memory_token, 5]])
+        right = torch.tensor([[1, 2, memory_token, 3, 70, memory_token, 71]])
+        prefix_length = 4
+    else:
+        left = torch.tensor([[1, 2, 3, 4, 5, 6]])
+        right = torch.tensor([[1, 2, 3, 70, 71, 72]])
+        prefix_length = 3
+
+    with torch.no_grad():
+        left_run = model._run_passes(left, passes=passes, phase="B")[-1]
+        right_run = model._run_passes(right, passes=passes, phase="B")[-1]
+        for predictor in (
+            model.recurrent_nmp_predictor,
+            model.bank_nmp_predictor,
+        ):
+            if predictor is None:
+                continue
+            torch.testing.assert_close(
+                predictor(left_run.hidden_states)[:, :prefix_length],
+                predictor(right_run.hidden_states)[:, :prefix_length],
+                atol=1e-6,
+                rtol=1e-6,
+            )
 
 
 def test_bank_writer_gets_gradient_through_memory_using_hidden_not_target_branch():
@@ -363,6 +494,59 @@ def test_every_pass_uses_one_shared_final_pass_recurrent_target(monkeypatch):
     assert all(target.data_ptr() == seen[0].data_ptr() for target in seen)
     assert not seen[0].requires_grad
     assert "recurrent_nmp_pass_3_loss" in output.metrics
+
+
+def test_same_pass_recurrent_target_tracks_each_pass(monkeypatch):
+    import tiny_mistral_mptt.variants.multipass as multipass_module
+
+    model = build_variant(
+        "memory_add",
+        backbone(),
+        recurrent_nmp_weight=0.1,
+        nmp_target_mode="same_pass",
+    )
+    with torch.no_grad():
+        model.memory_projection.weight.copy_(torch.eye(model.config.hidden_size))
+    seen: list[torch.Tensor] = []
+    original = multipass_module.recurrent_nmp_pass_loss
+
+    def recording_loss(predictions, *, alignment, diagnostics):
+        seen.append(alignment.targets)
+        return original(predictions, alignment=alignment, diagnostics=diagnostics)
+
+    monkeypatch.setattr(multipass_module, "recurrent_nmp_pass_loss", recording_loss)
+    model.compute_loss(torch.tensor([[1, 2, 3, 4, 5, 6]]), passes=3)
+    assert len({target.data_ptr() for target in seen}) == 3
+    assert any(not torch.allclose(seen[0], target) for target in seen[1:])
+
+
+@pytest.mark.parametrize("detach_input", [False, True])
+def test_detached_predictor_input_controls_auxiliary_backbone_gradient(detach_input):
+    model = build_variant(
+        "memory_add",
+        backbone(),
+        recurrent_nmp_weight=0.1,
+        nmp_detach_predictor_input=detach_input,
+    )
+    assert model.recurrent_nmp_predictor is not None
+    _activate_output(model.recurrent_nmp_predictor)
+    with torch.no_grad():
+        model.memory_projection.weight.copy_(torch.eye(model.config.hidden_size))
+    output = model.compute_loss(
+        torch.tensor([[1, 2, 3, 4, 5, 6]]),
+        passes=2,
+        loss_weights=[0.0, 1.0],
+        recurrent_nmp_loss_weights=[0.0, 1.0],
+    )
+    auxiliary = output.loss - output.pass_losses[-1]
+    auxiliary.backward()
+    head_gradient = model.recurrent_nmp_predictor.output.weight.grad
+    assert head_gradient is not None and head_gradient.abs().sum() > 0
+    backbone_gradient = model.memory_projection.weight.grad
+    if detach_input:
+        assert backbone_gradient is None or torch.count_nonzero(backbone_gradient) == 0
+    else:
+        assert backbone_gradient is not None and backbone_gradient.abs().sum() > 0
 
 
 def test_recirculation_nmp_uses_captured_internal_source_not_top_hidden():
@@ -496,6 +680,35 @@ def test_bank_nmp_target_is_final_pass_post_writer_state(monkeypatch):
         assert not target.requires_grad
 
 
+def test_same_pass_bank_target_tracks_each_pass(monkeypatch):
+    import tiny_mistral_mptt.variants.multipass as multipass_module
+
+    model = build_variant(
+        "bank",
+        backbone(),
+        memory_write_mode="periodic",
+        memory_write_stride=2,
+        memory_layers=[0],
+        bank_nmp_weight=0.1,
+        nmp_target_mode="same_pass",
+    )
+    with torch.no_grad():
+        model.memory_readers["0"].o_proj.weight.copy_(
+            torch.eye(model.config.hidden_size)
+        )
+    seen: list[torch.Tensor] = []
+    original = multipass_module.bank_nmp_pass_loss
+
+    def recording_loss(predictions, *, alignment, diagnostics):
+        seen.append(alignment.targets)
+        return original(predictions, alignment=alignment, diagnostics=diagnostics)
+
+    monkeypatch.setattr(multipass_module, "bank_nmp_pass_loss", recording_loss)
+    model.compute_loss(torch.tensor([[1, 2, 3, 4, 5, 6]]), passes=3)
+    assert len({target.data_ptr() for target in seen}) == 3
+    assert any(not torch.allclose(seen[0], target) for target in seen[1:])
+
+
 def test_dense_bank_next_write_is_exactly_next_physical_token():
     mask = torch.ones(2, 5, dtype=torch.bool)
     expected = torch.tensor([[1, 2, 3, 4, 5], [1, 2, 3, 4, 5]])
@@ -612,7 +825,11 @@ def _save_model_checkpoint(path, model) -> None:
         optimizer=optimizer,
         sampler_state={},
         train_state=TrainState(),
-        experiment_config={},
+        experiment_config={
+            "variant": model.variant_name,
+            "recurrent_nmp_weight": model.recurrent_nmp_weight,
+            "bank_nmp_weight": model.bank_nmp_weight,
+        },
         data_manifest_sha256="test",
     )
 
@@ -622,7 +839,11 @@ def test_init_from_legacy_model_allows_only_whole_new_nmp_head(tmp_path):
     checkpoint = tmp_path / "ntp.pt"
     _save_model_checkpoint(checkpoint, source)
     target = memory_add_with_nmp(seed=11)
-    provenance = load_model_weights(checkpoint, model=target)
+    provenance = load_model_weights(
+        checkpoint,
+        model=target,
+        expected_experiment_config={"variant": "memory_add"},
+    )
     fresh = provenance["freshly_initialized_model_keys"]
     assert fresh
     assert all(name.startswith("recurrent_nmp_predictor.") for name in fresh)
@@ -642,18 +863,115 @@ def test_init_from_rejects_partial_nmp_head(tmp_path):
     payload["model"][one_key] = target.state_dict()[one_key]
     torch.save(payload, checkpoint)
     with pytest.raises(RuntimeError, match="partial"):
-        load_model_weights(checkpoint, model=target)
+        load_model_weights(
+            checkpoint,
+            model=target,
+            expected_experiment_config={"variant": "memory_add"},
+        )
 
 
-def test_init_from_nmp_checkpoint_loads_every_key_without_fresh_state(tmp_path):
+def test_init_from_nmp_checkpoint_requires_explicit_warm_start(tmp_path):
     source = memory_add_with_nmp(seed=15)
     checkpoint = tmp_path / "nmp.pt"
     _save_model_checkpoint(checkpoint, source)
     target = memory_add_with_nmp(seed=99)
-    provenance = load_model_weights(checkpoint, model=target)
+    with pytest.raises(ValueError, match="already contains NMP training"):
+        load_model_weights(
+            checkpoint,
+            model=target,
+            expected_experiment_config={"variant": "memory_add"},
+        )
+    provenance = load_model_weights(
+        checkpoint,
+        model=target,
+        expected_experiment_config={"variant": "memory_add"},
+        allow_nmp_warm_start=True,
+    )
     assert provenance["freshly_initialized_model_keys"] == []
     for name, value in source.state_dict().items():
         torch.testing.assert_close(target.state_dict()[name], value, atol=0, rtol=0)
+
+
+def test_init_from_rejects_same_layout_with_changed_write_semantics(tmp_path):
+    source = build_variant(
+        "bank",
+        backbone(16),
+        memory_write_mode="dense",
+        memory_layers=[0],
+    )
+    checkpoint = tmp_path / "dense.pt"
+    _save_model_checkpoint(checkpoint, source)
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    payload["experiment_config"].update(
+        {
+            "memory_write_mode": "dense",
+            "memory_write_stride": None,
+            "memory_layers": [0],
+            "memory_position_encoding": "rope",
+        }
+    )
+    torch.save(payload, checkpoint)
+    target = build_variant(
+        "bank",
+        backbone(16),
+        memory_write_mode="periodic",
+        memory_write_stride=2,
+        memory_layers=[0],
+    )
+    with pytest.raises(ValueError, match="memory_write_mode.*memory_write_stride"):
+        load_model_weights(
+            checkpoint,
+            model=target,
+            expected_experiment_config={
+                "variant": "bank",
+                "memory_write_mode": "periodic",
+                "memory_write_stride": 2,
+                "memory_layers": [0],
+                "memory_position_encoding": "rope",
+            },
+        )
+
+
+def test_init_from_canonicalizes_historical_memory_attention_variant_names(tmp_path):
+    source = build_variant(
+        "bank",
+        backbone(17),
+        memory_write_mode="periodic",
+        memory_write_stride=2,
+        memory_layers=[0],
+    )
+    checkpoint = tmp_path / "historical-tape.pt"
+    _save_model_checkpoint(checkpoint, source)
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    payload["experiment_config"].update(
+        {
+            "variant": "tape",
+            "memory_write_mode": "periodic",
+            "memory_write_stride": 2,
+            "memory_layers": [0],
+            "memory_position_encoding": "rope",
+        }
+    )
+    torch.save(payload, checkpoint)
+    target = build_variant(
+        "memory_attention",
+        backbone(17),
+        memory_write_mode="periodic",
+        memory_write_stride=2,
+        memory_layers=[0],
+    )
+    provenance = load_model_weights(
+        checkpoint,
+        model=target,
+        expected_experiment_config={
+            "variant": "memory_attention",
+            "memory_write_mode": "periodic",
+            "memory_write_stride": 2,
+            "memory_layers": [0],
+            "memory_position_encoding": "rope",
+        },
+    )
+    assert provenance["init_compatibility_view"]["variant"] == "bank"
 
 
 def test_nmp_checkpoint_roundtrip_is_strict():

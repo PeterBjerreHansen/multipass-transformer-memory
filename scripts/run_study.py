@@ -75,7 +75,12 @@ def _wire_arm(config_path: Path, *, wire_device: str | None) -> None:
             init_path = Path(__file__).resolve().parents[1] / init_path
         if not init_path.is_file():
             raise FileNotFoundError(f"wiring init_from does not exist: {init_path}")
-        load_model_weights(init_path, model=model)
+        load_model_weights(
+            init_path,
+            model=model,
+            expected_experiment_config=cfg.to_dict(),
+            allow_nmp_warm_start=cfg.allow_nmp_warm_start,
+        )
     train_data = load_packed_dataset_for_experiment(
         cfg.data_dir,
         "train",

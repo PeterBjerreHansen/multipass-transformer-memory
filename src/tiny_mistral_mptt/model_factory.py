@@ -54,6 +54,8 @@ def build_variant(
     bank_nmp_weight: float = 0.0,
     recurrent_nmp_target_normalization: str = "rms",
     nmp_projection_factor: float = 1.3,
+    nmp_target_mode: str = "shared_final",
+    nmp_detach_predictor_input: bool = False,
 ) -> ExperimentalVariant:
     requested_name = str(name)
     name = canonical_variant_name(requested_name)
@@ -182,6 +184,8 @@ def build_variant(
             recurrent_target_normalization=recurrent_nmp_target_normalization,
             projection_factor=nmp_projection_factor,
             initialization_seed=architecture_seed,
+            target_mode=nmp_target_mode,
+            detach_predictor_input=nmp_detach_predictor_input,
         )
 
     reference_parameter = next(backbone.parameters())
@@ -225,6 +229,8 @@ def load_variant(
     bank_nmp_weight: float = 0.0,
     recurrent_nmp_target_normalization: str = "rms",
     nmp_projection_factor: float = 1.3,
+    nmp_target_mode: str = "shared_final",
+    nmp_detach_predictor_input: bool = False,
 ) -> ExperimentalVariant:
     backbone = load_model(
         model_dir,
@@ -260,6 +266,8 @@ def load_variant(
         bank_nmp_weight=bank_nmp_weight,
         recurrent_nmp_target_normalization=recurrent_nmp_target_normalization,
         nmp_projection_factor=nmp_projection_factor,
+        nmp_target_mode=nmp_target_mode,
+        nmp_detach_predictor_input=nmp_detach_predictor_input,
     )
 
 
@@ -310,4 +318,6 @@ def load_variant_from_config(
         bank_nmp_weight=cfg.bank_nmp_weight,
         recurrent_nmp_target_normalization=cfg.recurrent_nmp_target_normalization,
         nmp_projection_factor=cfg.nmp_projection_factor,
+        nmp_target_mode=cfg.nmp_target_mode,
+        nmp_detach_predictor_input=cfg.nmp_detach_predictor_input,
     )

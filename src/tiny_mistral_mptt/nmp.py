@@ -195,6 +195,84 @@ class BankNMPAlignment:
     distance_masks: dict[str, torch.Tensor]
     target_rms: torch.Tensor
     target_feature_std: torch.Tensor
+    query_target_rms: torch.Tensor
+    query_target_feature_std: torch.Tensor
+
+
+def _event_balanced_query_mean(
+    values: torch.Tensor,
+    mask: torch.Tensor,
+    safe_write: torch.Tensor,
+) -> torch.Tensor:
+    """Average queries within events, events within examples, then examples."""
+
+    batch, length = mask.shape
+    event_counts = values.new_zeros((batch, length)).scatter_add(
+        1, safe_write, mask.to(values.dtype)
+    )
+    event_sums = values.new_zeros((batch, length)).scatter_add(
+        1, safe_write, values * mask
+    )
+    present_events = event_counts.gt(0)
+    event_means = event_sums / event_counts.clamp_min(1)
+    example_counts = present_events.sum(dim=1)
+    example_means = (event_means * present_events).sum(dim=1) / example_counts.clamp_min(1)
+    has_target_examples = example_counts.gt(0)
+    return _masked_mean(example_means, has_target_examples)
+
+
+def _bank_event_target_diagnostics(
+    targets: torch.Tensor,
+    *,
+    valid: torch.Tensor,
+    safe_write: torch.Tensor,
+    event_counts: torch.Tensor,
+    present_events: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    batch, length, width = targets.shape
+    event_sums = targets.float().new_zeros((batch, length, width)).scatter_add(
+        1,
+        safe_write[:, :, None].expand(-1, -1, width),
+        targets.float() * valid[:, :, None],
+    )
+    event_targets = event_sums / event_counts[:, :, None].clamp_min(1)
+    example_counts = present_events.sum(dim=1, keepdim=True)
+    has_examples = example_counts.squeeze(1).gt(0)
+    example_weights = (
+        present_events.float() / example_counts.clamp_min(1)
+    ) * has_examples[:, None]
+    weights = example_weights / has_examples.sum().clamp_min(1)
+    count = weights.sum()
+    rms = (
+        event_targets.square() * weights[:, :, None]
+    ).sum().div(width).sqrt()
+    mean = (event_targets * weights[:, :, None]).sum(dim=(0, 1))
+    variance = (
+        (event_targets - mean).square() * weights[:, :, None]
+    ).sum(dim=(0, 1))
+    feature_std = variance.clamp_min(0).sqrt().mean()
+    zero = targets.float().sum() * 0.0
+    return (
+        torch.where(count.gt(0), rms, zero),
+        torch.where(count.gt(0), feature_std, zero),
+    )
+
+
+def _bank_event_error_diagnostics(
+    predictions: torch.Tensor,
+    targets: torch.Tensor,
+    alignment: BankNMPAlignment,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    error = predictions.float() - targets.float()
+    per_query_square = error.square().mean(dim=-1)
+    per_query_linear = error.abs().ge(1.0).float().mean(dim=-1)
+    mean_square = _event_balanced_query_mean(
+        per_query_square, alignment.valid, alignment.safe_write
+    )
+    linear_fraction = _event_balanced_query_mean(
+        per_query_linear, alignment.valid, alignment.safe_write
+    )
+    return mean_square.clamp_min(0).sqrt(), linear_fraction
 
 
 def prepare_recurrent_nmp_alignment(
@@ -260,7 +338,14 @@ def prepare_bank_nmp_alignment(
         "17_32": valid & distances.ge(17) & distances.le(32),
         "33_plus": valid & distances.ge(33),
     }
-    target_rms, target_feature_std = target_diagnostics(targets, valid)
+    query_target_rms, query_target_feature_std = target_diagnostics(targets, valid)
+    target_rms, target_feature_std = _bank_event_target_diagnostics(
+        targets,
+        valid=valid,
+        safe_write=safe_write,
+        event_counts=event_counts,
+        present_events=present_events,
+    )
     return BankNMPAlignment(
         targets,
         valid,
@@ -271,6 +356,8 @@ def prepare_bank_nmp_alignment(
         distance_masks,
         target_rms,
         target_feature_std,
+        query_target_rms,
+        query_target_feature_std,
     )
 
 
@@ -361,17 +448,33 @@ def bank_nmp_pass_loss(
         for name, mask in alignment.distance_masks.items()
     }
     if diagnostics is not None:
-        error_rms, linear_fraction = _error_diagnostics(
+        query_error_rms, query_linear_fraction = _error_diagnostics(
             predictions, alignment.targets, alignment.valid
+        )
+        error_rms, linear_fraction = _bank_event_error_diagnostics(
+            predictions, alignment.targets, alignment
         )
         diagnostics.update(
             {
                 "error_rms": error_rms,
                 "linear_fraction": linear_fraction,
+                "event_error_rms": error_rms,
+                "event_linear_fraction": linear_fraction,
+                "query_error_rms": query_error_rms,
+                "query_linear_fraction": query_linear_fraction,
+                "event_target_rms": alignment.target_rms,
+                "event_target_feature_std": alignment.target_feature_std,
+                "query_target_rms": alignment.query_target_rms,
+                "query_target_feature_std": alignment.query_target_feature_std,
                 "valid_queries": alignment.valid.sum().float(),
                 "valid_events": alignment.present_events.sum().float(),
             }
         )
+        for name, mask in alignment.distance_masks.items():
+            diagnostics[f"query_distance_{name}_loss"] = distance_losses[name]
+            diagnostics[f"event_distance_{name}_loss"] = _event_balanced_query_mean(
+                per_query, mask, alignment.safe_write
+            )
     return loss, alignment.target_rms, alignment.target_feature_std, distance_losses
 
 

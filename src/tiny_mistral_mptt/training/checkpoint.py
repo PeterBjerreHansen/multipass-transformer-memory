@@ -15,6 +15,59 @@ FORMAT_VERSION = 3
 _CHECKPOINT_RE = re.compile(r"^checkpoint_(\d{12})\.pt$")
 
 
+_INIT_ARCHITECTURE_FIELDS = (
+    "variant",
+    "memory_window",
+    "memory_write_mode",
+    "memory_write_stride",
+    "memory_token_visibility",
+    "memory_layers",
+    "memory_position_encoding",
+    "memory_dense_window",
+    "memory_sparse_window",
+    "memory_sparse_stride",
+    "sparse_attention_stride",
+    "sparse_attention_window",
+    "sparse_attention_layers",
+    "fbt_normalize_gate_input",
+    "recirculation_source_layer",
+    "recirculation_destination_layer",
+    "recirculation_alpha",
+    "recirculation_mode",
+)
+
+_HISTORICAL_VARIANT_NAMES = {
+    "tape": "bank",
+    "tape_multiscale": "bank_multiscale",
+    "tape_add_hybrid": "bank_add_hybrid",
+    "tape_recirculation_hybrid": "bank_recirculation_hybrid",
+    "memory_attention": "bank",
+    "memory_attention_multiscale": "bank_multiscale",
+    "memory_attention_add_hybrid": "bank_add_hybrid",
+    "memory_attention_recirculation_hybrid": "bank_recirculation_hybrid",
+}
+
+_INIT_ARCHITECTURE_DEFAULTS = {
+    "memory_window": 32,
+    "memory_write_mode": None,
+    "memory_write_stride": None,
+    "memory_token_visibility": None,
+    "memory_layers": None,
+    "memory_position_encoding": None,
+    "memory_dense_window": None,
+    "memory_sparse_window": None,
+    "memory_sparse_stride": None,
+    "sparse_attention_stride": None,
+    "sparse_attention_window": None,
+    "sparse_attention_layers": None,
+    "fbt_normalize_gate_input": False,
+    "recirculation_source_layer": None,
+    "recirculation_destination_layer": None,
+    "recirculation_alpha": 0.1,
+    "recirculation_mode": "fixed",
+}
+
+
 @dataclass
 class TrainState:
     optimizer_steps: int = 0
@@ -312,6 +365,9 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
     canonical.setdefault("recurrent_nmp_target_normalization", "rms")
     canonical.setdefault("recurrent_nmp_pass_loss_weights_by_k", None)
     canonical.setdefault("bank_nmp_pass_loss_weights_by_k", None)
+    canonical.setdefault("nmp_target_mode", "shared_final")
+    canonical.setdefault("nmp_detach_predictor_input", False)
+    canonical.setdefault("allow_nmp_warm_start", False)
     canonical.setdefault("fbt_normalize_gate_input", False)
     canonical.setdefault("fbt_latent_jitter_std", 0.0)
     canonical.pop("pass_loss_weights", None)
@@ -325,6 +381,7 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
         "eval_every_tokens",
         "eval_batches",
         "eval_passes",
+        "nmp_eval_passes",
         "early_stop",
         "checkpoint_every_tokens",
         "checkpoint_every_seconds",
@@ -353,6 +410,53 @@ def _changed_experiment_config_fields(
         key
         for key in set(recorded) | set(requested)
         if recorded.get(key) != requested.get(key)
+    )
+
+
+def _canonical_init_variant(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    return _HISTORICAL_VARIANT_NAMES.get(value, value)
+
+
+def _init_compatibility_view(config: dict[str, Any]) -> dict[str, Any]:
+    """Return fields whose meaning must survive weight-only initialization."""
+
+    if not isinstance(config, dict) or not isinstance(config.get("variant"), str):
+        raise ValueError(
+            "init_from checkpoint is missing a semantic experiment configuration"
+        )
+    view = {
+        field: config.get(field, _INIT_ARCHITECTURE_DEFAULTS.get(field))
+        for field in _INIT_ARCHITECTURE_FIELDS
+    }
+    view["variant"] = _canonical_init_variant(view["variant"])
+    for field in ("memory_layers", "sparse_attention_layers"):
+        if isinstance(view[field], tuple):
+            view[field] = list(view[field])
+    return view
+
+
+def _changed_init_architecture_fields(
+    recorded_config: dict[str, Any], requested_config: dict[str, Any]
+) -> list[str]:
+    recorded = _init_compatibility_view(recorded_config)
+    requested = _init_compatibility_view(requested_config)
+    return sorted(
+        field
+        for field in _INIT_ARCHITECTURE_FIELDS
+        if recorded[field] != requested[field]
+    )
+
+
+def _source_config_has_nmp(config: dict[str, Any]) -> bool:
+    return any(
+        float(config.get(field, 0.0) or 0.0) > 0.0
+        for field in (
+            "recurrent_nmp_weight",
+            "bank_nmp_weight",
+            "tape_nmp_weight",
+        )
     )
 
 
@@ -389,10 +493,29 @@ def _validate_payload(
             raise ValueError("pass schedule changed across resume")
 
 
-def load_model_weights(path: str | Path, *, model: torch.nn.Module) -> dict[str, Any]:
+def load_model_weights(
+    path: str | Path,
+    *,
+    model: torch.nn.Module,
+    expected_experiment_config: dict[str, Any],
+    allow_nmp_warm_start: bool = False,
+) -> dict[str, Any]:
     payload = torch.load(Path(path), map_location="cpu", weights_only=False)
     _require_payload(payload)
     checkpoint_state = payload["model"]
+    source_config = payload["experiment_config"]
+    changed_architecture = _changed_init_architecture_fields(
+        source_config, expected_experiment_config
+    )
+    if changed_architecture:
+        raise ValueError(
+            "init_from architecture semantics changed: "
+            f"{changed_architecture}"
+        )
+    source_has_nmp = _source_config_has_nmp(source_config) or any(
+        key.startswith(("recurrent_nmp_predictor.", "bank_nmp_predictor."))
+        for key in checkpoint_state
+    )
     expected_keys = set(model.state_dict())
     checkpoint_keys = set(checkpoint_state)
     missing = expected_keys - checkpoint_keys
@@ -421,6 +544,11 @@ def load_model_weights(path: str | Path, *, model: torch.nn.Module) -> dict[str,
             "init_from model state is incompatible; "
             f"missing={disallowed_missing}, unexpected={sorted(unexpected)}"
         )
+    if source_has_nmp and not allow_nmp_warm_start:
+        raise ValueError(
+            "init_from source already contains NMP training; set "
+            "allow_nmp_warm_start=true only for an intentional NMP warm start"
+        )
     result = model.load_state_dict(checkpoint_state, strict=False)
     if set(result.missing_keys) != allowed_missing or result.unexpected_keys:
         raise RuntimeError(
@@ -429,7 +557,9 @@ def load_model_weights(path: str | Path, *, model: torch.nn.Module) -> dict[str,
     return {
         "source_path": str(path),
         "source_train_state": payload["train_state"],
-        "source_experiment_config": payload["experiment_config"],
+        "source_experiment_config": source_config,
+        "init_compatibility_view": _init_compatibility_view(source_config),
+        "source_has_nmp": source_has_nmp,
         "freshly_initialized_model_keys": sorted(allowed_missing),
     }
 

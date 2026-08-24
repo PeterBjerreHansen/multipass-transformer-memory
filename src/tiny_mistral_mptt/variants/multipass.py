@@ -85,6 +85,8 @@ class MultiPassVariant(ExperimentalVariant):
         self.recurrent_nmp_weight = 0.0
         self.bank_nmp_weight = 0.0
         self.recurrent_nmp_target_normalization = "rms"
+        self.nmp_target_mode = "shared_final"
+        self.nmp_detach_predictor_input = False
 
     def configure_nmp(
         self,
@@ -94,6 +96,8 @@ class MultiPassVariant(ExperimentalVariant):
         recurrent_target_normalization: str = "rms",
         projection_factor: float,
         initialization_seed: int,
+        target_mode: str = "shared_final",
+        detach_predictor_input: bool = False,
     ) -> None:
         if (
             self.recurrent_nmp_predictor is not None
@@ -115,6 +119,10 @@ class MultiPassVariant(ExperimentalVariant):
                 "recurrent_target_normalization must be one of "
                 f"{sorted(NMP_TARGET_NORMALIZATIONS)}"
             )
+        if target_mode not in {"shared_final", "same_pass"}:
+            raise ValueError("NMP target_mode must be 'shared_final' or 'same_pass'")
+        if not isinstance(detach_predictor_input, bool):
+            raise ValueError("detach_predictor_input must be boolean")
         if recurrent_weight and not self.supports_recurrent_nmp:
             raise ValueError(f"{self.variant_name} does not expose a recurrent NMP target")
         if bank_weight and not self.supports_bank_nmp:
@@ -136,6 +144,8 @@ class MultiPassVariant(ExperimentalVariant):
         self.recurrent_nmp_weight = float(recurrent_weight)
         self.bank_nmp_weight = float(bank_weight)
         self.recurrent_nmp_target_normalization = str(recurrent_target_normalization)
+        self.nmp_target_mode = str(target_mode)
+        self.nmp_detach_predictor_input = detach_predictor_input
 
     def added_parameters(self):
         if self.recurrent_nmp_predictor is not None:
@@ -467,16 +477,25 @@ class MultiPassVariant(ExperimentalVariant):
         ordinary_mask = ~self.control_token_mask(input_ids)
 
         if self.recurrent_nmp_predictor is not None:
+            recurrent_alignments = []
             with torch.no_grad():
-                final_target = normalize_nmp_target(
-                    self._source_component(runs[-1], "recurrent"),
-                    normalization=self.recurrent_nmp_target_normalization,
-                    eps=float(self.config.rms_norm_eps),
-                ).detach()
-                recurrent_alignment = prepare_recurrent_nmp_alignment(
-                    final_target,
-                    ordinary_mask=ordinary_mask,
+                target_runs = (
+                    runs if self.nmp_target_mode == "same_pass" else (runs[-1],)
                 )
+                for target_run in target_runs:
+                    target = normalize_nmp_target(
+                        self._source_component(target_run, "recurrent"),
+                        normalization=self.recurrent_nmp_target_normalization,
+                        eps=float(self.config.rms_norm_eps),
+                    ).detach()
+                    recurrent_alignments.append(
+                        prepare_recurrent_nmp_alignment(
+                            target,
+                            ordinary_mask=ordinary_mask,
+                        )
+                    )
+            if self.nmp_target_mode == "shared_final":
+                recurrent_alignments *= passes
             recurrent_pass_weights = normalize_pass_weights(
                 recurrent_nmp_loss_weights,
                 passes,
@@ -485,14 +504,21 @@ class MultiPassVariant(ExperimentalVariant):
             )
             nmp_losses: list[torch.Tensor] = []
             nmp_diagnostics: list[dict[str, torch.Tensor]] = []
-            for index, run in enumerate(runs):
+            for index, (run, alignment) in enumerate(
+                zip(runs, recurrent_alignments, strict=True)
+            ):
                 # The predictor sees only h_t. No token embedding or x_{t+1}
                 # exists anywhere on this branch.
-                prediction = self.recurrent_nmp_predictor(run.hidden_states)
+                predictor_input = (
+                    run.hidden_states.detach()
+                    if self.nmp_detach_predictor_input
+                    else run.hidden_states
+                )
+                prediction = self.recurrent_nmp_predictor(predictor_input)
                 pass_diagnostics: dict[str, torch.Tensor] = {}
                 nmp_loss, _, _ = recurrent_nmp_pass_loss(
                     prediction,
-                    alignment=recurrent_alignment,
+                    alignment=alignment,
                     diagnostics=pass_diagnostics,
                 )
                 nmp_losses.append(nmp_loss)
@@ -515,12 +541,27 @@ class MultiPassVariant(ExperimentalVariant):
             linear_fraction_values = torch.stack(
                 [item["linear_fraction"] for item in nmp_diagnostics]
             ).detach().cpu().tolist()
-            for index, (pass_loss, pass_weight, error_rms, linear_fraction) in enumerate(
+            target_rms_values = torch.stack(
+                [item.target_rms for item in recurrent_alignments]
+            ).detach().cpu().tolist()
+            target_std_values = torch.stack(
+                [item.target_feature_std for item in recurrent_alignments]
+            ).detach().cpu().tolist()
+            for index, (
+                pass_loss,
+                pass_weight,
+                error_rms,
+                linear_fraction,
+                target_rms,
+                target_std,
+            ) in enumerate(
                 zip(
                     pass_loss_values,
                     pass_weight_values,
                     error_rms_values,
                     linear_fraction_values,
+                    target_rms_values,
+                    target_std_values,
                     strict=True,
                 )
             ):
@@ -528,18 +569,30 @@ class MultiPassVariant(ExperimentalVariant):
                 metrics[f"recurrent_nmp_pass_{index + 1}_weight"] = pass_weight
                 metrics[f"recurrent_nmp_pass_{index + 1}_error_rms"] = error_rms
                 metrics[f"recurrent_nmp_pass_{index + 1}_linear_fraction"] = linear_fraction
+                metrics[f"recurrent_nmp_pass_{index + 1}_target_rms"] = target_rms
+                metrics[f"recurrent_nmp_pass_{index + 1}_target_feature_std"] = target_std
             recurrent_valid_count = float(
-                recurrent_alignment.valid.sum().detach().cpu()
+                recurrent_alignments[-1].valid.sum().detach().cpu()
+            )
+            target_rms = sum(
+                weight * alignment.target_rms
+                for weight, alignment in zip(
+                    recurrent_pass_weights, recurrent_alignments, strict=True
+                )
+            )
+            target_feature_std = sum(
+                weight * alignment.target_feature_std
+                for weight, alignment in zip(
+                    recurrent_pass_weights, recurrent_alignments, strict=True
+                )
             )
             metrics.update(
                 {
                     "recurrent_nmp_loss": float(raw.detach().cpu()),
                     "recurrent_nmp_weighted_loss": float(weighted.detach().cpu()),
-                    "recurrent_nmp_target_rms": float(
-                        recurrent_alignment.target_rms.detach().cpu()
-                    ),
+                    "recurrent_nmp_target_rms": float(target_rms.detach().cpu()),
                     "recurrent_nmp_target_feature_std": float(
-                        recurrent_alignment.target_feature_std.detach().cpu()
+                        target_feature_std.detach().cpu()
                     ),
                     "recurrent_nmp_valid_queries": recurrent_valid_count,
                     "recurrent_nmp_valid_events": recurrent_valid_count,
@@ -547,21 +600,30 @@ class MultiPassVariant(ExperimentalVariant):
             )
 
         if self.bank_nmp_predictor is not None:
-            final_bank_source = self._source_component(runs[-1], "bank")
-            # Stop-gradient covers both the final source and the writer target
-            # branch. The same writer can still receive gradients through any
-            # memories that causally contributed to run.hidden_states.
-            with torch.no_grad():
-                written_targets = self.nmp_written_states(final_bank_source).detach()
             write_mask = self.nmp_write_mask(input_ids)
             sequence_positions = self.nmp_sequence_positions(input_ids)
+            bank_alignments = []
+            # Stop-gradient covers both the source and writer target branch.
+            # The writer can still receive gradients through memories that
+            # causally contributed to run.hidden_states.
             with torch.no_grad():
-                bank_alignment = prepare_bank_nmp_alignment(
-                    written_targets,
-                    ordinary_mask=ordinary_mask,
-                    write_mask=write_mask,
-                    sequence_positions=sequence_positions,
+                target_runs = (
+                    runs if self.nmp_target_mode == "same_pass" else (runs[-1],)
                 )
+                for target_run in target_runs:
+                    written_targets = self.nmp_written_states(
+                        self._source_component(target_run, "bank")
+                    ).detach()
+                    bank_alignments.append(
+                        prepare_bank_nmp_alignment(
+                            written_targets,
+                            ordinary_mask=ordinary_mask,
+                            write_mask=write_mask,
+                            sequence_positions=sequence_positions,
+                        )
+                    )
+            if self.nmp_target_mode == "shared_final":
+                bank_alignments *= passes
             bank_pass_weights = normalize_pass_weights(
                 bank_nmp_loss_weights,
                 passes,
@@ -571,19 +633,32 @@ class MultiPassVariant(ExperimentalVariant):
             nmp_losses = []
             nmp_diagnostics = []
             distance_values: dict[str, list[torch.Tensor]] = {
-                name: [] for name in bank_alignment.distance_masks
+                name: [] for name in bank_alignments[-1].distance_masks
             }
-            for index, run in enumerate(runs):
-                prediction = self.bank_nmp_predictor(run.hidden_states)
+            event_distance_values: dict[str, list[torch.Tensor]] = {
+                name: [] for name in bank_alignments[-1].distance_masks
+            }
+            for index, (run, alignment) in enumerate(
+                zip(runs, bank_alignments, strict=True)
+            ):
+                predictor_input = (
+                    run.hidden_states.detach()
+                    if self.nmp_detach_predictor_input
+                    else run.hidden_states
+                )
+                prediction = self.bank_nmp_predictor(predictor_input)
                 pass_diagnostics = {}
                 nmp_loss, _, _, distances = bank_nmp_pass_loss(
                     prediction,
-                    alignment=bank_alignment,
+                    alignment=alignment,
                     diagnostics=pass_diagnostics,
                 )
                 nmp_losses.append(nmp_loss)
                 for name, value in distances.items():
                     distance_values[name].append(value)
+                    event_distance_values[name].append(
+                        pass_diagnostics[f"event_distance_{name}_loss"]
+                    )
                 nmp_diagnostics.append(pass_diagnostics)
             raw = sum(
                 weight * pass_loss
@@ -601,12 +676,37 @@ class MultiPassVariant(ExperimentalVariant):
             linear_fraction_values = torch.stack(
                 [item["linear_fraction"] for item in nmp_diagnostics]
             ).detach().cpu().tolist()
-            for index, (pass_loss, pass_weight, error_rms, linear_fraction) in enumerate(
+            query_error_rms_values = torch.stack(
+                [item["query_error_rms"] for item in nmp_diagnostics]
+            ).detach().cpu().tolist()
+            query_linear_fraction_values = torch.stack(
+                [item["query_linear_fraction"] for item in nmp_diagnostics]
+            ).detach().cpu().tolist()
+            target_rms_values = torch.stack(
+                [item.target_rms for item in bank_alignments]
+            ).detach().cpu().tolist()
+            target_std_values = torch.stack(
+                [item.target_feature_std for item in bank_alignments]
+            ).detach().cpu().tolist()
+            for index, (
+                pass_loss,
+                pass_weight,
+                error_rms,
+                linear_fraction,
+                query_error_rms,
+                query_linear_fraction,
+                target_rms,
+                target_std,
+            ) in enumerate(
                 zip(
                     pass_loss_values,
                     pass_weight_values,
                     error_rms_values,
                     linear_fraction_values,
+                    query_error_rms_values,
+                    query_linear_fraction_values,
+                    target_rms_values,
+                    target_std_values,
                     strict=True,
                 )
             ):
@@ -614,21 +714,64 @@ class MultiPassVariant(ExperimentalVariant):
                 metrics[f"bank_nmp_pass_{index + 1}_weight"] = pass_weight
                 metrics[f"bank_nmp_pass_{index + 1}_error_rms"] = error_rms
                 metrics[f"bank_nmp_pass_{index + 1}_linear_fraction"] = linear_fraction
+                metrics[f"bank_nmp_pass_{index + 1}_event_error_rms"] = error_rms
+                metrics[f"bank_nmp_pass_{index + 1}_event_linear_fraction"] = linear_fraction
+                metrics[f"bank_nmp_pass_{index + 1}_query_error_rms"] = query_error_rms
+                metrics[f"bank_nmp_pass_{index + 1}_query_linear_fraction"] = (
+                    query_linear_fraction
+                )
+                metrics[f"bank_nmp_pass_{index + 1}_target_rms"] = target_rms
+                metrics[f"bank_nmp_pass_{index + 1}_target_feature_std"] = target_std
+            target_rms = sum(
+                weight * alignment.target_rms
+                for weight, alignment in zip(
+                    bank_pass_weights, bank_alignments, strict=True
+                )
+            )
+            target_feature_std = sum(
+                weight * alignment.target_feature_std
+                for weight, alignment in zip(
+                    bank_pass_weights, bank_alignments, strict=True
+                )
+            )
+            query_target_rms = sum(
+                weight * alignment.query_target_rms
+                for weight, alignment in zip(
+                    bank_pass_weights, bank_alignments, strict=True
+                )
+            )
+            query_target_feature_std = sum(
+                weight * alignment.query_target_feature_std
+                for weight, alignment in zip(
+                    bank_pass_weights, bank_alignments, strict=True
+                )
+            )
             metrics.update(
                 {
                     "bank_nmp_loss": float(raw.detach().cpu()),
                     "bank_nmp_weighted_loss": float(weighted.detach().cpu()),
-                    "bank_nmp_target_rms": float(
-                        bank_alignment.target_rms.detach().cpu()
-                    ),
+                    "bank_nmp_target_rms": float(target_rms.detach().cpu()),
                     "bank_nmp_target_feature_std": float(
-                        bank_alignment.target_feature_std.detach().cpu()
+                        target_feature_std.detach().cpu()
+                    ),
+                    "bank_nmp_event_target_rms": float(target_rms.detach().cpu()),
+                    "bank_nmp_event_target_feature_std": float(
+                        target_feature_std.detach().cpu()
+                    ),
+                    "bank_nmp_query_target_rms": float(
+                        query_target_rms.detach().cpu()
+                    ),
+                    "bank_nmp_query_target_feature_std": float(
+                        query_target_feature_std.detach().cpu()
                     ),
                     "bank_nmp_valid_queries": float(
-                        bank_alignment.valid.sum().detach().cpu()
+                        bank_alignments[-1].valid.sum().detach().cpu()
                     ),
                     "bank_nmp_valid_events": float(
-                        bank_alignment.present_events.sum().detach().cpu()
+                        bank_alignments[-1].present_events.sum().detach().cpu()
+                    ),
+                    "bank_nmp_valid_examples": float(
+                        bank_alignments[-1].has_target_examples.sum().detach().cpu()
                     ),
                 }
             )
@@ -636,11 +779,29 @@ class MultiPassVariant(ExperimentalVariant):
             distance_matrix = torch.stack(
                 [torch.stack(distance_values[name]) for name in distance_names]
             )
-            distance_means = distance_matrix.detach().cpu().mean(dim=1).tolist()
+            event_distance_matrix = torch.stack(
+                [torch.stack(event_distance_values[name]) for name in distance_names]
+            )
+            distance_means = (
+                distance_matrix
+                * bank_pass_weights.to(distance_matrix.device)[None, :]
+            ).sum(dim=1).detach().cpu().tolist()
+            event_distance_means = (
+                event_distance_matrix
+                * bank_pass_weights.to(event_distance_matrix.device)[None, :]
+            ).sum(dim=1).detach().cpu().tolist()
             metrics.update(
                 {
-                    f"bank_nmp_distance_{name}_loss": value
+                    f"bank_nmp_query_distance_{name}_loss": value
                     for name, value in zip(distance_names, distance_means, strict=True)
+                }
+            )
+            metrics.update(
+                {
+                    f"bank_nmp_event_distance_{name}_loss": value
+                    for name, value in zip(
+                        distance_names, event_distance_means, strict=True
+                    )
                 }
             )
 
@@ -650,6 +811,12 @@ class MultiPassVariant(ExperimentalVariant):
         ):
             metrics["nmp_weight_scale"] = float(nmp_weight_scale)
             metrics["ntp_loss"] = float(loss.detach().cpu())
+            metrics["nmp_shared_final_target"] = float(
+                self.nmp_target_mode == "shared_final"
+            )
+            metrics["nmp_predictor_input_detached"] = float(
+                self.nmp_detach_predictor_input
+            )
         loss = loss + auxiliary_loss
         return TrainOutput(
             loss=loss,
