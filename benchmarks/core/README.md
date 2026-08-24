@@ -13,8 +13,9 @@ results/
 ```
 
 The current locked Stage-5 eight-arm study is in
-`benchmarks/core/stage_5_cloud_100m/`. Its six original arms are complete; the
-two attention-control arms are the remaining runs.
+`benchmarks/core/stage_5_cloud_100m/`. All eight arms are complete; their
+full, transferred artifacts are stored under the ignored `results/<arm>/`
+directories.
 
 Set `status: locked` only after the scientific question, arms, comparison axes,
 data artifact, initialization provenance, and execution configs have been

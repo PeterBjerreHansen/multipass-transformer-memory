@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the remaining locked cloud arms sequentially and archive each one.
+"""Run selected locked cloud arms sequentially and archive each one.
 
 The campaign is restartable: a locally complete arm is skipped, while an
 incomplete arm is handed to start-and-watch for remote resume/transfer.
@@ -118,7 +118,7 @@ def _local_complete(path: Path, *, expected_output: str | None = None) -> bool:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the remaining arms of the locked Stage-5 eight-arm study one at a time and archive them locally."
+        description="Run selected arms of the locked Stage-5 eight-arm study one at a time and archive them locally."
     )
     parser.add_argument("--host", required=True, help="Verda VM hostname or IP")
     parser.add_argument("--vm-id", required=True, help="Verda VM ID")
@@ -130,7 +130,7 @@ def _parser() -> argparse.ArgumentParser:
         dest="arms",
         action="append",
         choices=ARMS,
-        help="run only this arm; repeat for a selected subset (default: all remaining arms)",
+        help="run only this arm; repeat for a selected subset (default: all non-vanilla arms)",
     )
     parser.add_argument("--ssh-key", type=Path, default=Path("~/.ssh/id_ed25519").expanduser())
     parser.add_argument("--verda", default="verda")

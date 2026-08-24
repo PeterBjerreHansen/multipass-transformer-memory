@@ -19,5 +19,7 @@ qualification and pilot gates.
 MemoryAdd and FBT are intentionally absent from this locked study. Their
 historical implementations are not evidence for the current comparison.
 
-The six original arms are already complete. The two attention-control arms are
-the remaining runs and use the same staged Phase-B slice and optimizer batch.
+All eight arms are complete. The two attention-control arms used the same
+staged Phase-B slice and optimizer batch as the original six arms. Their full
+artifacts were transferred and checksum-verified into `results/<arm>/` before
+the cloud compute instance was shut down and deleted.

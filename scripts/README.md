@@ -60,8 +60,9 @@ the Verda compute instance. It leaves the VM untouched when a run is
 interrupted or transfer verification fails. Run `--help` for the full
 interface; use `--transfer metadata` only for small smoke checks.
 
-`run-cloud-campaign` applies that lifecycle to the locked Stage-5 eight-arm
-study and its remaining 100M arms.
+`run-cloud-campaign` applies that lifecycle to selected arms of the locked
+Stage-5 eight-arm study. It can be used for a complete campaign or to resume
+an interrupted subset; locally complete arms are skipped.
 It skips locally complete arms, transfers full artifacts, deletes
 each verified remote run directory, shuts down between arms, and deletes the
 compute instance after the selected campaign. A lock file prevents two

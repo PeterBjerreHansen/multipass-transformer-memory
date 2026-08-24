@@ -1,6 +1,6 @@
 # Experimental pipeline
 
-The reported eight-arm study is specified across stages 0 through 5. It compares
+The completed eight-arm study is specified across stages 0 through 5. It compares
 vanilla TinyMistral, adaptive Recirculation, three Bank write policies, the
 Recirculation–Periodic Bank hybrid, Multiscale Bank, and Sparse SWA:
 
@@ -46,8 +46,8 @@ adds no trainable parameters.
 - Stage 2 provides 1M-token local Phase-B integration checks.
 - Stages 3 and 4 retain the cloud pilot and promotion protocol.
 - The core Stage-5 study contains the locked 100M-token eight-arm continuation.
-  Its six original arms are complete; Multiscale Bank and Sparse SWA are the
-  remaining runs.
+  All eight arms are complete, and their transferred artifacts are under
+  `benchmarks/core/stage_5_cloud_100m/results/`.
 
 The original manifests and configs remain in their stage directories as
 protocol records.
@@ -84,14 +84,14 @@ comparisons.
 
 ### Stage 5: 100M-token attention controls
 
-After the local gates and CUDA qualification pass, run the configs under
-`benchmarks/core/stage_5_cloud_100m/`. Multiscale Bank initializes from its
-Stage-1 checkpoint. Sparse SWA starts from the canonical TinyMistral checkpoint.
-Both use the same Phase-B data slice and optimizer batch as the six completed
-Stage-5 arms.
+The completed run used the configs under
+`benchmarks/core/stage_5_cloud_100m/`. Multiscale Bank initialized from its
+Stage-1 checkpoint. Sparse SWA started from the canonical TinyMistral
+checkpoint. Both used the same Phase-B data slice and optimizer batch as the
+other six Stage-5 arms.
 
-Compare their validation and efficiency results against the locked Stage-5
-results. Do not treat Multiscale Bank and Sparse SWA as a tightly matched pair:
+Their validation and efficiency results are included in the repository README.
+Do not treat Multiscale Bank and Sparse SWA as a tightly matched pair:
 they differ in pass count, parameter count, and initialization because those
 differences define the architectures being controlled.
 

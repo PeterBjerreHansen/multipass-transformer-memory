@@ -190,5 +190,6 @@ the final Verda delete operation. On failure it shuts down the compute
 instance but retains remote artifacts for recovery; it does not delete a
 failed run's data.
 
-The campaign wrapper has a fixed list of the remaining Stage-5 arms, including
-Multiscale Bank and Sparse SWA. Use `--arm` to run only the selected controls.
+The campaign wrapper has a fixed list of the non-vanilla Stage-5 arms, including
+Multiscale Bank and Sparse SWA. Use `--arm` to run only the selected controls;
+locally complete arms are skipped, so the same command is safe to resume.

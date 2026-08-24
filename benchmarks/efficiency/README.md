@@ -149,7 +149,7 @@ same peak API.
 
 ### Stage-5 architecture comparison
 
-For a measured comparison of the exact 100M study architectures, run:
+For a measured comparison of the exact eight 100M study architectures, run:
 
 ```bash
 make efficiency-cuda-stage5
@@ -179,10 +179,11 @@ write cadence.
 
 ## Attention-control suite
 
-`benchmarks/efficiency/suites/attention_controls.yaml` covers the two controls
-without changing the locked Stage-5 suite: one-pass `sparse_swa`, multipass
+`benchmarks/efficiency/suites/attention_controls.yaml` remains a focused subset
+of the locked Stage-5 suite: one-pass `sparse_swa`, multipass
 `bank_multiscale`, the sparse Periodic Bank endpoint, and the existing
-Recirculation–Periodic Bank hybrid. Run it with the shared efficiency runner or
+Recirculation–Periodic Bank hybrid. The complete eight-arm suite is
+`stage_5_architectures.yaml`. Run either with the shared efficiency runner or
 pass it to `scripts/estimate_training_flops.py` for dominant-matmul accounting.
 
 For ordinary/dense/periodic cases, `sequence_length` is both the linguistic and
