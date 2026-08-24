@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 
-import torch
 import yaml
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -15,6 +14,8 @@ from tiny_mistral.device import resolve_device
 from tiny_mistral_mptt.config import load_experiment_config
 from tiny_mistral_mptt.evaluation.lm_eval_adapter import make_lm_eval_adapter
 from tiny_mistral_mptt.model_factory import load_variant_from_config
+from tiny_mistral_mptt.data.manifest import file_sha256
+from tiny_mistral_mptt.training.checkpoint import load_checkpoint_for_evaluation
 
 
 def main() -> None:
@@ -50,8 +51,13 @@ def main() -> None:
     device = resolve_device(cfg.device)
     model = load_variant_from_config(cfg, device=device)
     if args.checkpoint:
-        payload = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-        model.load_state_dict(payload["model"], strict=True)
+        expected = file_sha256(f"{cfg.data_dir}/manifest.json")
+        load_checkpoint_for_evaluation(
+            args.checkpoint,
+            model=model,
+            expected_manifest_sha256=expected,
+            expected_experiment_config=cfg.to_dict(),
+        )
     adapter = make_lm_eval_adapter(
         model,
         tokenizer_path=Path(cfg.model_dir) / "tokenizer.json",

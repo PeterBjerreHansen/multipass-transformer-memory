@@ -496,7 +496,7 @@ class Trainer:
                 "predicted_tokens": result.predicted_tokens,
                 "nll_by_source": result.nll_by_source,
                 "validation_blocks": result.blocks,
-                "eval_passes": 1,
+                "eval_passes": result.passes,
             }
         append_jsonl(self.metrics_path, record)
         return record

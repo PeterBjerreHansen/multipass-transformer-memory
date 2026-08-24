@@ -210,9 +210,7 @@ def _require_payload(payload: dict[str, Any]) -> None:
     TrainState(**payload["train_state"])
 
 
-def inspect_checkpoint(path: str | Path) -> dict[str, Any]:
-    payload = torch.load(Path(path), map_location="cpu", weights_only=False)
-    _require_payload(payload)
+def _checkpoint_metadata(payload: dict[str, Any]) -> dict[str, Any]:
     state = TrainState(**payload["train_state"])
     return {
         "format_version": FORMAT_VERSION,
@@ -222,6 +220,12 @@ def inspect_checkpoint(path: str | Path) -> dict[str, Any]:
         "source_provenance": payload["source_provenance"],
         "checkpoint_metadata": payload["checkpoint_metadata"],
     }
+
+
+def inspect_checkpoint(path: str | Path) -> dict[str, Any]:
+    payload = torch.load(Path(path), map_location="cpu", weights_only=False)
+    _require_payload(payload)
+    return _checkpoint_metadata(payload)
 
 
 def save_checkpoint_generation(
@@ -333,24 +337,36 @@ def _source_identity(source: dict[str, Any] | None) -> tuple[Any, Any]:
     return (source.get("source_code_sha256"), source.get("uv_lock_sha256"))
 
 
+def _changed_experiment_config_fields(
+    recorded_config: dict[str, Any], requested_config: dict[str, Any]
+) -> list[str]:
+    recorded = _resume_config_view(recorded_config)
+    requested = _resume_config_view(requested_config)
+    return sorted(
+        key
+        for key in set(recorded) | set(requested)
+        if recorded.get(key) != requested.get(key)
+    )
+
+
 def _validate_payload(
     payload: dict[str, Any],
     *,
-    expected_manifest_sha256: str,
+    expected_manifest_sha256: str | None,
     expected_experiment_config: dict[str, Any] | None,
     expected_source_provenance: dict[str, Any] | None,
     allow_source_mismatch: bool,
     pass_scheduler=None,
 ) -> None:
     _require_payload(payload)
-    if payload["data_manifest_sha256"] != expected_manifest_sha256:
+    if (
+        expected_manifest_sha256 is not None
+        and payload["data_manifest_sha256"] != expected_manifest_sha256
+    ):
         raise ValueError("data manifest changed across resume")
     if expected_experiment_config is not None:
-        recorded = _resume_config_view(payload["experiment_config"])
-        requested = _resume_config_view(expected_experiment_config)
-        changed = sorted(
-            key for key in set(recorded) | set(requested)
-            if recorded.get(key) != requested.get(key)
+        changed = _changed_experiment_config_fields(
+            payload["experiment_config"], expected_experiment_config
         )
         if changed:
             raise ValueError(f"experiment config changed across resume: {changed}")
@@ -409,6 +425,70 @@ def load_model_weights(path: str | Path, *, model: torch.nn.Module) -> dict[str,
         "source_experiment_config": payload["experiment_config"],
         "freshly_initialized_model_keys": sorted(allowed_missing),
     }
+
+
+def validate_checkpoint(
+    path: str | Path,
+    *,
+    expected_manifest_sha256: str | None = None,
+    expected_experiment_config: dict[str, Any] | None = None,
+    expected_source_provenance: dict[str, Any] | None = None,
+    allow_source_mismatch: bool = False,
+) -> dict[str, Any]:
+    """Validate a checkpoint without mutating a model or optimizer.
+
+    This is the shared compatibility boundary for resume, evaluation, and
+    cloud preflight. Training-only operational fields remain relocatable via
+    ``_resume_config_view``, while architecture and behavioral fields must
+    match exactly.
+    """
+    payload = torch.load(Path(path), map_location="cpu", weights_only=False)
+    _validate_payload(
+        payload,
+        expected_manifest_sha256=expected_manifest_sha256,
+        expected_experiment_config=expected_experiment_config,
+        expected_source_provenance=expected_source_provenance,
+        allow_source_mismatch=allow_source_mismatch,
+    )
+    metadata = _checkpoint_metadata(payload)
+    metadata["path"] = str(path)
+    return metadata
+
+
+def load_checkpoint_for_evaluation(
+    path: str | Path,
+    *,
+    model: torch.nn.Module,
+    expected_manifest_sha256: str | None = None,
+    expected_experiment_config: dict[str, Any] | None = None,
+    expected_source_provenance: dict[str, Any] | None = None,
+    allow_source_mismatch: bool = False,
+) -> dict[str, Any]:
+    """Validate and load a full training checkpoint for evaluation.
+
+    Strict state-dict loading only protects tensor structure. The explicit
+    experiment-config check protects behavioral settings such as Bank write
+    policy, memory visibility, pass schedules, and recurrence configuration.
+    """
+    payload = torch.load(Path(path), map_location="cpu", weights_only=False)
+    _validate_payload(
+        payload,
+        expected_manifest_sha256=expected_manifest_sha256,
+        expected_experiment_config=expected_experiment_config,
+        expected_source_provenance=expected_source_provenance,
+        allow_source_mismatch=allow_source_mismatch,
+    )
+    model.load_state_dict(payload["model"], strict=True)
+    metadata = {
+        "path": str(path),
+        "format_version": FORMAT_VERSION,
+        "train_state": payload["train_state"],
+        "experiment_config": payload["experiment_config"],
+        "data_manifest_sha256": payload["data_manifest_sha256"],
+        "source_provenance": payload["source_provenance"],
+        "checkpoint_metadata": payload["checkpoint_metadata"],
+    }
+    return metadata
 
 
 def load_checkpoint(

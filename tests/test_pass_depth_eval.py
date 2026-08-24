@@ -83,3 +83,15 @@ def test_nll_rejects_zero_block_limit(tmp_path):
     )
     with pytest.raises(ValueError, match="max_blocks must be positive"):
         evaluate_nll(model, dataset, device="cpu", max_blocks=0)
+
+
+def test_nll_records_explicit_multipass_depth(tmp_path):
+    data_dir = tmp_path / "data-nll-passes"
+    make_artifact(data_dir)
+    dataset = PackedTokenDataset(data_dir, "validation")
+    model = FBTVariant(
+        MistralForCausalLM(micro_config(), attention_backend="reference"),
+        initialization_seed=10,
+    )
+    result = evaluate_nll(model, dataset, device="cpu", passes=2, max_blocks=1)
+    assert result.passes == 2

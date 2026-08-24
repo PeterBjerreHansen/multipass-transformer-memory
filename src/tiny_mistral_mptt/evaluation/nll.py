@@ -17,6 +17,7 @@ class NLLResult:
     perplexity: float
     predicted_tokens: int
     blocks: int
+    passes: int
     nll_by_source: dict[str, float]
 
 
@@ -26,8 +27,11 @@ def evaluate_nll(
     dataset: PackedTokenDataset,
     *,
     device: torch.device | str,
+    passes: int = 1,
     max_blocks: int | None = None,
 ) -> NLLResult:
+    if passes < 1:
+        raise ValueError("passes must be positive")
     if len(dataset) == 0:
         raise ValueError("validation dataset is empty")
     if max_blocks is not None and max_blocks <= 0:
@@ -43,8 +47,10 @@ def evaluate_nll(
         for index in range(limit):
             ids = dataset.batch([index], device=device)
             if isinstance(model, MultiPassVariant):
-                logits = model.compute_passes(ids, passes=1, phase="B").final.logits.float()
+                logits = model.compute_passes(ids, passes=passes, phase="B").final.logits.float()
             else:
+                if passes != 1:
+                    raise ValueError("single-pass variants support only passes=1")
                 output = model(ids, use_cache=False)
                 logits = output.logits.float()
             labels = model.build_lm_labels(ids)
@@ -75,5 +81,6 @@ def evaluate_nll(
         perplexity=math.exp(min(mean, 50.0)),
         predicted_tokens=total_tokens,
         blocks=limit,
+        passes=passes,
         nll_by_source=by_source,
     )

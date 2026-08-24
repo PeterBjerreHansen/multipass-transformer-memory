@@ -106,25 +106,27 @@ def _wire_arm(config_path: Path, *, wire_device: str | None) -> None:
         output.loss.backward()
         if not bool(torch.isfinite(output.loss.detach()).item()):
             raise RuntimeError(f"non-finite wiring loss for {config_path} K={passes}")
-        nonzero_gradient_parameters = sum(
+        active_gradient_parameter_elements = sum(
             parameter.numel()
             for parameter in model.parameters()
             if parameter.requires_grad
             and parameter.grad is not None
             and bool(parameter.grad.detach().ne(0).any().item())
         )
-        if nonzero_gradient_parameters == 0:
+        if active_gradient_parameter_elements == 0:
             raise RuntimeError(f"wiring produced no nonzero gradients for {config_path} K={passes}")
         print(
             f"PASS: wired {config_path.stem} device={device} K={passes} "
             f"loss={float(output.loss.detach().cpu()):.6f} "
-            f"nonzero_gradient_parameters={nonzero_gradient_parameters}"
+            f"active_gradient_parameter_elements={active_gradient_parameter_elements}"
         )
 
     del output, input_ids, train_data, model
     gc.collect()
     if device.type == "mps" and hasattr(torch, "mps"):
         torch.mps.empty_cache()
+    elif device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def main() -> None:

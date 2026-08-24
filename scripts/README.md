@@ -78,10 +78,13 @@ Training/evaluation loaders automatically wrap ordinary packed artifacts with
 data remain ordinary linguistic IDs; the view inserts input-only control ID V at
 load time.
 
-Pass-depth, memory interventions, and recurrent-inference scripts are reusable
-checkpoint diagnostics. `evaluate_memory_interventions.py` can independently
-intervene on the active Recirculation–Bank hybrid's recurrent source and slow
-bank source.
+`evaluate_nll.py` reports pass-1 NLL by default; use `--passes K` to make the
+pass depth explicit for a multipass model. Pass-depth, memory interventions,
+and recurrent-inference scripts are reusable checkpoint diagnostics.
+`evaluate_memory_interventions.py` measures one feedback transition and can
+independently intervene on the active Recirculation–Bank hybrid's recurrent
+source and slow bank source. It requires at least two validation blocks for a
+genuine mismatch condition.
 
 Public `generate.py`/model generation remain ordinary language generation. The
 low-level recurrent API can consume explicit MEM control steps, but no sampler

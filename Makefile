@@ -13,6 +13,7 @@ test:
 
 compile:
 	uv run python -m compileall -q src scripts tests
+	uv run python -m py_compile scripts/start-and-watch scripts/run-cloud-campaign
 
 study-gates:
 	uv run python scripts/verify_study.py
@@ -43,7 +44,7 @@ prepare-data:
 	uv run python scripts/prepare_data.py
 
 verify-data:
-	uv run python scripts/verify_data.py data/dolmino/local_2048
+	uv run python scripts/verify_data.py data/dolmino/wiring_2048
 
 evaluate-nll:
 	uv run python scripts/evaluate_nll.py \

@@ -8,6 +8,7 @@ from tiny_mistral_mptt.training.checkpoint import (
     FORMAT_VERSION,
     TrainState,
     load_checkpoint,
+    load_checkpoint_for_evaluation,
     save_checkpoint,
 )
 
@@ -81,6 +82,61 @@ def test_checkpoint_rejects_training_config_changes(tmp_path):
             expected_manifest_sha256="same",
             expected_experiment_config={"variant": "vanilla", "batch_size": 2, "output_dir": "b"},
         )
+
+
+def test_evaluation_checkpoint_rejects_semantic_config_changes(tmp_path):
+    model, optimizer = _objects()
+    sampler = StatefulBlockSampler(5, seed=3)
+    path = save_checkpoint(
+        tmp_path / "state.pt",
+        model=model,
+        optimizer=optimizer,
+        sampler_state=sampler.state_dict(),
+        train_state=TrainState(),
+        experiment_config={
+            "variant": "bank",
+            "memory_write_mode": "dense",
+            "memory_layers": [3, 7],
+        },
+        data_manifest_sha256="same",
+    )
+    replacement, _ = _objects()
+    with pytest.raises(ValueError, match="experiment config changed"):
+        load_checkpoint_for_evaluation(
+            path,
+            model=replacement,
+            expected_manifest_sha256="same",
+            expected_experiment_config={
+                "variant": "bank",
+                "memory_write_mode": "periodic",
+                "memory_layers": [3, 7],
+            },
+        )
+
+
+def test_evaluation_checkpoint_loads_strictly_after_manifest_and_config_checks(tmp_path):
+    model, optimizer = _objects()
+    sampler = StatefulBlockSampler(5, seed=3)
+    path = save_checkpoint(
+        tmp_path / "state.pt",
+        model=model,
+        optimizer=optimizer,
+        sampler_state=sampler.state_dict(),
+        train_state=TrainState(unique_tokens_seen=8),
+        experiment_config={"variant": "vanilla", "phase": "B"},
+        data_manifest_sha256="same",
+    )
+    replacement, _ = _objects()
+    metadata = load_checkpoint_for_evaluation(
+        path,
+        model=replacement,
+        expected_manifest_sha256="same",
+        expected_experiment_config={"variant": "vanilla", "phase": "B"},
+    )
+    assert metadata["path"] == str(path)
+    assert metadata["train_state"]["unique_tokens_seen"] == 8
+    for name, tensor in replacement.state_dict().items():
+        torch.testing.assert_close(tensor, model.state_dict()[name], atol=0, rtol=0)
 
 
 def test_constant_lr_resume_may_extend_stopping_budget(tmp_path):

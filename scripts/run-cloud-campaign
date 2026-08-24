@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+
+from tiny_mistral_mptt.training.checkpoint import inspect_checkpoint
 
 
 ARMS = (
@@ -29,6 +32,7 @@ DEFAULT_REMOTE_ROOT = "/root/multipass-transformer-memory"
 DEFAULT_STUDY_DIR = "benchmarks/core/stage_5_cloud_100m"
 DEFAULT_LOCAL_ROOT = "benchmarks/core/stage_5_cloud_100m/results"
 DEFAULT_LOCK = "/tmp/tinymistral-cloud-campaign.lock"
+TRANSFER_MANIFEST = ".transfer-manifest.sha256"
 
 
 def _repo_root() -> Path:
@@ -49,9 +53,54 @@ def _quote(value: str) -> str:
     return repr(value)
 
 
-def _local_complete(path: Path) -> bool:
-    required = (path / "run.json", path / "segments.jsonl", path / "checkpoints/latest.json")
+def _local_manifest(root: Path) -> str:
+    rows: list[str] = []
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        relative = path.relative_to(root).as_posix()
+        if (
+            relative == TRANSFER_MANIFEST
+            or relative == ".rsync-partial"
+            or relative.startswith(".rsync-partial/")
+        ):
+            continue
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        rows.append(f"{digest.hexdigest()}  {relative}")
+    return "\n".join(rows)
+
+
+def _local_complete(path: Path, *, expected_output: str | None = None) -> bool:
+    required = (
+        path / "run.json",
+        path / "segments.jsonl",
+        path / "checkpoints/latest.json",
+        path / TRANSFER_MANIFEST,
+    )
     if not all(item.is_file() for item in required):
+        return False
+    try:
+        run_info = json.loads((path / "run.json").read_text(encoding="utf-8"))
+        if expected_output is not None:
+            recorded_output = run_info.get("config", {}).get("output_dir")
+            if not isinstance(recorded_output, str):
+                return False
+            if Path(recorded_output).as_posix().rstrip("/") != Path(expected_output).as_posix().rstrip("/"):
+                return False
+        if (path / TRANSFER_MANIFEST).read_text(encoding="utf-8") != _local_manifest(path):
+            return False
+        pointer = json.loads(
+            (path / "checkpoints/latest.json").read_text(encoding="utf-8")
+        )
+        current = pointer.get("current")
+        if not isinstance(current, str) or Path(current).name != current:
+            return False
+        checkpoint = path / "checkpoints" / current
+        if not checkpoint.is_file():
+            return False
+        inspect_checkpoint(checkpoint)
+    except Exception:
         return False
     last_end = None
     try:
@@ -193,13 +242,14 @@ def main() -> int:
             args.local_root.mkdir(parents=True, exist_ok=True)
             for index, arm in enumerate(arms, start=1):
                 local_output = args.local_root / arm
+                remote_output = f"{args.study_dir}/results/{arm}"
                 print(f"\n=== ARM {index}/{len(arms)}: {arm} ===", flush=True)
-                if _local_complete(local_output):
+                if _local_complete(local_output, expected_output=remote_output):
                     print(f"SKIP: local artifacts are already complete: {local_output}", flush=True)
                     continue
                 print(f"RUN: transferring full artifacts to {local_output}", flush=True)
                 _run(_controller_command(args, arm))
-                if not _local_complete(local_output):
+                if not _local_complete(local_output, expected_output=remote_output):
                     raise RuntimeError(f"controller returned success but local arm is incomplete: {local_output}")
                 print(f"PASS: local artifacts complete: {local_output}", flush=True)
 

@@ -13,7 +13,10 @@ from tiny_mistral.loading import verify_target_checkpoint
 from tiny_mistral_mptt.config import load_experiment_config
 from tiny_mistral_mptt.data.manifest import file_sha256, verify_artifact
 from tiny_mistral_mptt.data.packed_dataset import memory_token_physical_length
-from tiny_mistral_mptt.training.checkpoint import candidate_checkpoint_paths, inspect_checkpoint
+from tiny_mistral_mptt.training.checkpoint import (
+    candidate_checkpoint_paths,
+    validate_checkpoint,
+)
 from tiny_mistral_mptt.training.provenance import hardware_provenance, source_provenance
 
 
@@ -45,6 +48,19 @@ def _occupied_run(output_dir: Path) -> bool:
 def _source_identity(source: dict | None) -> tuple[object, object]:
     source = source or {}
     return source.get("source_code_sha256"), source.get("uv_lock_sha256")
+
+
+def _estimate_checkpoint_bytes(cfg, model_verification: dict | None) -> int | None:
+    """Conservatively estimate one optimizer checkpoint generation."""
+    if not model_verification or not model_verification.get("parameter_count"):
+        return None
+    parameter_bytes = {"float32": 4, "bfloat16": 2, "float16": 2}.get(cfg.dtype)
+    if parameter_bytes is None:
+        return None
+    # Model weights plus two Adam moments, with head/metadata overhead. The
+    # margin covers added Bank parameters and non-tensor checkpoint state.
+    tensor_bytes = int(model_verification["parameter_count"]) * parameter_bytes * 3
+    return int(tensor_bytes * 1.25)
 
 
 def main() -> None:
@@ -154,7 +170,13 @@ def main() -> None:
             failures.append(f"resume mode requires run.json: {output_dir}")
         for path in candidate_checkpoint_paths(output_dir):
             try:
-                metadata = inspect_checkpoint(path)
+                metadata = validate_checkpoint(
+                    path,
+                    expected_manifest_sha256=manifest_sha256,
+                    expected_experiment_config=cfg.to_dict(),
+                    expected_source_provenance=source,
+                    allow_source_mismatch=args.allow_source_mismatch,
+                )
             except Exception as exc:
                 checkpoint_errors.append(f"{path.name}: {type(exc).__name__}: {exc}")
                 continue
@@ -167,15 +189,8 @@ def main() -> None:
                 + (f" ({'; '.join(checkpoint_errors)})" if checkpoint_errors else "")
             )
         else:
-            if (
-                manifest_sha256 is not None
-                and selected_checkpoint_metadata["data_manifest_sha256"] != manifest_sha256
-            ):
-                failures.append("selected checkpoint data manifest does not match current data artifact")
             recorded_source = selected_checkpoint_metadata.get("source_provenance")
-            if not args.allow_source_mismatch and _source_identity(recorded_source) != _source_identity(source):
-                failures.append("selected checkpoint execution code/environment does not match current checkout")
-            elif (
+            if (
                 recorded_source
                 and recorded_source.get("git_commit")
                 and source.get("git_commit")
@@ -201,11 +216,19 @@ def main() -> None:
                 for path in candidate_checkpoint_paths(output_dir)
                 if path.exists()
             ]
-            checkpoint_bytes = max(generation_sizes, default=None)
+            estimated = _estimate_checkpoint_bytes(cfg, model_verification)
+            checkpoint_bytes = max(
+                [*generation_sizes, *([] if estimated is None else [estimated])],
+                default=None,
+            )
             required_free = 3 * checkpoint_bytes if checkpoint_bytes else None
             if required_free is not None and usage.free < required_free:
                 failures.append(
                     "insufficient free space for previous/current/new checkpoint rotation"
+                )
+            if required_free is None:
+                warnings.append(
+                    "checkpoint size could not be estimated; free-space check is unavailable"
                 )
             persistent_report = {
                 "root": str(persistent_root),

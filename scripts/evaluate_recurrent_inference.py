@@ -6,14 +6,13 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 
-import torch
-
 from tiny_mistral.device import resolve_device
 from tiny_mistral_mptt.config import load_experiment_config
 from tiny_mistral_mptt.data.manifest import file_sha256
 from tiny_mistral_mptt.data.packed_dataset import load_packed_dataset_for_experiment
 from tiny_mistral_mptt.evaluation.recurrent import evaluate_recurrent_continuation
 from tiny_mistral_mptt.model_factory import load_variant_from_config
+from tiny_mistral_mptt.training.checkpoint import load_checkpoint_for_evaluation
 from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
 from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
 from tiny_mistral_mptt.variants.bank import BankVariant
@@ -79,11 +78,13 @@ def main() -> None:
     ):
         raise SystemExit("loaded variant does not implement recurrent memory inference")
 
-    payload = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     expected = file_sha256(f"{cfg.data_dir}/manifest.json")
-    if payload.get("data_manifest_sha256") != expected:
-        raise RuntimeError("checkpoint was trained against a different data manifest")
-    model.load_state_dict(payload["model"], strict=True)
+    load_checkpoint_for_evaluation(
+        args.checkpoint,
+        model=model,
+        expected_manifest_sha256=expected,
+        expected_experiment_config=cfg.to_dict(),
+    )
     model.eval()
 
     dataset = load_packed_dataset_for_experiment(cfg.data_dir, "validation", memory_write_mode=cfg.memory_write_mode, memory_write_stride=cfg.memory_write_stride)

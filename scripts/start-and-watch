@@ -25,6 +25,9 @@ class ControllerError(RuntimeError):
     """A recoverable controller failure that must not trigger cleanup."""
 
 
+TRANSFER_MANIFEST = ".transfer-manifest.sha256"
+
+
 @dataclass(frozen=True)
 class Status:
     state: str
@@ -158,6 +161,46 @@ if configured != expected:
     )'''
 
 
+def _validate_remote_config(args: argparse.Namespace, config: str, output: str) -> None:
+    """Validate config/output identity before inspecting or launching a run."""
+    command = (
+        f"set -eu; cd {_q(args.remote_root)}; test -f {_q(config)}; "
+        f"python3 -c {_q(_config_output_code())} . {_q(config)} {_q(output)}"
+    )
+    _ssh(args, command)
+
+
+def _remote_run_identity_code() -> str:
+    return r'''import json, pathlib, sys, yaml
+root = pathlib.Path(sys.argv[1]).resolve()
+config = pathlib.Path(sys.argv[2])
+output = pathlib.Path(sys.argv[3]).resolve()
+run_path = output / "run.json"
+if not run_path.is_file():
+    raise SystemExit(f"completed output has no run.json: {run_path}")
+raw = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+run = json.loads(run_path.read_text(encoding="utf-8"))
+def resolve(value):
+    path = pathlib.Path(str(value))
+    return path if path.is_absolute() else (root / path).resolve()
+configured = resolve(raw["output_dir"])
+recorded = resolve(run.get("config", {}).get("output_dir"))
+if configured != output:
+    raise SystemExit(f"config output_dir resolves to {configured}, expected {output}")
+if recorded != output:
+    raise SystemExit(f"run.json output_dir resolves to {recorded}, expected {output}")'''
+
+
+def _validate_remote_run_identity(
+    args: argparse.Namespace, config: str, output: str
+) -> None:
+    command = (
+        f"cd {_q(args.remote_root)} && python3 -c {_q(_remote_run_identity_code())} "
+        f". {_q(config)} {_q(output)}"
+    )
+    _ssh(args, command)
+
+
 def _read_status(args: argparse.Namespace, output: str) -> Status:
     target_override = "" if args.until_unique_tokens is None else str(args.until_unique_tokens)
     command = (
@@ -189,7 +232,6 @@ def _launch(args: argparse.Namespace, config: str, output: str) -> int:
     command = (
         f"set -eu; export PATH=/root/.local/bin:$PATH; cd {_q(args.remote_root)}; "
         f"test -f {_q(config)}; "
-        f"python3 -c {_q(_config_output_code())} . {_q(config)} {_q(output)}; "
         f"mkdir -p {_q(output)}; "
         f"if test -f {_q(posixpath.join(output, 'train.pid'))}; then "
         f"  old_pid=$(cat {_q(posixpath.join(output, 'train.pid'))} || true); "
@@ -246,6 +288,8 @@ def _transfer(args: argparse.Namespace, remote_output: str) -> None:
 
 
 def _included(relative: str, transfer: str) -> bool:
+    if relative == TRANSFER_MANIFEST:
+        return False
     if relative == ".rsync-partial" or relative.startswith(".rsync-partial/"):
         return False
     if transfer == "metadata":
@@ -312,6 +356,8 @@ def _verify_transfer(args: argparse.Namespace, remote_output: str) -> None:
             "transferred artifact checksum manifest does not match the VM; "
             "cleanup was skipped"
         )
+    marker = args.local_output / TRANSFER_MANIFEST
+    marker.write_text(local, encoding="utf-8")
     print(f"PASS: SHA-256 manifest verified ({len(local.splitlines()) if local else 0} files)")
 
 
@@ -457,6 +503,7 @@ def main() -> int:
                 ]
             )
         _wait_for_ssh(args)
+        _validate_remote_config(args, config, remote_output)
         prior = _read_status(args, remote_output)
         if prior.state == "running":
             raise ControllerError(
@@ -504,6 +551,7 @@ def main() -> int:
                 )
             time.sleep(args.poll_seconds)
 
+        _validate_remote_run_identity(args, config, remote_output)
         print("INFO: training completed; transferring artifacts")
         _transfer(args, remote_output)
         _verify_transfer(args, remote_output)
