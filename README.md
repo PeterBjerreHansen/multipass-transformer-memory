@@ -1,6 +1,6 @@
 # Attention vs. Recurrence in Multi-Pass Transformers
 
-**tl;dr:** Recent work such as the [full bandwidth transformer](https://arxiv.org/abs/2608.08888) and [recirculation](https://arxiv.org/abs/2608.17981) suggests that recurrently feeding intermediate representations back through a transformer gives you performance gains almost for free. I found that replacing the recurrent mechanisms with attention over a bank of previous-pass states performs better, including when that attention is sparse (and thus not always attending to recent hidden states).
+**tl;dr:** Recent work such as the [full bandwidth transformer](https://arxiv.org/abs/2608.08888) and [recirculation](https://arxiv.org/abs/2608.17981) suggests that recurrently feeding intermediate representations back through a transformer gives you performance gains almost for free. I found that replacing the recurrent mechanisms with attention over a bank of previous-pass states performs better, also when that attention is sparse (and thus not always attending to recent hidden states).
 
 The idea behind [multi-pass training](https://github.com/PeterBjerreHansen/multi-pass-transformer-training) goes something like this: Pass 1 is an ordinary transformer pass. Pass 2 runs the same transformer again, but can use additional hidden states produced on pass 1. The question is if that information should arrive through a recurrent connection or through attention over a bank of previous-pass states. To test this I first retrofitted [a TinyMistral model](https://huggingface.co/M4-ai/TinyMistral-248M-v3) into doing feedback inference by training it with multi-pass Jacobi-style updates. The new parameters were first wired into the frozen backbone for 5 million tokens, then the whole models were trained on 100M tokens from the [OLMo2 annealing mixture](https://huggingface.co/datasets/allenai/dolmino-mix-1124).
 
@@ -37,7 +37,7 @@ The Bank models instead expose previous-pass memory states as a separately addre
 > **Memory Bank:**<br>
 >    $`h_t^{(k)} = h_t^{(k)} + \mathrm{CrossAttention}\left(Q=h_t^{(k)},\ KV=M^{(k-1)};\ \mathrm{mask}=A_t\right)`$
 
-Here $M^{(k-1)}$ denotes the previous-pass memory states and $A_t$ determines which of those states token $t$ is allowed to access. The core distinction from recurrence is therefore not how the memory is physically stored, but that the feedback source is **content-addressed rather than structurally predetermined**.
+Here $M^{(k-1)}$ denotes the previous-pass memory states and $A_t$ determines which of those states token $t$ is allowed to access.
 
 ![Memory Access Through Cross-attention](/docs/memory_attn.png)
 
@@ -54,13 +54,7 @@ The Bank variants differ primarily in their **memory access pattern**:
 
 These access patterns admit several equivalent conceptual realizations. For example, a sparse Bank can be understood either as retaining only the memory states that will be addressable, or as retaining a denser tape and masking the inaccessible states during attention. The implementation uses selective memory writes and bounded retained KV records for efficiency, but that is not essential to the Bank abstraction itself.
 
-`memory_window: 32` therefore refers to the implementation's capacity of **32 retained addressable memory records**, not a 32-token receptive field. For a periodic Bank with stride 32, those 32 records can represent memories spread over roughly $32\times$ the sequence range of a dense Bank with the same retained capacity.
-
-The hybrid combines both routes: adaptive Recirculation provides a **fast**, local feedback channel, while the sparse Bank provides a **slow**, longer-range content-addressed memory. This is the motivation for viewing the two mechanisms as complementary rather than mutually exclusive.
-
-Multiscale Bank is the attention-only control for the recurrent/Bank hybrid. It gives each Bank reader access to both dense recent memories and sparse older memories in one softmax, but removes the recurrent channel.
-
-Sparse SWA is the vanilla Transformer control. At selected layers, it extends ordinary sliding-window self-attention with sparse attention to fixed past tokens. It is one-pass, reads current-pass token states rather than a previous-pass Bank, and adds no parameters.
+`memory_window: 32` therefore refers to the implementation's capacity of **32 retained addressable memory records**, not a 32-token receptive field. For a periodic Bank with stride 32, those 32 records can represent memories spread over roughly $32\times$ the sequence range of a dense Bank with the same retained capacity. The hybrid combines both routes: adaptive Recirculation provides a **fast**, local feedback channel, while the sparse Bank provides a **slow**, longer-range content-addressed memory. This is the motivation for viewing the two mechanisms as complementary rather than mutually exclusive. Multiscale Bank is the attention-only control for the recurrent/Bank hybrid. It gives each Bank reader access to both dense recent memories and sparse older memories in one softmax, but removes the recurrent channel. Sparse SWA is the vanilla Transformer control. At selected layers, it extends ordinary sliding-window self-attention with sparse attention to fixed past tokens. It is one-pass, reads current-pass token states rather than a previous-pass Bank, and adds no parameters.
 
 The current implementation configures these access patterns through the memory-write policy:
 
