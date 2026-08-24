@@ -1,3 +1,5 @@
+"""Experiment configuration and public Memory Attention variant aliases."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -9,6 +11,23 @@ import yaml
 
 from .nmp import NMP_TARGET_NORMALIZATIONS
 
+# The implementation still uses historical ``bank`` names internally so
+# existing checkpoints, configs, and result paths remain loadable. New
+# experiments can use the clearer Memory Attention names below.
+
+MEMORY_ATTENTION_VARIANT_ALIASES = {
+    "memory_attention": "bank",
+    "memory_attention_multiscale": "bank_multiscale",
+    "memory_attention_add_hybrid": "bank_add_hybrid",
+    "memory_attention_recirculation_hybrid": "bank_recirculation_hybrid",
+}
+
+
+def canonical_variant_name(name: str) -> str:
+    """Return the historical implementation name for a public variant alias."""
+    return MEMORY_ATTENTION_VARIANT_ALIASES.get(name, name)
+
+
 SUPPORTED_VARIANTS = {
     "vanilla",
     "fbt",
@@ -18,7 +37,27 @@ SUPPORTED_VARIANTS = {
     "bank_multiscale",
     "bank_add_hybrid",
     "bank_recirculation_hybrid",
+    *MEMORY_ATTENTION_VARIANT_ALIASES,
     "sparse_swa",
+}
+
+MEMORY_ATTENTION_VARIANTS = {
+    "bank",
+    "memory_attention",
+    "bank_add_hybrid",
+    "memory_attention_add_hybrid",
+    "bank_recirculation_hybrid",
+    "memory_attention_recirculation_hybrid",
+    "bank_multiscale",
+    "memory_attention_multiscale",
+}
+MEMORY_ATTENTION_WRITE_VARIANTS = MEMORY_ATTENTION_VARIANTS - {
+    "bank_multiscale",
+    "memory_attention_multiscale",
+}
+MULTISCALE_MEMORY_ATTENTION_VARIANTS = {
+    "bank_multiscale",
+    "memory_attention_multiscale",
 }
 SUPPORTED_LR_SCHEDULES = {"constant", "cosine", "piecewise_linear"}
 SUPPORTED_AUTOCAST_DTYPES = {"bfloat16"}
@@ -67,6 +106,80 @@ def _coerce_pass_loss_weights_by_k(
             raise ValueError(f"{field_name}[{passes}] must contain positive mass")
         result[passes] = weights
     return dict(sorted(result.items()))
+
+
+def _coerce_early_stop(raw: Any) -> dict[str, Any] | None:
+    """Canonicalize validation gates that stop a run when all gates pass."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("early_stop must be a mapping")
+    unknown = sorted(
+        set(raw)
+        - {
+            "pass_nll_max",
+            "pass_nll_delta_max",
+            "hidden_delta_nonincreasing",
+        }
+    )
+    if unknown:
+        raise ValueError(f"unknown early_stop fields: {unknown}")
+
+    pass_nll_max_raw = raw.get("pass_nll_max", {})
+    if not isinstance(pass_nll_max_raw, dict):
+        raise ValueError("early_stop.pass_nll_max must be a mapping")
+    pass_nll_max: dict[int, float] = {}
+    for key, value in pass_nll_max_raw.items():
+        try:
+            pass_index = int(key)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid early-stop pass index {key!r}") from exc
+        threshold = float(value)
+        if pass_index < 1:
+            raise ValueError("early-stop pass indices must be positive")
+        if not math.isfinite(threshold) or threshold < 0:
+            raise ValueError("early-stop pass NLL limits must be finite and non-negative")
+        pass_nll_max[pass_index] = threshold
+
+    pass_nll_delta_raw = raw.get("pass_nll_delta_max", [])
+    if not isinstance(pass_nll_delta_raw, list):
+        raise ValueError("early_stop.pass_nll_delta_max must be a list")
+    pass_nll_delta_max: list[dict[str, float | int]] = []
+    for gate in pass_nll_delta_raw:
+        if not isinstance(gate, dict):
+            raise ValueError("each pass_nll_delta_max gate must be a mapping")
+        gate_unknown = sorted(set(gate) - {"pass", "reference_pass", "max_delta"})
+        if gate_unknown:
+            raise ValueError(f"unknown pass_nll_delta_max fields: {gate_unknown}")
+        if set(gate) != {"pass", "reference_pass", "max_delta"}:
+            raise ValueError(
+                "pass_nll_delta_max gates require pass, reference_pass, and max_delta"
+            )
+        pass_index = int(gate["pass"])
+        reference_pass = int(gate["reference_pass"])
+        max_delta = float(gate["max_delta"])
+        if pass_index < 1 or reference_pass < 1:
+            raise ValueError("early-stop pass indices must be positive")
+        if not math.isfinite(max_delta):
+            raise ValueError("early-stop pass NLL deltas must be finite")
+        pass_nll_delta_max.append(
+            {
+                "pass": pass_index,
+                "reference_pass": reference_pass,
+                "max_delta": max_delta,
+            }
+        )
+
+    hidden_delta_nonincreasing = raw.get("hidden_delta_nonincreasing", False)
+    if not isinstance(hidden_delta_nonincreasing, bool):
+        raise ValueError("early_stop.hidden_delta_nonincreasing must be boolean")
+    if not pass_nll_max and not pass_nll_delta_max and not hidden_delta_nonincreasing:
+        raise ValueError("early_stop must enable at least one validation gate")
+    return {
+        "pass_nll_max": dict(sorted(pass_nll_max.items())),
+        "pass_nll_delta_max": pass_nll_delta_max,
+        "hidden_delta_nonincreasing": hidden_delta_nonincreasing,
+    }
 
 
 def _coerce_layer_indices(raw: Any, *, field_name: str) -> str | list[int]:
@@ -192,13 +305,15 @@ class ExperimentConfig:
     eval_every_tokens: int = 32_768
     eval_batches: int = 16
     eval_passes: int = 1
+    early_stop: dict[str, Any] | None = None
     checkpoint_every_tokens: int = 65_536
     checkpoint_every_seconds: float = 0.0
     checkpoint_keep_last: int = 2
     snapshot_at_tokens: list[int] | None = None
 
     # Architecture/training protocol knobs. NTP names are explicit because
-    # recurrent and Bank NMP have independent pass-loss weightings below.
+    # recurrent and Memory Attention NMP have independent pass-loss weightings
+    # below. Historical bank field names remain serialized for compatibility.
     phase: str = "B"
     pass_schedule: list[dict[str, Any]] | None = None
     ntp_pass_loss_weights: list[float] | None = None
@@ -208,14 +323,15 @@ class ExperimentConfig:
     pass_loss_weights: list[float] | None = None
     pass_loss_weights_by_k: dict[int, list[float]] | None = None
     memory_window: int = 32
-    # Bank architecture axes. Experiment configs declare them explicitly; the
-    # model constructors retain small ergonomic defaults for unit tests.
+    # Memory Attention architecture axes. Experiment configs declare them
+    # explicitly; historical bank field names remain serialized, and the model
+    # constructors retain small ergonomic defaults for unit tests.
     memory_write_mode: str | None = None
     memory_write_stride: int | None = None
     memory_token_visibility: str | None = None
     memory_layers: str | list[int] | None = None
     memory_position_encoding: str | None = None
-    # Multiscale Bank retains a dense recent region plus fixed-periodic old
+    # Multiscale Memory Attention retains a dense recent region plus fixed-periodic old
     # records from the same dense previous-pass source stream.
     memory_dense_window: int | None = None
     memory_sparse_window: int | None = None
@@ -225,6 +341,8 @@ class ExperimentConfig:
     sparse_attention_window: int | None = None
     sparse_attention_layers: str | list[int] | None = None
     prefix_mixin_probability: float = 0.0
+    fbt_normalize_gate_input: bool = False
+    fbt_latent_jitter_std: float = 0.0
     recirculation_source_layer: int | None = None
     recirculation_destination_layer: int | None = None
     recirculation_alpha: float = 0.1
@@ -236,7 +354,8 @@ class ExperimentConfig:
     bank_nmp_weight: float = 0.0
     # Recirculation sources are high-amplitude residual-stream states, so the
     # default target is parameter-free RMS-normalized. ``none`` remains useful
-    # as a raw-state ablation. Bank targets are always the post-writer memory
+    # as a raw-state ablation. Memory Attention targets are always the
+    # post-writer memory
     # representation and are intentionally not normalized here.
     recurrent_nmp_target_normalization: str = "rms"
     recurrent_nmp_pass_loss_weights_by_k: dict[int, list[float]] | None = None
@@ -281,12 +400,8 @@ class ExperimentConfig:
             self.pass_loss_weights_by_k = self.ntp_pass_loss_weights_by_k
         if self.snapshot_at_tokens is not None:
             self.snapshot_at_tokens = sorted({int(value) for value in self.snapshot_at_tokens})
-        if self.variant in {
-            "bank",
-            "bank_multiscale",
-            "bank_add_hybrid",
-            "bank_recirculation_hybrid",
-        }:
+        self.early_stop = _coerce_early_stop(self.early_stop)
+        if self.variant in MEMORY_ATTENTION_VARIANTS:
             self.memory_layers = _coerce_layer_indices(
                 "all" if self.memory_layers is None else self.memory_layers,
                 field_name="memory_layers",
@@ -294,7 +409,7 @@ class ExperimentConfig:
             if self.memory_position_encoding is None:
                 self.memory_position_encoding = "rope"
             if (
-                self.variant == "bank_multiscale"
+                self.variant in MULTISCALE_MEMORY_ATTENTION_VARIANTS
                 and self.memory_dense_window is not None
                 and self.memory_sparse_window is not None
                 and self.memory_dense_window >= 0
@@ -416,6 +531,25 @@ class ExperimentConfig:
             raise ValueError("evaluation cadence/count must be non-negative")
         if self.eval_passes < 1:
             raise ValueError("eval_passes must be positive")
+        self.early_stop = _coerce_early_stop(self.early_stop)
+        if self.early_stop is not None:
+            if self.eval_every_tokens <= 0:
+                raise ValueError("early_stop requires a positive eval_every_tokens cadence")
+            if self.eval_passes < 2:
+                raise ValueError("early_stop requires multipass validation with eval_passes>=2")
+            referenced_passes = set(self.early_stop["pass_nll_max"])
+            for gate in self.early_stop["pass_nll_delta_max"]:
+                referenced_passes.add(int(gate["pass"]))
+                referenced_passes.add(int(gate["reference_pass"]))
+            if referenced_passes and max(referenced_passes) > self.eval_passes:
+                raise ValueError("early_stop references a pass beyond eval_passes")
+            if (
+                self.early_stop["hidden_delta_nonincreasing"]
+                and self.eval_passes < 3
+            ):
+                raise ValueError(
+                    "hidden_delta_nonincreasing requires eval_passes>=3"
+                )
         if self.checkpoint_every_tokens < 0:
             raise ValueError("checkpoint_every_tokens must be non-negative")
         if not math.isfinite(float(self.checkpoint_every_seconds)) or self.checkpoint_every_seconds < 0:
@@ -464,19 +598,20 @@ class ExperimentConfig:
             "recirculation",
             "bank_add_hybrid",
             "bank_recirculation_hybrid",
+            "memory_attention_add_hybrid",
+            "memory_attention_recirculation_hybrid",
         }
-        bank_nmp_variants = {
-            "bank",
-            "bank_multiscale",
-            "bank_add_hybrid",
-            "bank_recirculation_hybrid",
-        }
+        bank_nmp_variants = MEMORY_ATTENTION_VARIANTS
         if self.recurrent_nmp_weight > 0 and self.variant not in recurrent_nmp_variants:
             raise ValueError(f"variant={self.variant} does not support recurrent NMP")
         if self.bank_nmp_weight > 0 and self.variant not in bank_nmp_variants:
             raise ValueError(f"variant={self.variant} does not support bank NMP")
 
-        recirculation_variants = {"recirculation", "bank_recirculation_hybrid"}
+        recirculation_variants = {
+            "recirculation",
+            "bank_recirculation_hybrid",
+            "memory_attention_recirculation_hybrid",
+        }
         if self.variant in recirculation_variants:
             if self.recirculation_mode not in {"fixed", "adaptive"}:
                 raise ValueError("recirculation_mode must be 'fixed' or 'adaptive'")
@@ -517,7 +652,7 @@ class ExperimentConfig:
                 "recirculation_* fields apply only to recirculation variants"
             )
 
-        bank_variants = {"bank", "bank_add_hybrid", "bank_recirculation_hybrid"}
+        bank_variants = MEMORY_ATTENTION_WRITE_VARIANTS
         if self.variant in bank_variants:
             if self.memory_write_mode not in {"dense", "periodic", "memory_token"}:
                 raise ValueError(
@@ -558,7 +693,7 @@ class ExperimentConfig:
                 )
             ):
                 raise ValueError("multiscale memory fields require variant=bank_multiscale")
-        elif self.variant == "bank_multiscale":
+        elif self.variant in MULTISCALE_MEMORY_ATTENTION_VARIANTS:
             if (
                 self.memory_write_mode is not None
                 or self.memory_write_stride is not None
@@ -622,6 +757,17 @@ class ExperimentConfig:
             raise ValueError(
                 "prefix_mixin_probability is currently supported only for variant=fbt"
             )
+        if not isinstance(self.fbt_normalize_gate_input, bool):
+            raise ValueError("fbt_normalize_gate_input must be boolean")
+        if (
+            not math.isfinite(float(self.fbt_latent_jitter_std))
+            or self.fbt_latent_jitter_std < 0.0
+        ):
+            raise ValueError("fbt_latent_jitter_std must be finite and non-negative")
+        if self.variant != "fbt" and (
+            self.fbt_normalize_gate_input or self.fbt_latent_jitter_std != 0.0
+        ):
+            raise ValueError("fbt_* fields are supported only for variant=fbt")
         schedule = self.normalized_pass_schedule()
         pass_counts = {passes for stage in schedule for passes in stage["probabilities"]}
         single_pass_variants = {"vanilla", "sparse_swa"}

@@ -39,6 +39,12 @@ benchmarks/**/results/*
 
 # Historical benchmark artifacts are local review material, not branch source.
 benchmarks/historical/
-benchmarks/ad_hoc/
+benchmarks/ad_hoc/*
+!benchmarks/ad_hoc/fbt/
+!benchmarks/ad_hoc/fbt/**
+benchmarks/ad_hoc/fbt/results/*
+!benchmarks/ad_hoc/fbt/results/README.md
+benchmarks/ad_hoc/fbt/**/__pycache__/
+benchmarks/ad_hoc/fbt/**/*.py[cod]
 
 .coverage

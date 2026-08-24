@@ -18,5 +18,5 @@ single collapsed recurrent cache. Use `--prefill-passes K` to change K, or
 `--inference-mode forward` to measure the ordinary public one-pass path.
 
 The current harness path covers ordinary-token variants. Explicit memory-token
-Bank evaluation still requires a physical `<MEM>` insertion schedule; the
+Memory Attention evaluation still requires a physical `<MEM>` insertion schedule; the
 ordinary text-task adapter does not silently insert control positions.

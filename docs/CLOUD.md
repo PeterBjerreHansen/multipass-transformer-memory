@@ -20,7 +20,7 @@ make select-cuda-batch \
   RESULT=benchmarks/efficiency/results/cuda_batch_qualification.json
 ```
 
-The qualification compares K=2 adaptive Recirculation and dense Bank with BF16
+The qualification compares K=2 adaptive Recirculation and dense Memory Attention with BF16
 autocast and accumulation 1 over microbatches 1/2/4/8. OOM cases are retained.
 The selector chooses the smallest common successful batch reaching the
 configured efficiency threshold for both architectures. If this is larger than
@@ -55,7 +55,7 @@ The preflight checks:
 - output directory containment beneath the persistent root;
 - free disk space for durable checkpoint rotation;
 - linguistic versus physical batching quantities for memory-token runs;
-- the exact Bank or Sparse SWA attention configuration.
+- the exact Memory Attention or Sparse SWA attention configuration.
 
 ## Spot-safe checkpoint policy
 
@@ -191,5 +191,5 @@ instance but retains remote artifacts for recovery; it does not delete a
 failed run's data.
 
 The campaign wrapper has a fixed list of the non-vanilla Stage-5 arms, including
-Multiscale Bank and Sparse SWA. Use `--arm` to run only the selected controls;
+Multiscale Memory Attention and Sparse SWA. Use `--arm` to run only the selected controls;
 locally complete arms are skipped, so the same command is safe to resume.

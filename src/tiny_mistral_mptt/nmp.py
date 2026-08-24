@@ -89,7 +89,7 @@ class LatentPredictionHead(nn.Module):
 def next_strict_true_indices(mask: torch.Tensor) -> torch.Tensor:
     """Index of the first true position strictly to the right, or ``T``.
 
-    This device-side suffix scan is shared by recurrent and bank NMP.  The
+    This device-side suffix scan is shared by recurrent and Memory Attention NMP. The
     one-position shift is essential: a write at query position ``t`` can never
     become that query's target.
     """
@@ -184,7 +184,7 @@ class RecurrentNMPAlignment:
 
 @dataclass(frozen=True)
 class BankNMPAlignment:
-    """Shared Bank NMP event alignment for every computed pass."""
+    """Shared Memory Attention NMP event alignment for every computed pass."""
 
     targets: torch.Tensor
     valid: torch.Tensor
@@ -373,3 +373,10 @@ def bank_nmp_pass_loss(
             }
         )
     return loss, alignment.target_rms, alignment.target_feature_std, distance_losses
+
+
+# Public terminology aliases. The bank-prefixed names remain the serialized
+# and checkpoint-compatible implementation API.
+MemoryAttentionNMPAlignment = BankNMPAlignment
+prepare_memory_attention_nmp_alignment = prepare_bank_nmp_alignment
+memory_attention_nmp_pass_loss = bank_nmp_pass_loss

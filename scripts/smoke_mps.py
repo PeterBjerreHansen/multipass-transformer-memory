@@ -101,7 +101,7 @@ def main() -> None:
         loss_weights=[0.0, 1.0],
     )
     if not bool(torch.isfinite(bank_output.loss).item()):
-        raise RuntimeError("non-finite Multiscale Bank loss")
+        raise RuntimeError("non-finite Multiscale Memory Attention loss")
     bank_output.loss.backward()
     if not any(
         parameter.grad is not None
@@ -109,10 +109,10 @@ def main() -> None:
         for parameter in bank.added_parameters()
         if parameter.requires_grad
     ):
-        raise RuntimeError("Multiscale Bank produced no added-parameter gradients")
+        raise RuntimeError("Multiscale Memory Attention produced no added-parameter gradients")
     synchronize(device)
-    print(f"multiscale_bank_loss={bank_output.loss.item():.6f}")
-    print("PASS: MPS local, Sparse SWA, and Multiscale Bank smoke tests")
+    print(f"multiscale_memory_attention_loss={bank_output.loss.item():.6f}")
+    print("PASS: MPS local, Sparse SWA, and Multiscale Memory Attention smoke tests")
 
 
 if __name__ == "__main__":

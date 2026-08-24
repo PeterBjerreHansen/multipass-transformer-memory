@@ -9,7 +9,7 @@ remain green.
 The vendored backbone targets `M4-ai/TinyMistral-248M-v3`. Provenance is in
 `UPSTREAMS.md`; `VANILLA_SOURCE.sha256` guards the vendored source.
 
-Bank work adds one documented substrate capability: an optional boolean
+Memory Attention work adds one documented substrate capability: an optional boolean
 self-attention K/V-validity mask. Ordinary runs use all-valid keys and must retain
 vanilla numerical behavior. Reference, local O(TW), and FlexAttention masks are
 tested for parity, including an all-masked query row returning exact zero rather
@@ -19,7 +19,7 @@ The sparse-SWA control adds an opt-in multiresolution mask to selected layers.
 The ordinary all-local path remains unchanged. Compact local attention,
 reference masking, and cached explicit-position retention must agree.
 
-## Multipass/bank gates
+## Multipass/Memory Attention gates
 
 The suite must enforce:
 
@@ -29,18 +29,18 @@ The suite must enforce:
 - adaptive recirculation starts at the configured fixed mixture;
 - adaptive recirculation Phase A freezes the TinyMistral backbone and trains
   only its coefficient controller;
-- dense bank and periodic C1 are identical with matching weights;
-- multiscale Bank reduces to Dense Bank when `S=0` and Periodic Bank when
+- dense Memory Attention and periodic C1 are identical with matching weights;
+- multiscale Memory Attention reduces to Dense Memory Attention when `S=0` and Periodic Memory Attention when
   `D=0`, and uses one softmax over a non-overlapping union otherwise;
-- zero-initialized Bank is an exact vanilla fixed point at all pass depths;
-- Bank reader allocation and projected caches match `memory_layers`;
+- zero-initialized Memory Attention is an exact vanilla fixed point at all pass depths;
+- Memory Attention reader allocation and projected caches match `memory_layers`;
 - memory RoPE retains original linguistic write/query positions through cached eviction;
 - periodic and MEM writes are strict-past;
-- bank window counts records and empty/invalid banks return finite exact-zero
+- memory window counts records and empty/invalid records return finite exact-zero
   attention contributions;
 - Phase A freezes pretrained parameters and trains only added parameters;
 - memory-token Phase A preserves pass-1 autograd for the added MEM embedding,
-  which receives bank-mediated gradients after zero-output reader activation;
+  which receives Memory Attention-mediated gradients after zero-output reader activation;
 - pass weights and pass-count scheduling are deterministic and checkpointable.
 
 ## Explicit MEM loss/attention gates
@@ -52,7 +52,7 @@ For `A <MEM> B`:
 - direct LM gradient at MEM's logits is exactly zero;
 - perturbing ignored MEM-position logits cannot change the language loss;
 - after reader output activation, the MEM embedding receives nonzero Phase-A
-  gradient through recurrent/bank pathways;
+  gradient through recurrent/Memory Attention pathways;
 - `visible` permits a local MEM-to-future self-attention dependency;
 - `write_only` permits MEM to read preceding context but prevents MEM from being
   used as self-attention K/V;
@@ -64,7 +64,7 @@ For `A <MEM> B`:
 - snapshot-before-update prevents same-position feedback leakage;
 - recurrent prefill starts from the exact K-pass boundary;
 - the first recurrent continuation transition equals exact K-pass;
-- bank state remains chronological and bounded;
+- Memory Attention state remains chronological and bounded;
 - write-only cache validity persists across decode;
 - K=1 remains the vanilla cached boundary;
 - sparse SWA adds no parameters, changes only selected self-attention masks,

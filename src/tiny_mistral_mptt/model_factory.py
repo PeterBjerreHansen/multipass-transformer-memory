@@ -8,6 +8,7 @@ import torch
 from tiny_mistral.loading import load_model
 from tiny_mistral.modeling import MistralForCausalLM
 
+from .config import canonical_variant_name
 from .variants import (
     ExperimentalVariant,
     FBTVariant,
@@ -43,6 +44,8 @@ def build_variant(
     sparse_attention_window: int | None = None,
     sparse_attention_layers: str | list[int] = "all",
     prefix_mixin_probability: float = 0.0,
+    fbt_normalize_gate_input: bool = False,
+    fbt_latent_jitter_std: float = 0.0,
     recirculation_source_layer: int | None = None,
     recirculation_destination_layer: int | None = None,
     recirculation_alpha: float = 0.1,
@@ -52,6 +55,8 @@ def build_variant(
     recurrent_nmp_target_normalization: str = "rms",
     nmp_projection_factor: float = 1.3,
 ) -> ExperimentalVariant:
+    requested_name = str(name)
+    name = canonical_variant_name(requested_name)
     if name == "vanilla":
         variant: ExperimentalVariant = VanillaVariant(backbone)
     elif name == "sparse_swa":
@@ -71,6 +76,8 @@ def build_variant(
             backbone,
             initialization_seed=architecture_seed,
             prefix_mixin_probability=prefix_mixin_probability,
+            normalize_gate_input=fbt_normalize_gate_input,
+            latent_jitter_std=fbt_latent_jitter_std,
         )
     elif name == "memory_add":
         variant = MemoryAddVariant(backbone)
@@ -95,7 +102,7 @@ def build_variant(
             or memory_token_visibility is not None
         ):
             raise ValueError(
-                "bank_multiscale uses dense source states and does not accept "
+                "multiscale Memory Attention uses dense source states and does not accept "
                 "memory_write_* controls"
             )
         variant = MultiscaleBankVariant(
@@ -109,26 +116,26 @@ def build_variant(
         )
     elif name in {"bank", "bank_add_hybrid", "bank_recirculation_hybrid"}:
         if memory_write_mode not in {"dense", "periodic", "memory_token"}:
-            raise ValueError("bank variants require memory_write_mode: dense|periodic|memory_token")
+            raise ValueError("Memory Attention variants require memory_write_mode: dense|periodic|memory_token")
         if memory_write_mode == "dense":
             if memory_write_stride is not None:
-                raise ValueError("dense bank must not set memory_write_stride")
+                raise ValueError("dense Memory Attention must not set memory_write_stride")
             if memory_token_visibility is not None:
-                raise ValueError("dense bank must not set memory_token_visibility")
+                raise ValueError("dense Memory Attention must not set memory_token_visibility")
             stride = 1
             visibility = "visible"
         elif memory_write_mode == "periodic":
             if memory_write_stride is None or int(memory_write_stride) <= 0:
-                raise ValueError("periodic bank requires positive memory_write_stride")
+                raise ValueError("periodic Memory Attention requires positive memory_write_stride")
             if memory_token_visibility is not None:
                 raise ValueError("memory_token_visibility applies only to memory_token mode")
             stride = int(memory_write_stride)
             visibility = "visible"
         else:
             if memory_write_stride is None or int(memory_write_stride) <= 0:
-                raise ValueError("memory_token bank requires positive memory_write_stride")
+                raise ValueError("memory-token Memory Attention requires positive memory_write_stride")
             if memory_token_visibility not in {"visible", "write_only"}:
-                raise ValueError("memory_token bank requires memory_token_visibility: visible|write_only")
+                raise ValueError("memory-token Memory Attention requires memory_token_visibility: visible|write_only")
             stride = int(memory_write_stride)
             visibility = str(memory_token_visibility)
         kwargs = dict(
@@ -150,7 +157,7 @@ def build_variant(
                 or recirculation_destination_layer is None
             ):
                 raise ValueError(
-                    "bank_recirculation_hybrid requires recirculation_source_layer "
+                    "Memory Attention recirculation hybrid requires recirculation_source_layer "
                     "and recirculation_destination_layer"
                 )
             variant = BankRecirculationHybridVariant(
@@ -179,6 +186,10 @@ def build_variant(
 
     reference_parameter = next(backbone.parameters())
     variant.to(device=reference_parameter.device, dtype=reference_parameter.dtype)
+    # Keep the public alias visible for experiment metadata while preserving
+    # the historical implementation class and checkpoint state layout.
+    if requested_name != name:
+        variant.variant_name = requested_name
     return variant
 
 
@@ -204,6 +215,8 @@ def load_variant(
     sparse_attention_window: int | None = None,
     sparse_attention_layers: str | list[int] = "all",
     prefix_mixin_probability: float = 0.0,
+    fbt_normalize_gate_input: bool = False,
+    fbt_latent_jitter_std: float = 0.0,
     recirculation_source_layer: int | None = None,
     recirculation_destination_layer: int | None = None,
     recirculation_alpha: float = 0.1,
@@ -237,6 +250,8 @@ def load_variant(
         sparse_attention_window=sparse_attention_window,
         sparse_attention_layers=sparse_attention_layers,
         prefix_mixin_probability=prefix_mixin_probability,
+        fbt_normalize_gate_input=fbt_normalize_gate_input,
+        fbt_latent_jitter_std=fbt_latent_jitter_std,
         recirculation_source_layer=recirculation_source_layer,
         recirculation_destination_layer=recirculation_destination_layer,
         recirculation_alpha=recirculation_alpha,
@@ -285,6 +300,8 @@ def load_variant_from_config(
             else cfg.sparse_attention_layers
         ),
         prefix_mixin_probability=cfg.prefix_mixin_probability,
+        fbt_normalize_gate_input=cfg.fbt_normalize_gate_input,
+        fbt_latent_jitter_std=cfg.fbt_latent_jitter_std,
         recirculation_source_layer=cfg.recirculation_source_layer,
         recirculation_destination_layer=cfg.recirculation_destination_layer,
         recirculation_alpha=cfg.recirculation_alpha,

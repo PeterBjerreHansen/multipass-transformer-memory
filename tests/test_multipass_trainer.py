@@ -380,6 +380,70 @@ def test_mixed_pass_schedule_forwards_k_specific_weights(tmp_path, monkeypatch):
     assert all(weights == expected[passes] for passes, weights in observed)
 
 
+def test_validation_gates_checkpoint_and_stop_at_first_passing_evaluation(tmp_path):
+    data_dir = tmp_path / "data-early-stop"
+    make_artifact(data_dir)
+    train = PackedTokenDataset(data_dir, "train")
+    val = PackedTokenDataset(data_dir, "validation")
+    cfg = ExperimentConfig(
+        variant="fbt",
+        phase="B",
+        model_dir="unused",
+        data_dir=str(data_dir),
+        output_dir=str(tmp_path / "early-stop"),
+        device="cpu",
+        attention_backend="reference",
+        max_unique_tokens=32,
+        pass_schedule=[{"probabilities": {1: 1.0}}],
+        ntp_pass_loss_weights_by_k={1: [1.0]},
+        eval_every_tokens=8,
+        eval_batches=1,
+        eval_passes=4,
+        early_stop={"pass_nll_max": {1: 100.0, 4: 100.0}},
+        checkpoint_every_tokens=0,
+    )
+    trainer = Trainer(
+        model=make_fbt(),
+        config=cfg,
+        train_data=train,
+        validation_data=val,
+        device=torch.device("cpu"),
+    )
+
+    state = trainer.train()
+
+    assert state.unique_tokens_seen == 8
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "early-stop" / "metrics.jsonl").read_text().splitlines()
+    ]
+    validation = next(record for record in records if record["event"] == "validation")
+    assert validation["early_stop"]["all_passed"] is True
+    segments = [
+        json.loads(line)
+        for line in (tmp_path / "early-stop" / "segments.jsonl").read_text().splitlines()
+    ]
+    assert segments[-1]["reason"] == "validation_gates"
+    checkpoint = candidate_checkpoint_paths(tmp_path / "early-stop")[0]
+
+    resumed_cfg = ExperimentConfig.from_dict(
+        {**cfg.to_dict(), "resume_from": str(checkpoint)}
+    )
+    resumed_state = Trainer(
+        model=make_fbt(),
+        config=resumed_cfg,
+        train_data=train,
+        validation_data=val,
+        device=torch.device("cpu"),
+    ).train()
+    assert resumed_state.unique_tokens_seen == 8
+    resumed_records = [
+        json.loads(line)
+        for line in (tmp_path / "early-stop" / "metrics.jsonl").read_text().splitlines()
+    ]
+    assert sum(record["event"] == "train" for record in resumed_records) == 1
+
+
 def test_bank_phase_a_runs_through_shared_trainer(tmp_path):
     from tiny_mistral_mptt.variants.bank import BankVariant
 

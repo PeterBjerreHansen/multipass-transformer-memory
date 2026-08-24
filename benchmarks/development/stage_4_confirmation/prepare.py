@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Materialize Stage-4 configs after selecting fast and Bank pilot arms."""
+"""Materialize Stage-4 configs after selecting fast and Memory Attention pilot arms."""
 
 from __future__ import annotations
 
@@ -28,7 +28,9 @@ def main() -> None:
         choices=("recirculation_adaptive",),
     )
     parser.add_argument(
+        "--memory-attention",
         "--bank",
+        dest="bank",
         required=True,
         choices=("dense", "periodic32", "memory_token32"),
     )
@@ -87,7 +89,7 @@ def main() -> None:
         "name": "stage_4_confirmation",
         "status": "planned",
         "question": (
-            "Do the selected Bank and Hybrid replicate against the selected fast-memory "
+            "Do the selected Memory Attention and Hybrid replicate against the selected fast-memory "
             "baseline across two additional Phase-B seeds?"
         ),
         "arms": [
@@ -100,7 +102,7 @@ def main() -> None:
         yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
     )
     print(
-        f"PASS: prepared Stage 4 fast={args.fast} bank={args.bank} hybrid={args.hybrid} "
+        f"PASS: prepared Stage 4 fast={args.fast} memory_attention={args.bank} hybrid={args.hybrid} "
         f"arms={','.join(arm_id for arm_id, _ in generated)}"
     )
 

@@ -80,6 +80,57 @@ def _next_segment_id(path: Path) -> int:
     return maximum + 1
 
 
+def _validation_stop_status(record: dict, gates: dict) -> dict:
+    """Evaluate declarative pass-depth gates against one validation record."""
+    nll_by_pass = [float(value) for value in record.get("nll_by_pass", [])]
+    hidden_deltas = [float(value) for value in record.get("hidden_delta_rms", [])]
+
+    pass_nll_max: dict[str, dict[str, float | bool]] = {}
+    for pass_index, threshold in gates["pass_nll_max"].items():
+        actual = nll_by_pass[int(pass_index) - 1]
+        pass_nll_max[str(pass_index)] = {
+            "actual": actual,
+            "max": float(threshold),
+            "passed": actual <= float(threshold),
+        }
+
+    pass_nll_delta_max: list[dict[str, float | int | bool]] = []
+    for gate in gates["pass_nll_delta_max"]:
+        pass_index = int(gate["pass"])
+        reference_pass = int(gate["reference_pass"])
+        actual_delta = nll_by_pass[pass_index - 1] - nll_by_pass[reference_pass - 1]
+        pass_nll_delta_max.append(
+            {
+                "pass": pass_index,
+                "reference_pass": reference_pass,
+                "actual_delta": actual_delta,
+                "max_delta": float(gate["max_delta"]),
+                "passed": actual_delta <= float(gate["max_delta"]),
+            }
+        )
+
+    hidden_status = None
+    if gates["hidden_delta_nonincreasing"]:
+        hidden_status = {
+            "actual": hidden_deltas,
+            "passed": all(
+                later <= earlier
+                for earlier, later in zip(hidden_deltas, hidden_deltas[1:])
+            ),
+        }
+
+    outcomes = [item["passed"] for item in pass_nll_max.values()]
+    outcomes.extend(item["passed"] for item in pass_nll_delta_max)
+    if hidden_status is not None:
+        outcomes.append(hidden_status["passed"])
+    return {
+        "all_passed": bool(outcomes) and all(outcomes),
+        "pass_nll_max": pass_nll_max,
+        "pass_nll_delta_max": pass_nll_delta_max,
+        "hidden_delta_nonincreasing": hidden_status,
+    }
+
+
 class Trainer:
     def __init__(
         self,
@@ -307,6 +358,7 @@ class Trainer:
         )
         self._last_checkpoint_tokens = self.state.unique_tokens_seen
         self._last_checkpoint_time = time.monotonic()
+        self._early_stop_satisfied = self._validation_stop_satisfied_at_current_state()
 
     def _finish_resume(self, sampler_state: dict) -> None:
         self._repair_optimizer_group_metadata()
@@ -333,6 +385,33 @@ class Trainer:
                 ):
                     return True
         return False
+
+    def _validation_stop_satisfied_at_current_state(self) -> bool:
+        if self.config.early_stop is None or not self.metrics_path.exists():
+            return False
+        matching_record = None
+        with self.metrics_path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    record.get("event") == "validation"
+                    and int(record.get("optimizer_steps", -1)) == self.state.optimizer_steps
+                    and int(record.get("unique_tokens_seen", -1))
+                    == self.state.unique_tokens_seen
+                    and int(record.get("model_positions_seen", -1))
+                    == self.state.model_positions_seen
+                ):
+                    matching_record = record
+        if matching_record is None or "nll_by_pass" not in matching_record:
+            return False
+        return bool(
+            _validation_stop_status(matching_record, self.config.early_stop)[
+                "all_passed"
+            ]
+        )
 
     def _build_optimizer(self) -> torch.optim.Optimizer:
         added_ids = {id(parameter) for parameter in self.model.added_parameters()}
@@ -498,6 +577,10 @@ class Trainer:
                 "validation_blocks": result.blocks,
                 "eval_passes": result.passes,
             }
+        if self.config.early_stop is not None:
+            record["early_stop"] = _validation_stop_status(
+                record, self.config.early_stop
+            )
         append_jsonl(self.metrics_path, record)
         return record
 
@@ -569,13 +652,22 @@ class Trainer:
             raise ValueError(
                 "token budget must be divisible by batch_size * linguistic_tokens_per_block so the run ends exactly"
             )
+        if self._early_stop_satisfied:
+            self._end_segment("validation_gates")
+            return self.state
         next_eval = (
             ((self.state.unique_tokens_seen // cfg.eval_every_tokens) + 1) * cfg.eval_every_tokens
             if cfg.eval_every_tokens else None
         )
         if self._pending_validation_recovery:
-            self._evaluate()
+            validation = self._evaluate()
             self._pending_validation_recovery = False
+            self._early_stop_satisfied = bool(
+                validation.get("early_stop", {}).get("all_passed", False)
+            )
+            if self._early_stop_satisfied:
+                self._end_segment("validation_gates")
+                return self.state
 
         self.model.train()
         while self.state.unique_tokens_seen < target_tokens:
@@ -672,9 +764,15 @@ class Trainer:
                 self._checkpoint(pending_validation=bool(eval_due))
 
             if eval_due:
-                self._evaluate()
+                validation = self._evaluate()
                 while next_eval is not None and next_eval <= self.state.unique_tokens_seen:
                     next_eval += cfg.eval_every_tokens
+                self._early_stop_satisfied = bool(
+                    validation.get("early_stop", {}).get("all_passed", False)
+                )
+                if self._early_stop_satisfied:
+                    self._end_segment("validation_gates")
+                    return self.state
                 self.model.train()
 
             if self.stop_requested():
@@ -685,7 +783,12 @@ class Trainer:
 
         if self.state.unique_tokens_seen > self._last_checkpoint_tokens:
             self._checkpoint()
-        if cfg.eval_batches:
-            self._evaluate()
-        self._end_segment("completed")
+        final_validation = self._evaluate() if cfg.eval_batches else None
+        self._early_stop_satisfied = bool(
+            final_validation
+            and final_validation.get("early_stop", {}).get("all_passed", False)
+        )
+        self._end_segment(
+            "validation_gates" if self._early_stop_satisfied else "completed"
+        )
         return self.state

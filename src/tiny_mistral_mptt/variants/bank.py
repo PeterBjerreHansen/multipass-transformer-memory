@@ -30,7 +30,7 @@ MEMORY_POSITION_ENCODINGS = {"rope", "none"}
 
 
 class BankReader(nn.Module):
-    """Mistral-shaped GQA cross-attention into a strict-past local memory bank."""
+    """Memory-attention reader with the historical ``BankReader`` name."""
 
     def __init__(
         self,
@@ -218,11 +218,11 @@ class BankReader(nn.Module):
         query_position_ids: torch.Tensor | None = None,
         memory_position_ids: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Attend to a bank whose entries are already strictly in the past."""
+        """Attend to memory records whose entries are already strictly in the past."""
         if hidden_states.ndim != 3 or hidden_states.shape[1] != 1:
-            raise ValueError("cached Bank query must be [B,1,D]")
+            raise ValueError("cached Memory Attention query must be [B,1,D]")
         if memory_states.shape[1] > self.window:
-            raise ValueError("cached memory bank exceeds configured window")
+            raise ValueError("cached memory records exceed configured window")
         key, value = self.project_memory(
             memory_states, position_ids=memory_position_ids
         )
@@ -243,11 +243,11 @@ class BankReader(nn.Module):
         memory_mask: torch.Tensor | None = None,
         query_position_ids: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Read a bank whose K/V projections were computed when it was written."""
+        """Read memory records whose K/V projections were computed at write time."""
         if hidden_states.ndim != 3 or hidden_states.shape[-1] != self.hidden_size:
             raise ValueError("hidden_states must be [B,T,D] with the reader hidden size")
         if hidden_states.shape[1] != 1:
-            raise ValueError("cached Bank query must be [B,1,D]")
+            raise ValueError("cached Memory Attention query must be [B,1,D]")
         if projected_keys.ndim != 4 or projected_keys.shape != projected_values.shape:
             raise ValueError("projected K/V must have matching [B,Hkv,M,Dh] shapes")
         if projected_keys.shape[0] != hidden_states.shape[0]:
@@ -257,7 +257,7 @@ class BankReader(nn.Module):
         if projected_keys.shape[-1] != self.head_dim:
             raise ValueError("projected memory has an incompatible head dimension")
         if projected_keys.shape[2] > self.window:
-            raise ValueError("cached memory bank exceeds configured window")
+            raise ValueError("cached memory records exceed configured window")
         query = self.project_query(
             hidden_states, position_ids=query_position_ids
         )
@@ -350,7 +350,7 @@ class BankReader(nn.Module):
 
 @dataclass(frozen=True)
 class BankBatch:
-    """Compact full-sequence bank with original sequence coordinates."""
+    """Compact full-sequence memory records with original sequence coordinates."""
 
     memories: torch.Tensor  # [B,M,D], padded chronologically per example
     valid: torch.Tensor  # bool [B,M]
@@ -391,7 +391,7 @@ class BankCoreRun:
 
 
 class BankWriter(nn.Module):
-    """Minimal learned D->D storage transform, identity-initialized."""
+    """Minimal learned D->D memory-record transform, identity-initialized."""
 
     def __init__(self, hidden_size: int):
         super().__init__()
@@ -409,12 +409,14 @@ class BankWriter(nn.Module):
 
 
 class BankVariant(MultiPassVariant):
-    """Learned bank memory with dense, periodic, or explicit-memory-token writes.
+    """Memory Attention with dense, periodic, or explicit-memory-token writes.
 
     Dense mode writes every top state; periodic mode writes selected ordinary-token top states. Memory-token mode
     treats ID ``backbone.config.vocab_size`` as an input-only ``<MEM>`` control
     position with its own learned embedding; that ID is never an LM output
-    class. A MEM state predicts nothing and writes exactly one bank record.
+    class. A MEM state predicts nothing and writes exactly one memory record.
+
+    ``BankVariant`` is retained as the historical class name.
     """
 
     variant_name = "bank"

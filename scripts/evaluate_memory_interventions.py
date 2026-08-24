@@ -33,6 +33,10 @@ SUPPORTED = {
     "bank_multiscale",
     "bank_add_hybrid",
     "bank_recirculation_hybrid",
+    "memory_attention",
+    "memory_attention_multiscale",
+    "memory_attention_add_hybrid",
+    "memory_attention_recirculation_hybrid",
 }
 
 
@@ -107,7 +111,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Run real/zero/mismatched recurrence interventions. The hybrid also "
-            "reports fast and bank channel interventions independently."
+            "reports fast and Memory Attention channel interventions independently."
         )
     )
     parser.add_argument("--config", required=True)
@@ -118,7 +122,7 @@ def main() -> None:
     cfg = load_experiment_config(args.config)
     if cfg.variant not in SUPPORTED:
         raise SystemExit(
-            "evaluate_memory_interventions requires a MemoryAdd/Recirculation/Bank variant"
+            "evaluate_memory_interventions requires a MemoryAdd/Recirculation/Memory Attention variant"
         )
     device = resolve_device(cfg.device)
     model = load_variant_from_config(cfg, device=device)

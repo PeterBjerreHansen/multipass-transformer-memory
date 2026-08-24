@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import math
 
 import torch
 from torch import nn
@@ -28,11 +29,17 @@ class FBTVariant(MultiPassVariant):
         *,
         initialization_seed: int = 4242,
         prefix_mixin_probability: float = 0.0,
+        normalize_gate_input: bool = False,
+        latent_jitter_std: float = 0.0,
     ):
         super().__init__(backbone)
         if not 0.0 <= float(prefix_mixin_probability) <= 1.0:
             raise ValueError("prefix_mixin_probability must be in [0, 1]")
+        if not math.isfinite(float(latent_jitter_std)) or float(latent_jitter_std) < 0.0:
+            raise ValueError("latent_jitter_std must be finite and non-negative")
         self.prefix_mixin_probability = float(prefix_mixin_probability)
+        self.normalize_gate_input = bool(normalize_gate_input)
+        self.latent_jitter_std = float(latent_jitter_std)
         hidden_size = int(backbone.config.hidden_size)
         with torch.random.fork_rng(devices=[]):
             torch.manual_seed(int(initialization_seed))
@@ -60,9 +67,19 @@ class FBTVariant(MultiPassVariant):
             raise ValueError(
                 "token_embeddings and previous_hidden must have identical [B,T,D] shape"
             )
-        shifted = shift_previous_hidden(previous_hidden)
+        carried_hidden = previous_hidden
+        if self.training and self.latent_jitter_std > 0.0:
+            carried_hidden = carried_hidden + torch.empty_like(carried_hidden).uniform_(
+                -self.latent_jitter_std, self.latent_jitter_std
+            )
+        shifted = shift_previous_hidden(carried_hidden)
+        gate_input = (
+            self.feedback_input_norm(token_embeddings)
+            if self.normalize_gate_input
+            else token_embeddings
+        )
         fused = self.feedback_value(shifted) * torch.sigmoid(
-            self.feedback_gate(token_embeddings)
+            self.feedback_gate(gate_input)
         )
         fused = self.feedback_input_norm(fused)
         if fused.shape[1] == 1:
@@ -145,8 +162,13 @@ class FBTVariant(MultiPassVariant):
             raise ValueError("token_embedding must be [B,1,D]")
         if feedback_memory.shape != token_embedding.shape:
             raise ValueError("FBT cached feedback memory must be [B,1,D]")
+        gate_input = (
+            self.feedback_input_norm(token_embedding)
+            if self.normalize_gate_input
+            else token_embedding
+        )
         feedback = self.feedback_value(feedback_memory) * torch.sigmoid(
-            self.feedback_gate(token_embedding)
+            self.feedback_gate(gate_input)
         )
         feedback = self.feedback_input_norm(feedback)
         output = self.backbone.model(

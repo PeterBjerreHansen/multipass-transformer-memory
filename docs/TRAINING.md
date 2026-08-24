@@ -92,7 +92,7 @@ This keeps data dose comparable while making the extra MEM computation visible.
 ## Memory-token loss
 
 MEM uses input ID V, where V is the base vocabulary size, but the LM head remains
-V classes. The bank model constructs position-aligned labels over linguistic
+V classes. The Memory Attention model constructs position-aligned labels over linguistic
 tokens. For:
 
 ```text
@@ -100,14 +100,15 @@ physical: A  <MEM>  B  C
 labels:   B  IGNORE C  IGNORE
 ```
 
-A predicts B; MEM predicts nothing. See `BANK_MEMORY.md` for the full contract.
+A predicts B; MEM predicts nothing. See `MEMORY_ATTENTION.md` for the public
+vocabulary and `BANK_MEMORY.md` for the full compatibility contract.
 
 ## Phase A and MEM
 
-Dense and periodic Bank Phase A can discard the frozen pass-1 graph because no
+Dense and periodic Memory Attention Phase A can discard the frozen pass-1 graph because no
 added parameter occurs in pass 1. Memory-token Phase A cannot: the added MEM
 embedding participates in pass 1 and must receive gradient through later
-recurrent/bank loss. The backbone remains frozen, but pass-1 autograd stays
+recurrent/Memory Attention loss. The backbone remains frozen, but pass-1 autograd stays
 enabled for that mode.
 
 ## Checkpoint cadence and validation

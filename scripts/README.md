@@ -27,10 +27,10 @@ cloud_preflight.py
 ```
 
 The efficiency runner performs real optimizer steps and reports linguistic-token
-and physical-position throughput when they differ. Bank cases must state their
+and physical-position throughput when they differ. Memory Attention cases must state their
 write policy explicitly. `select_cuda_batch.py` consumes the dedicated CUDA K=2
 qualification and chooses the smallest common efficient adaptive-Recirculation/
-dense-Bank microbatch rather than assuming maximum feasible batch is
+dense-Memory-Attention microbatch rather than assuming maximum feasible batch is
 scientifically valid.
 
 `cloud_preflight.py` checks CUDA/model/data/source/run compatibility, persistent
@@ -83,8 +83,8 @@ load time.
 pass depth explicit for a multipass model. Pass-depth, memory interventions,
 and recurrent-inference scripts are reusable checkpoint diagnostics.
 `evaluate_memory_interventions.py` measures one feedback transition and can
-independently intervene on the active Recirculation–Bank hybrid's recurrent
-source and slow bank source. It requires at least two validation blocks for a
+independently intervene on the active Recirculation–Memory Attention hybrid's
+recurrent source and slow memory source. It requires at least two validation blocks for a
 genuine mismatch condition.
 
 Public `generate.py`/model generation remain ordinary language generation. The

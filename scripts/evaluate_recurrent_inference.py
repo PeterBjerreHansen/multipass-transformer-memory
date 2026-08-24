@@ -62,6 +62,10 @@ def main() -> None:
         "bank_multiscale",
         "bank_add_hybrid",
         "bank_recirculation_hybrid",
+        "memory_attention",
+        "memory_attention_multiscale",
+        "memory_attention_add_hybrid",
+        "memory_attention_recirculation_hybrid",
     }:
         raise SystemExit("evaluate_recurrent_inference requires a cached recurrent variant")
     device = resolve_device(cfg.device)

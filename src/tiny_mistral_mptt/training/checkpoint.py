@@ -32,6 +32,8 @@ def capture_rng_state() -> dict[str, Any]:
     }
     if torch.cuda.is_available():
         state["torch_cuda"] = torch.cuda.get_rng_state_all()
+    if torch.backends.mps.is_available():
+        state["torch_mps"] = torch.mps.get_rng_state()
     return state
 
 
@@ -40,6 +42,8 @@ def restore_rng_state(state: dict[str, Any]) -> None:
     torch.set_rng_state(state["torch_cpu"])
     if "torch_cuda" in state and torch.cuda.is_available():
         torch.cuda.set_rng_state_all(state["torch_cuda"])
+    if "torch_mps" in state and torch.backends.mps.is_available():
+        torch.mps.set_rng_state(state["torch_mps"])
 
 
 def _fsync_directory(path: Path) -> None:
@@ -308,6 +312,8 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
     canonical.setdefault("recurrent_nmp_target_normalization", "rms")
     canonical.setdefault("recurrent_nmp_pass_loss_weights_by_k", None)
     canonical.setdefault("bank_nmp_pass_loss_weights_by_k", None)
+    canonical.setdefault("fbt_normalize_gate_input", False)
+    canonical.setdefault("fbt_latent_jitter_std", 0.0)
     canonical.pop("pass_loss_weights", None)
     canonical.pop("pass_loss_weights_by_k", None)
     ignored = {
@@ -319,6 +325,7 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
         "eval_every_tokens",
         "eval_batches",
         "eval_passes",
+        "early_stop",
         "checkpoint_every_tokens",
         "checkpoint_every_seconds",
         "checkpoint_keep_last",

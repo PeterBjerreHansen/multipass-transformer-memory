@@ -3,7 +3,7 @@
 The estimator intentionally counts the large matrix products that dominate
 Transformer training.  One multiply-add is counted as two FLOPs.  It includes
 the backbone projections, attention score/value products, LM-head projections,
-Bank projections/attention, and recurrent controller/projection matrices.
+Memory Attention projections/attention, and recurrent controller/projection matrices.
 
 LayerNorm/RMSNorm, activations, softmax, RoPE, masking/gathering, residual
 adds, embedding lookups, and optimizer bookkeeping are not assigned synthetic
@@ -19,6 +19,11 @@ from dataclasses import asdict, dataclass
 from typing import Any, Iterable, Mapping
 
 from tiny_mistral.config import MistralConfig
+from .config import (
+    MEMORY_ATTENTION_VARIANTS,
+    MULTISCALE_MEMORY_ATTENTION_VARIANTS,
+    canonical_variant_name,
+)
 
 
 FLOPS_PER_MATMUL = 2
@@ -116,13 +121,13 @@ def _bank_pairs(
     write_positions: tuple[int, ...],
     memory_window: int,
 ) -> int:
-    """Count strict-past Bank query/memory pairs for a full sequence."""
+    """Count strict-past Memory Attention query/record pairs for a full sequence."""
     sequence_length = _validate_positive("sequence_length", sequence_length)
     memory_window = _validate_positive("memory_window", memory_window)
     if any(position < 0 or position >= sequence_length for position in write_positions):
-        raise ValueError("Bank write positions must lie inside the sequence")
+        raise ValueError("Memory Attention write positions must lie inside the sequence")
     if tuple(sorted(set(write_positions))) != write_positions:
-        raise ValueError("Bank write positions must be sorted and unique")
+        raise ValueError("Memory Attention write positions must be sorted and unique")
     pairs = 0
     writes_seen = 0
     write_cursor = 0
@@ -342,9 +347,9 @@ def _bank_breakdown(
     multiscale = memory_dense_window is not None
     if multiscale:
         if memory_sparse_stride is None or memory_sparse_window is None:
-            raise ValueError("multiscale Bank FLOPs require all retention fields")
+            raise ValueError("multiscale Memory Attention FLOPs require all retention fields")
         if write_positions != tuple(range(sequence_length)):
-            raise ValueError("multiscale Bank writes every source position")
+            raise ValueError("multiscale Memory Attention writes every source position")
         pairs = _multiresolution_pairs(
             (True,) * sequence_length,
             recent_window=memory_dense_window,
@@ -416,6 +421,7 @@ def estimate_pass(
     recirculation_mode: str = "fixed",
 ) -> PassFlopEstimate:
     """Estimate forward/training FLOPs for one fixed K-pass optimizer step."""
+    variant = canonical_variant_name(str(variant))
     passes = _validate_positive("passes", passes)
     linguistic_sequence_length = _validate_positive(
         "linguistic_sequence_length", linguistic_sequence_length
@@ -425,10 +431,7 @@ def estimate_pass(
         "sparse_swa",
         "memory_add",
         "recirculation",
-        "bank",
-        "bank_multiscale",
-        "bank_add_hybrid",
-        "bank_recirculation_hybrid",
+        *MEMORY_ATTENTION_VARIANTS,
     }:
         raise ValueError(f"unsupported variant {variant!r}")
     single_pass = variant in {"vanilla", "sparse_swa"}
@@ -437,17 +440,12 @@ def estimate_pass(
     if not single_pass and passes < 2:
         raise ValueError("research variants require at least two passes")
 
-    uses_bank = variant in {
-        "bank",
-        "bank_multiscale",
-        "bank_add_hybrid",
-        "bank_recirculation_hybrid",
-    }
-    multiscale_bank = variant == "bank_multiscale"
+    uses_bank = variant in MEMORY_ATTENTION_VARIANTS
+    multiscale_bank = variant in MULTISCALE_MEMORY_ATTENTION_VARIANTS
     if uses_bank and not multiscale_bank and memory_write_mode is None:
-        raise ValueError("Bank variants require memory_write_mode")
+        raise ValueError("Memory Attention variants require memory_write_mode")
     if (not uses_bank or multiscale_bank) and memory_write_mode is not None:
-        raise ValueError("memory_write_mode only applies to Bank variants")
+        raise ValueError("memory_write_mode only applies to Memory Attention variants")
 
     if multiscale_bank:
         if (

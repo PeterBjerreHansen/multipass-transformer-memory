@@ -15,6 +15,10 @@ import yaml
 from tiny_mistral.device import resolve_device, synchronize
 from tiny_mistral_mptt.data.packed_dataset import insert_memory_tokens
 from tiny_mistral_mptt.model_factory import load_variant
+from tiny_mistral_mptt.config import (
+    MEMORY_ATTENTION_VARIANTS,
+    MULTISCALE_MEMORY_ATTENTION_VARIANTS,
+)
 from tiny_mistral_mptt.precision import PrecisionNotSupportedError, autocast_context
 from tiny_mistral_mptt.training.phases import configure_phase
 
@@ -215,13 +219,8 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
     recirculation_alpha = float(case.get("recirculation_alpha", 0.1))
     recirculation_mode = str(case.get("recirculation_mode", "fixed"))
 
-    is_bank = variant in {
-        "bank",
-        "bank_multiscale",
-        "bank_add_hybrid",
-        "bank_recirculation_hybrid",
-    }
-    if variant == "bank_multiscale":
+    is_bank = variant in MEMORY_ATTENTION_VARIANTS
+    if variant in MULTISCALE_MEMORY_ATTENTION_VARIANTS:
         if any(
             value is not None
             for value in (

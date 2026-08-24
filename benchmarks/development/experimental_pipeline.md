@@ -1,26 +1,27 @@
 # Experimental pipeline
 
 The completed eight-arm study is specified across stages 0 through 5. It compares
-vanilla TinyMistral, adaptive Recirculation, three Bank write policies, the
-Recirculation–Periodic Bank hybrid, Multiscale Bank, and Sparse SWA:
+vanilla TinyMistral, adaptive Recirculation, three Memory Attention write
+policies, the Recirculation–Periodic Memory Attention hybrid, Multiscale Memory
+Attention, and Sparse SWA:
 
-- Multiscale Bank tests short- and long-range access to previous-pass states
+- Multiscale Memory Attention tests short- and long-range access to previous-pass states
   without a recurrent channel.
 - Sparse SWA tests the same pattern over ordinary current-pass token states,
-  without recurrence, Bank cross-attention, or added parameters.
+  without recurrence, Memory Attention cross-attention, or added parameters.
 
 These controls separate three possible causes of the reported hybrid gain:
 broader attention, access to previous-pass representations, and recurrence.
 
 ## Locked architecture defaults
 
-The original Bank models use a 32-record capacity, readers after decoder layers
+The original Memory Attention models use a 32-record capacity, readers after decoder layers
 3 and 7, sequence-anchored RoPE, an identity-initialized writer, and
 zero-initialized reader outputs. Their write policies are dense, periodic C32,
 and write-only memory-token C32. Adaptive Recirculation routes source layer 6
 to destination layer 3. The hybrid places readers after layers 4 and 7.
 
-Multiscale Bank uses the hybrid's reader placement with 32 recent dense records
+Multiscale Memory Attention uses the hybrid's reader placement with 32 recent dense records
 and 32 older C32 records. Sparse SWA augments self-attention after layers 3 and
 7 with 32 older C32 tokens. These are controlled defaults, not claims of
 optimal spacing or placement.
@@ -54,7 +55,7 @@ protocol records.
 
 ## Attention-control extension
 
-### Stage 1: Multiscale Bank wiring
+### Stage 1: Multiscale Memory Attention wiring
 
 Run only the new wiring arm:
 
@@ -64,8 +65,9 @@ uv run python scripts/run_study.py \
   --arm bank_multiscale_wiring_5m
 ```
 
-Accept the checkpoint only if losses are finite, K=3 remains stable, and Bank
-reader, writer, and projection gradients activate as expected. Copy the final
+Accept the checkpoint only if losses are finite, K=3 remains stable, and
+Memory Attention reader, writer, and projection gradients activate as expected.
+Copy the final
 checkpoint to durable storage before removing local artifacts.
 
 ### Stage 2: local integration
@@ -85,13 +87,13 @@ comparisons.
 ### Stage 5: 100M-token attention controls
 
 The completed run used the configs under
-`benchmarks/core/stage_5_cloud_100m/`. Multiscale Bank initialized from its
+`benchmarks/core/stage_5_cloud_100m/`. Multiscale Memory Attention initialized from its
 Stage-1 checkpoint. Sparse SWA started from the canonical TinyMistral
 checkpoint. Both used the same Phase-B data slice and optimizer batch as the
 other six Stage-5 arms.
 
 Their validation and efficiency results are included in the repository README.
-Do not treat Multiscale Bank and Sparse SWA as a tightly matched pair:
+Do not treat Multiscale Memory Attention and Sparse SWA as a tightly matched pair:
 they differ in pass count, parameter count, and initialization because those
 differences define the architectures being controlled.
 

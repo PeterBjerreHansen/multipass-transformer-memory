@@ -13,7 +13,7 @@ from .bank_recurrent_hybrid import BankRecurrentHybridVariant
 
 
 class BankRecirculationHybridVariant(BankRecurrentHybridVariant):
-    """Slow bank attention plus fixed or adaptive layer recirculation."""
+    """Sparse Memory Attention plus fixed or adaptive layer recirculation."""
 
     variant_name = "bank_recirculation_hybrid"
 

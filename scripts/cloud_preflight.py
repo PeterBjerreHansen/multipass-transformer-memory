@@ -58,7 +58,7 @@ def _estimate_checkpoint_bytes(cfg, model_verification: dict | None) -> int | No
     if parameter_bytes is None:
         return None
     # Model weights plus two Adam moments, with head/metadata overhead. The
-    # margin covers added Bank parameters and non-tensor checkpoint state.
+    # margin covers added Memory Attention parameters and non-tensor checkpoint state.
     tensor_bytes = int(model_verification["parameter_count"]) * parameter_bytes * 3
     return int(tensor_bytes * 1.25)
 

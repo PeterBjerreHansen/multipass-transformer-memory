@@ -14,15 +14,15 @@ from .bank import BankBatch, BankCoreRun, BankVariant
 
 
 class BankRecurrentHybridVariant(BankVariant, ABC):
-    """Composable slow-bank plus fast-recurrence MPT base class.
+    """Composable Memory Attention plus fast-recurrence MPT base class.
 
     A recurrent mechanism supplies three small hooks: how it changes the input,
     whether it changes an internal decoder layer, and which layer output becomes
-    the next recurrent source. The base owns bank reads/writes, causal source
+    the next recurrent source. The base owns memory-attention reads/writes, causal source
     alignment, multipass plumbing, and exact/recurrent cached inference.
 
     This makes the experimental axis explicit: MemoryAdd and recirculation use
-    the same bank implementation and differ only in their fast routing rule.
+    the same Memory Attention implementation and differ only in their fast routing rule.
     """
 
     supports_recurrent_nmp = True

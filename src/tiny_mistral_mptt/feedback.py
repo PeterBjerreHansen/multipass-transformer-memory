@@ -7,7 +7,9 @@ import torch
 
 @dataclass(frozen=True)
 class BankState:
-    """Fixed-capacity chronological memory bank for cached inference.
+    """Fixed-capacity chronological Memory Attention records for inference.
+
+    ``BankState`` is retained as the historical checkpoint/API name.
 
     ``memories`` has shape ``[B,W,D]`` and ``valid`` has shape ``[B,W]``.
     Valid entries are kept left-aligned in chronological order.  The fixed
@@ -73,7 +75,7 @@ class BankState:
 
 @dataclass(frozen=True)
 class HybridPassSource:
-    """Full-stream sources produced by one bank/recurrent model pass."""
+    """Full-stream sources produced by one Memory Attention/recurrent pass."""
 
     recurrent_hidden: torch.Tensor
     bank_hidden: torch.Tensor
@@ -84,10 +86,15 @@ class HybridPassSource:
         if self.recurrent_hidden.shape != self.bank_hidden.shape:
             raise ValueError("hybrid recurrent/bank pass sources must have equal shapes")
 
+    @property
+    def memory_attention_hidden(self) -> torch.Tensor:
+        """Public terminology alias for the historical ``bank_hidden`` field."""
+        return self.bank_hidden
+
 
 @dataclass(frozen=True)
 class HybridFeedbackState:
-    """Immediate recurrent state plus an addressable bank.
+    """Immediate recurrent state plus addressable Memory Attention records.
 
     ``fast_hidden`` retains its original name for checkpoint/API compatibility;
     it may contain either a top-layer MemoryAdd state or an internal-layer
@@ -117,8 +124,17 @@ class HybridFeedbackState:
     def recurrent_hidden(self) -> torch.Tensor:
         return self.fast_hidden
 
+    @property
+    def memory_attention(self) -> BankState:
+        """Public terminology alias for the historical ``bank`` field."""
+        return self.bank
+
 
 FeedbackMemory = torch.Tensor | BankState | HybridFeedbackState
+
+# Public terminology alias; serialized state and old imports continue to use
+# ``BankState``.
+MemoryAttentionState = BankState
 
 
 def feedback_shape(memory: FeedbackMemory) -> tuple[int, int]:

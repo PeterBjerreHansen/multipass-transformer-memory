@@ -1,9 +1,10 @@
 # Architecture contracts
 
 This file defines the reusable model interfaces. Study-specific settings belong
-under `benchmarks/`. See [BANK_MEMORY.md](BANK_MEMORY.md) for the Bank contract
-and [NEXT_MEMORY_PREDICTION.md](NEXT_MEMORY_PREDICTION.md) for the optional
-training-only objective.
+under `benchmarks/`. See [MEMORY_ATTENTION.md](MEMORY_ATTENTION.md) for the
+public terminology and [BANK_MEMORY.md](BANK_MEMORY.md) for the compatibility
+contract. [NEXT_MEMORY_PREDICTION.md](NEXT_MEMORY_PREDICTION.md) documents the
+optional training-only objective.
 
 ## Vanilla
 
@@ -15,7 +16,7 @@ One ordinary TinyMistral causal pass with no architecture-added parameters.
 selected `sparse_attention_layers`, the existing Mistral self-attention uses
 one softmax over the union of its ordinary SWA keys and a bounded set of older
 fixed-periodic keys. It reuses the pretrained Q/K/V/O projections and does not
-add a Bank reader or any cross-attention parameters.
+add a Memory Attention reader or any cross-attention parameters.
 
 For query `t`, SWA width `W`, sparse stride `C`, and sparse count `S`, the added
 keys are the last `S` positions satisfying `(s + 1) % C == 0` and `s < t-W+1`.
@@ -33,7 +34,7 @@ sparse_attention_layers: [3, 7]
 ## FBT
 
 An independent multipass comparison based on asymmetric latent feedback. It is
-not part of the bank family. Later-pass fused inputs are RMS-normalized before
+not part of the Memory Attention family. Later-pass fused inputs are RMS-normalized before
 entering the backbone, while position zero retains its ordinary token
 embedding. FBT implements the same exact cached K-stream and collapsed
 recurrent inference interfaces as the other one-state feedback variants.
@@ -96,19 +97,22 @@ recirculation_source_layer: 6
 recirculation_destination_layer: 3
 ```
 
-## Bank
+## Memory Attention
 
-`BankVariant` has one shared identity-initialized bias-free writer
+`BankVariant` (public alias `MemoryAttentionVariant`, `variant:
+memory_attention`) has one shared identity-initialized bias-free writer
 
 ```text
 m = W_write h
 ```
 
-and one independent GQA bank reader at each configured `memory_layers` index.
+and one independent GQA memory-attention reader at each configured
+`memory_layers` index.
 `memory_layers: all` expands to every decoder layer. The original study used
-`[3, 7]` for standalone Bank models. Every selected reader consumes the same
-previous-pass top-layer bank. Within a selected decoder layer the bank residual
-is applied after the ordinary self-attention residual and before the MLP.
+`[3, 7]` for standalone Memory Attention models. Every selected reader consumes
+the same previous-pass top-layer memory records. Within a selected decoder
+layer the memory-attention residual is applied after the ordinary self-attention
+residual and before the MLP.
 
 Reader output projections are zero-initialized, so every pass is exact vanilla
 at construction. Q/K/V remain normally initialized and begin receiving
@@ -116,7 +120,7 @@ gradients after an output projection has moved away from zero.
 
 Cross-attention uses sequence-anchored RoPE by default. Query rotations use the
 current linguistic sequence position and key rotations use the original write
-position; compact bank indices are never used as positions. In memory-token
+position; compact memory-record indices are never used as positions. In memory-token
 mode a control slot inherits the preceding linguistic boundary so inserting
 control computation does not inflate memory age. `memory_position_encoding:
 none` is retained only as an explicit ablation.
@@ -127,24 +131,26 @@ The architecture has three write policies:
 - `periodic`: write positions satisfying `(t + 1) % C == 0`;
 - `memory_token`: write only explicit input-only `<MEM>` positions.
 
-`memory_window=W` counts committed bank records, not source-token distance.
-Every bank read is strict-past: a record written at physical position `t` is
+`memory_window=W` counts committed memory records, not source-token distance.
+Every memory-attention read is strict-past: a record written at physical position `t` is
 first available to position `t+1`.
 
 Dense and periodic C=1 are the same implementation and are required to be
 numerically identical with matching weights.
 
-### Multiscale Bank control
+### Multiscale Memory Attention control
 
-`MultiscaleBankVariant` (`variant: bank_multiscale`) is the attention-only
-analogue of a short/long-range recurrent–Bank hybrid. It writes the same dense
-previous-pass top-state stream as Dense Bank, then presents each reader with a
+`MultiscaleBankVariant` (public alias `MultiscaleMemoryAttentionVariant`,
+`variant: memory_attention_multiscale`) is the attention-only analogue of a
+short/long-range recurrent–Memory Attention hybrid. It writes the same dense
+previous-pass top-state stream as Dense Memory Attention, then presents each reader with a
 non-overlapping union of the preceding `D` records and the last `S` older
-fixed-periodic records. A single `BankReader` and softmax cover both regions.
+fixed-periodic records. A single memory-attention reader and softmax cover both
+regions.
 The model does not add a second reader residual.
 
 ```yaml
-variant: bank_multiscale
+variant: memory_attention_multiscale  # historical alias: bank_multiscale
 memory_dense_window: 32
 memory_sparse_stride: 32
 memory_sparse_window: 32
@@ -154,12 +160,13 @@ memory_position_encoding: rope
 
 At query `t`, the dense region is `[t-D,t)`. Sparse positions satisfy
 `s < t-D` and `(s+1) % C == 0`, with only the most recent `S` retained. The
-maximum Bank capacity is `D+S`. The approximate oldest direct reach is
+maximum Memory Attention capacity is `D+S`. The approximate oldest direct reach is
 `D + C*S` tokens. Vanilla SWA is unchanged.
 
-### BankAddHybrid (retired)
+### Memory Attention + MemoryAdd hybrid (retired)
 
-`BankAddHybridVariant` is the same bank plus the MemoryAdd path. There is no
+`BankAddHybridVariant` (public alias `MemoryAttentionAddHybridVariant`) is the
+same Memory Attention path plus the MemoryAdd path. There is no
 gate, controller, or fusion MLP between the channels.
 
 For ordinary-token sequences its fast path is ordinary MemoryAdd. With explicit
@@ -170,8 +177,8 @@ A <MEM> B
 ```
 
 previous-stream `h_A` supplies the Add residual to both `<MEM>` and B;
-`h_MEM` writes the slow bank; B then becomes the next fast state. This preserves
-a clean distinction between ordinary-token fast recurrence and explicit bank
+`h_MEM` writes a slow memory record; B then becomes the next fast state. This preserves
+a clean distinction between ordinary-token fast recurrence and explicit memory
 writes.
 
 ## Shared multipass causal invariant

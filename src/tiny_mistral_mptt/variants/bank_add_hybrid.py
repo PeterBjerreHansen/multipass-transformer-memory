@@ -12,7 +12,7 @@ from .bank_recurrent_hybrid import BankRecurrentHybridVariant
 
 
 class BankAddHybridVariant(BankRecurrentHybridVariant):
-    """Bank recurrence plus a one-step MemoryAdd fast channel."""
+    """Memory Attention plus a one-step MemoryAdd fast channel."""
 
     variant_name = "bank_add_hybrid"
 

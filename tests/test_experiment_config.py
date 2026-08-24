@@ -343,3 +343,51 @@ def test_recirculation_fields_cannot_silently_change_other_variants():
             recirculation_source_layer=3,
             recirculation_destination_layer=1,
         )
+
+
+def test_fbt_paper_recipe_fields_are_explicit_and_variant_scoped():
+    cfg = _config(
+        fbt_normalize_gate_input=True,
+        fbt_latent_jitter_std=0.02,
+        prefix_mixin_probability=1.0,
+    )
+    assert cfg.fbt_normalize_gate_input is True
+    assert cfg.fbt_latent_jitter_std == 0.02
+
+    with pytest.raises(ValueError, match=r"fbt_\* fields"):
+        _config(variant="memory_add", fbt_normalize_gate_input=True)
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        _config(fbt_latent_jitter_std=-0.01)
+
+
+def test_early_stop_pass_depth_gates_are_canonicalized_and_validated():
+    cfg = _config(
+        eval_every_tokens=8,
+        eval_passes=4,
+        early_stop={
+            "pass_nll_max": {"1": 2.573, "4": 2.33},
+            "pass_nll_delta_max": [
+                {"pass": 4, "reference_pass": 2, "max_delta": 0.02}
+            ],
+            "hidden_delta_nonincreasing": True,
+        },
+    )
+    assert cfg.early_stop == {
+        "pass_nll_max": {1: 2.573, 4: 2.33},
+        "pass_nll_delta_max": [
+            {"pass": 4, "reference_pass": 2, "max_delta": 0.02}
+        ],
+        "hidden_delta_nonincreasing": True,
+    }
+
+    with pytest.raises(ValueError, match="positive eval_every_tokens"):
+        _config(
+            eval_passes=4,
+            early_stop={"pass_nll_max": {4: 2.33}},
+        )
+    with pytest.raises(ValueError, match="beyond eval_passes"):
+        _config(
+            eval_every_tokens=8,
+            eval_passes=3,
+            early_stop={"pass_nll_max": {4: 2.33}},
+        )

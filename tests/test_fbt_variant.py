@@ -91,3 +91,52 @@ def test_fbt_prefix_mixin_reverts_a_checkpoint_reproducible_prefix():
     torch.testing.assert_close(
         mixed[:, expected_prefix:, :], raw[:, expected_prefix:, :]
     )
+
+
+def test_fbt_paper_gate_normalizes_embeddings_before_projection():
+    variant = make_variant().eval()
+    variant.normalize_gate_input = True
+    dim = variant.config.hidden_size
+    embeddings = torch.randn(1, 4, dim)
+    previous = torch.randn(1, 4, dim)
+    with torch.no_grad():
+        variant.feedback_value.weight.copy_(torch.eye(dim))
+        variant.feedback_gate.weight.copy_(torch.eye(dim))
+    shifted = shift_previous_hidden(previous)
+    expected = variant.feedback_input_norm(
+        shifted
+        * torch.sigmoid(variant.feedback_input_norm(embeddings))
+    )
+
+    fused = variant.feedback_inputs(embeddings, previous)
+
+    torch.testing.assert_close(fused[:, 0], embeddings[:, 0])
+    torch.testing.assert_close(fused[:, 1:], expected[:, 1:])
+
+
+def test_fbt_latent_jitter_is_uniform_and_training_only():
+    variant = make_variant()
+    variant.latent_jitter_std = 0.02
+    dim = variant.config.hidden_size
+    embeddings = torch.randn(1, 4, dim)
+    previous = torch.randn(1, 4, dim)
+    with torch.no_grad():
+        variant.feedback_value.weight.copy_(torch.eye(dim))
+        variant.feedback_gate.weight.zero_()
+
+    torch.manual_seed(2026)
+    noise = torch.empty_like(previous).uniform_(-0.02, 0.02)
+    expected = variant.feedback_input_norm(
+        0.5 * shift_previous_hidden(previous + noise)
+    )
+    torch.manual_seed(2026)
+    jittered = variant.feedback_inputs(embeddings, previous)
+    torch.testing.assert_close(jittered[:, 1:], expected[:, 1:])
+
+    variant.eval()
+    unjittered = variant.feedback_inputs(embeddings, previous)
+    expected_eval = variant.feedback_input_norm(
+        0.5 * shift_previous_hidden(previous)
+    )
+    torch.testing.assert_close(unjittered[:, 1:], expected_eval[:, 1:])
+    assert not torch.equal(jittered[:, 1:], unjittered[:, 1:])

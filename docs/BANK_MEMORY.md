@@ -1,36 +1,44 @@
-# Bank memory and explicit `<MEM>` slots
+# Memory Attention and explicit `<MEM>` slots
 
-This is the authoritative contract for the active `bank` and
-`bank_multiscale` variants. See [ARCHITECTURES.md](ARCHITECTURES.md) for the
-retired `bank_add_hybrid` interface.
+This file keeps its historical `BANK_MEMORY.md` filename because it is linked
+from existing papers, configs, and checkpoints. The active research term is
+**Memory Attention**: cross-pass attention over previous-pass memory records.
+Implementation identifiers such as `BankWriter`, `BankReader`, `BankState`,
+and `variant: bank` remain unchanged for compatibility and provenance.
 
-## 1. Shared bank architecture
+This is the authoritative implementation contract for the active
+`memory_attention`/`bank` and `memory_attention_multiscale`/`bank_multiscale`
+variants. See [MEMORY_ATTENTION.md](MEMORY_ATTENTION.md) for the conceptual
+vocabulary and [ARCHITECTURES.md](ARCHITECTURES.md) for the retired hybrid
+interface.
+
+## 1. Shared Memory Attention architecture
 
 All write policies use the same components:
 
 - one shared, identity-initialized, bias-free `BankWriter`.
 - one independent `BankReader` at each configured `memory_layers` index.
-- one chronological bank of previous-pass writer outputs during full-sequence
+- one chronological memory tape of previous-pass writer outputs during full-sequence
   execution.
 - a bounded chronological `BankState` during cached/recurrent execution.
 
 Every layer performs ordinary self-attention first, adds its residual, reads the
-bank, adds the bank residual, then performs the normalized MLP residual. The
+memory records, adds the memory-attention residual, then performs the normalized MLP residual. The
 reader is Mistral-shaped GQA and has its own query/memory RMSNorm plus Q/K/V/O
 projections.
 
-During cached inference, each retained bank record is projected once per
+During cached inference, each retained memory record is projected once per
 reader when it is created or appended. RoPE rotates the key with the record's
 original linguistic sequence position before it enters the cache. Subsequent
 cached reads project and rotate only the query. The raw-memory and projected
 cache paths are required to be numerically identical.
 
-Reader output projections are zero-initialized. Bank starts as an
+Reader output projections are zero-initialized. Memory Attention starts as an
 exact no-op retrofit: pass 2 and deeper passes equal vanilla at construction.
 The output projections learn on the first optimizer step; Q/K/V and writer
 gradients become active after those projections move away from zero.
 
-A bank record is
+A memory record is
 
 ```text
 m_s = W_write h_s
@@ -38,7 +46,7 @@ m_s = W_write h_s
 
 where `h_s` is a top-layer source-stream state. For `variant: bank`,
 `memory_window=W` is the maximum number of committed records presented to a
-query. It is not a token-distance window. Multiscale Bank has capacity `D+S`.
+query. It is not a token-distance window. Multiscale Memory Attention has capacity `D+S`.
 
 ## 2. Reader placement and memory positions
 
@@ -48,19 +56,21 @@ memory_position_encoding: rope    # default; explicit ablation: none
 ```
 
 Layer indices are zero-based and unique. A non-reader decoder layer performs
-ordinary self-attention and MLP computation without allocating Bank-reader
-parameters or projected Bank K/V.
+ordinary self-attention and MLP computation without allocating memory-attention
+reader parameters or projected memory K/V.
 
 Memory RoPE is anchored to the original linguistic sequence, never to compact
-bank order. A record written for linguistic position 511 remains position 511
-even if it is the third retained bank record. In memory-token mode a `<MEM>`
+memory-record order. A record written for linguistic position 511 remains position 511
+even if it is the third retained record. In memory-token mode a `<MEM>`
 slot inherits the preceding linguistic boundary. `BankBatch` and cached
 `BankState` carry these coordinates through compaction, bounded eviction, and
 incremental decoding.
 
 ## 3. Write policies
 
-The three policies below apply to `variant: bank`. `bank_multiscale` instead
+The three policies below apply to `variant: bank` (public alias
+`memory_attention`). `bank_multiscale` (public alias
+`memory_attention_multiscale`) instead
 uses a dense source stream and the retention policy in section 3.4.
 
 ### 3.1 Dense
@@ -93,7 +103,7 @@ memory_token_visibility: visible   # or write_only
 
 The data view inserts one `<MEM>` after each complete group of C linguistic
 tokens when another linguistic token remains in that block. Only MEM positions
-write the bank.
+write the memory tape.
 
 ### 3.4 Multiscale dense-recent/sparse-old retention
 
@@ -106,14 +116,14 @@ memory_layers: [4, 7]
 memory_position_encoding: rope
 ```
 
-Every previous-pass top state is written through the shared `BankWriter`.
+Every previous-pass top state is written through the shared memory writer.
 Query `t` reads dense positions `[t-D,t)` plus the last `S` positions strictly
 older than `t-D` for which `(s+1) % C == 0`. The regions are concatenated in
-chronological order and processed by one Bank reader and one softmax. The
+chronological order and processed by one memory-attention reader and one softmax. The
 sparse region is a retention policy over the dense source stream, not a second
 writer or reader.
 
-`memory_dense_window + memory_sparse_window` is the cached Bank capacity.
+`memory_dense_window + memory_sparse_window` is the cached Memory Attention capacity.
 During decode, an aging dense record survives only when it meets the periodic
 policy and remains among the last `S` sparse records. Raw memory and per-reader
 projected K/V stay aligned with their original linguistic positions.
@@ -128,7 +138,7 @@ ordinary input IDs: 0 ... V-1
 LM output classes:  0 ... V-1
 ```
 
-The pretrained embedding table and LM head are not resized. Bank variants in
+The pretrained embedding table and LM head are not resized. Memory Attention variants in
 memory-token mode own one architecture-added learned `memory_token_embedding`;
 ID V selects that vector. The embedding is currently initialized to zero and
 learns as an added parameter.
@@ -157,7 +167,7 @@ ordinary one-position shift.
 
 The MEM representation can still receive gradients indirectly. In visible mode
 future ordinary-token losses can flow through self-attention into MEM; in both
-modes later recurrent/bank-mediated losses can flow through the bank reader,
+modes later recurrent/memory-attention-mediated losses can flow through the memory-attention reader,
 writer, and MEM state.
 
 ## 6. Self-attention visibility
@@ -165,15 +175,15 @@ writer, and MEM state.
 ### `visible`
 
 `<MEM>` is an ordinary causal self-attention K/V position. Later tokens may use
-its hidden state locally as well as through the persistent bank. Thus any gain
-can include both dedicated latent compute and improved bank storage.
+its hidden state locally as well as through persistent memory records. Thus any gain
+can include both dedicated latent compute and improved memory storage.
 
 ### `write_only`
 
 `<MEM>` remains a transformer query and can read preceding causal context, but
 its self-attention K/V is marked invalid. No query uses MEM as an ordinary
 self-attention key/value; the MEM input/residual path still exists and its
-hidden state still writes the bank.
+hidden state still writes a memory record.
 
 This isolates the persistent memory route more cleanly. The boolean key-validity
 mask is supported by the reference, local O(TW), and FlexAttention full-sequence
@@ -182,10 +192,10 @@ same validity bit, so masking does not collapse sequence positions.
 
 ## 7. Strict read-compute-write timing
 
-Bank causality is always:
+Memory Attention causality is always:
 
 ```text
-READ old bank -> COMPUTE current hidden -> optionally WRITE current hidden
+READ old memory -> COMPUTE current hidden -> optionally WRITE current hidden
 ```
 
 A current position never reads its own newly written record. In full-sequence
@@ -200,12 +210,12 @@ For memory-token input
 A <MEM> B
 ```
 
-`h_MEM` may write a bank record, and B is the first physical position that can
+`h_MEM` may write a memory record, and B is the first physical position that can
 read that record.
 
 ## 8. Full-sequence versus recurrent execution
 
-During training and exact K-pass evaluation, pass k reads bank/fast feedback
+During training and exact K-pass evaluation, pass k reads memory-attention/fast feedback
 constructed from completed pass k-1. The same-position source state is never
 visible. This preserves parallel sequence training.
 
@@ -259,7 +269,7 @@ In memory-token Phase A, the architecture-added MEM embedding participates in
 pass 1. Pass-1 autograd must therefore remain enabled even though pretrained
 backbone parameters stay frozen. With zero-initialized reader outputs, the MEM
 embedding and writer have zero gradient on the first update and receive
-nonzero bank-mediated gradients after the reader output path activates.
+nonzero memory-attention-mediated gradients after the reader output path activates.
 
 ## 11. Validation
 

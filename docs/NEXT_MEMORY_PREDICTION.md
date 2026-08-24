@@ -3,7 +3,7 @@
 Next-memory prediction (NMP) is an optional training-only auxiliary objective.
 It predicts the model's own future memory features while next-token prediction
 (NTP) remains active. It does not change `forward`, generation, cached
-recurrence, or the bank-state format.
+recurrence, or the historical bank-state format.
 
 ## Causal objective
 
@@ -33,22 +33,23 @@ discards at routing time. Set `recurrent_nmp_target_normalization: none` for the
 raw-state ablation. Explicit `<MEM>` controls are skipped when finding the next
 linguistic token.
 
-Bank NMP predicts the first strictly later stored memory:
+Memory-attention NMP predicts the first strictly later stored memory record:
 
 ```text
 w(t) = first write position greater than physical position t
-P_bank(h_t^k) -> stop_gradient(writer(s_w(t)^K))
+P_memory(h_t^k) -> stop_gradient(writer(s_w(t)^K))
 ```
 
-For `bank`, the configured dense, periodic, or explicit-memory-token write
-policy defines `w(t)`. Multiscale Bank uses its dense source stream. The target
-is post-writer because that is the representation read from the Bank. Bank
+For `bank` (or its public alias `memory_attention`), the configured dense,
+periodic, or explicit-memory-token write policy defines `w(t)`. Multiscale
+Memory Attention uses its dense source stream. The target is post-writer
+because that is the representation read by cross-pass attention. Memory-attention
 targets keep their post-writer scale. Query positions must be linguistic, but
 write positions may be controls.
 In memory-token mode, a future `<MEM>` can have linguistic distance zero from
 the preceding token even though its physical index is strictly greater.
 
-Bank loss is target-balanced. Guesses for one write are averaged first, actual
+Memory-attention loss is target-balanced. Guesses for one write are averaged first, actual
 write events are then averaged within each example, and valid examples are
 averaged last. This prevents longer spacing from increasing an event's loss
 mass merely because it has more guesses.
@@ -89,12 +90,12 @@ trying a dual-head hybrid.
 
 Supported objectives are:
 
-| Variant | Recurrent NMP | Bank NMP |
+| Variant | Recurrent NMP | Memory-attention NMP |
 | --- | ---: | ---: |
 | `recirculation` | yes | no |
-| `bank` | no | yes |
-| `bank_multiscale` | no | yes |
-| `bank_recirculation_hybrid` | yes | yes |
+| `memory_attention` (`bank`) | no | yes |
+| `memory_attention_multiscale` (`bank_multiscale`) | no | yes |
+| `memory_attention_recirculation_hybrid` (`bank_recirculation_hybrid`) | yes | yes |
 | `vanilla`, `sparse_swa`, `fbt` | no | no |
 
 Each enabled objective gets an independent
@@ -106,7 +107,8 @@ zero-initialized. Head construction uses an isolated seed derived from
 ## Gradients and checkpoints
 
 Targets are stop-gradient. Predictor inputs are not detached, so NMP gradients
-can shape `h_t` and any causal memory pathway that helped create it. For Bank,
+can shape `h_t` and any causal memory pathway that helped create it. For Memory
+Attention,
 the writer target branch is detached, while the same writer remains reachable
 through earlier written memories that contributed to later hidden states.
 
@@ -124,12 +126,12 @@ key.
 
 The test suite asserts that:
 
-- changing tokens after `t` cannot change any recurrent or bank prediction at
+- changing tokens after `t` cannot change any recurrent or memory-attention prediction at
   or before `t`, across multiple pass depths;
-- recurrent controls are skipped and bank targets are physically strict-future;
+- recurrent controls are skipped and memory-attention targets are physically strict-future;
 - all passes use one shared detached final-pass target;
 - Recirculation uses its internal captured source, not the top hidden state;
-- Bank targets the post-writer representation;
+- Memory Attention targets the post-writer representation;
 - sparse batches with no future write produce a zero auxiliary loss and remain
   numerically valid;
 - target tensors receive no gradient, while predictor inputs and the causal

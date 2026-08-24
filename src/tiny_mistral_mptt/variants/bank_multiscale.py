@@ -10,12 +10,13 @@ from .bank import BankBatch, BankReader, BankVariant
 
 
 class MultiscaleBankVariant(BankVariant):
-    """Previous-pass Bank with dense-recent and sparse-old retention.
+    """Multiscale Memory Attention with dense-recent and sparse-old retention.
 
-    Every previous-pass top state is written through the shared Bank writer.
+    Every previous-pass top state is written through the shared memory writer.
     Each query reads one concatenated union: the preceding ``D`` states and the
     last ``S`` fixed-periodic states strictly older than that dense region. A
-    BankReader applies one Q/K/V projection set and one softmax to the union.
+    The memory-attention reader applies one Q/K/V projection set and one softmax
+    to the union.
     """
 
     variant_name = "bank_multiscale"

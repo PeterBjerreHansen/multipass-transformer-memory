@@ -101,11 +101,11 @@ def memory_bank_attention(
     dropout_p: float = 0.0,
     training: bool = False,
 ) -> torch.Tensor:
-    """GQA attention from arbitrary queries into an already-strict-past bank.
+    """GQA cross-pass attention into already-strict-past memory records.
 
-    ``memory_mask`` optionally marks valid bank entries with shape ``[B,M]``.
+    ``memory_mask`` optionally marks valid memory entries with shape ``[B,M]``.
     This is used by sparse cached inference, where different examples may have
-    different numbers of committed memories.  Empty/all-masked banks return an
+    different numbers of committed memories. Empty/all-masked records return an
     exact zero tensor without producing NaNs.
     """
     if query.ndim != 4 or key.ndim != 4 or value.ndim != 4:
@@ -169,14 +169,14 @@ def strict_past_bank_attention(
     training: bool = False,
     dense: bool = False,
 ) -> torch.Tensor:
-    """O(T*W) GQA attention to the last ``W`` committed bank memories.
+    """O(T*W) GQA cross-pass attention to the last ``W`` committed records.
 
-    ``key``/``value`` are compact chronological bank records ``[B,Hkv,M,D]``.
+    ``key``/``value`` are compact chronological memory records ``[B,Hkv,M,D]``.
     ``writes_before[b,t]`` is the number of records committed strictly before
     query position ``t``.  Therefore a memory written at position ``t`` is
     invisible to the query at ``t`` and first becomes visible at ``t+1``.
-    ``memory_mask`` is bool ``[B,M]`` for padded compact banks. When
-    ``dense=True``, the compact bank is known to contain exactly one record per
+    ``memory_mask`` is bool ``[B,M]`` for padded compact records. When
+    ``dense=True``, the compact records are known to contain exactly one record per
     query position in chronological order, so the ordinary sliding-window
     implementation can be used without the compact-bank gather.
     """
@@ -281,9 +281,9 @@ def strict_past_multiscale_bank_attention(
     dropout_p: float = 0.0,
     training: bool = False,
 ) -> torch.Tensor:
-    """One-softmax Bank attention over dense-recent and sparse-old records.
+    """One-softmax Memory Attention over dense-recent and sparse-old records.
 
-    The multiscale Bank writes every previous-pass position. Query ``t`` reads
+    The multiscale Memory Attention path writes every previous-pass position. Query ``t`` reads
     ``[t-D,t)`` densely and the last ``S`` periodic positions strictly older
     than that region. The two regions are gathered into one compact bank before
     the GQA score calculation.
@@ -376,3 +376,10 @@ def strict_past_multiscale_bank_attention(
     output = torch.matmul(p, value_bank)
     output = output.permute(0, 1, 3, 2, 4).contiguous()
     return output.reshape(bsz, hq, query_len, head_dim)
+
+
+# Public terminology aliases. The historical function names remain available
+# because they are referenced by checkpoints, tests, and downstream scripts.
+memory_attention = memory_bank_attention
+strict_past_memory_attention = strict_past_bank_attention
+strict_past_multiscale_memory_attention = strict_past_multiscale_bank_attention

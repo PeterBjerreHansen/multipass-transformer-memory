@@ -1,19 +1,19 @@
 # Attention vs. Recurrence in Multi-Pass Transformers
 
-**tl;dr:** Recent work such as the [full bandwidth transformer](https://arxiv.org/abs/2608.08888) and [recirculation](https://arxiv.org/abs/2608.17981) suggests that recurrently feeding intermediate representations back through a transformer gives you performance gains almost for free. I found that replacing the recurrent mechanisms with attention over a bank of previous-pass states performs better, also when that attention is sparse (and thus not always attending to recent hidden states).
+**tl;dr:** Recent work such as the [full bandwidth transformer](https://arxiv.org/abs/2608.08888) and [recirculation](https://arxiv.org/abs/2608.17981) suggests that recurrently feeding intermediate representations back through a transformer gives you performance gains almost for free. I found that replacing the recurrent mechanisms with **Memory Attention** over previous-pass states performs better, also when that attention is sparse (and thus not always attending to recent hidden states).
 
-The idea behind [multi-pass training](https://github.com/PeterBjerreHansen/multi-pass-transformer-training) goes something like this: Pass 1 is an ordinary transformer pass. Pass 2 runs the same transformer again, but can use additional hidden states produced on pass 1. The question is if that information should arrive through a recurrent connection or through attention over a bank of previous-pass states. To test this I first retrofitted [a TinyMistral model](https://huggingface.co/M4-ai/TinyMistral-248M-v3) into doing feedback inference by training it with multi-pass Jacobi-style updates. The new parameters were first wired into the frozen backbone for 5 million tokens, then the whole models were trained on 100M tokens from the [OLMo2 annealing mixture](https://huggingface.co/datasets/allenai/dolmino-mix-1124).
+The idea behind [multi-pass training](https://github.com/PeterBjerreHansen/multi-pass-transformer-training) goes something like this: Pass 1 is an ordinary transformer pass. Pass 2 runs the same transformer again, but can use additional hidden states produced on pass 1. The question is if that information should arrive through a recurrent connection or through cross-pass attention over previous-pass states. To test this I first retrofitted [a TinyMistral model](https://huggingface.co/M4-ai/TinyMistral-248M-v3) into doing feedback inference by training it with multi-pass Jacobi-style updates. The new parameters were first wired into the frozen backbone for 5 million tokens, then the whole models were trained on 100M tokens from the [OLMo2 annealing mixture](https://huggingface.co/datasets/allenai/dolmino-mix-1124).
 
 | Model / method                                | Final validation PPL | Late PPL reduction, 50M → 100M | Total parameters | Relative training FLOPs |
 | --------------------------------------------- | -------------------: | -----------------------------: | ---------------: | ----------------------: |
 | Transformer baseline                          |                7.778 |                  0.110 (1.40%) |         248.024M |                 1.0000x |
 | Sparse SWA control                            |                7.811 |                  0.121 (1.52%) |         248.024M |                 1.0004x |
 | Adaptive Recirculation                        |                7.678 |                  0.110 (1.42%) |         253.275M |                 2.1267x |
-| Sparse Memory-token Bank                      |                7.616 |                  0.133 (1.72%) |         254.321M |                 2.1872x |
-| Sparse Periodic Bank                          |                7.599 |                  0.113 (1.46%) |         254.320M |                 2.1222x |
-| Dense Bank                                    |                7.534 |                  0.112 (1.46%) |         254.320M |                 2.1327x |
-| Adaptive Recirculation + Sparse Periodic Bank |                7.519 |                  0.120 (1.57%) |         259.571M |                 2.1489x |
-| Multiscale Bank control                       |                7.504 |                  0.111 (1.46%) |         254.320M |                 2.1332x |
+| Sparse Memory-token Attention                 |                7.616 |                  0.133 (1.72%) |         254.321M |                 2.1872x |
+| Sparse Periodic Memory Attention              |                7.599 |                  0.113 (1.46%) |         254.320M |                 2.1222x |
+| Dense Memory Attention                        |                7.534 |                  0.112 (1.46%) |         254.320M |                 2.1327x |
+| Adaptive Recirculation + Sparse Memory Attention |              7.519 |                  0.120 (1.57%) |         259.571M |                 2.1489x |
+| Multiscale Memory Attention control           |                7.504 |                  0.111 (1.46%) |         254.320M |                 2.1332x |
 
 I think there are three notable patterns in these results:
 
@@ -21,45 +21,45 @@ I think there are three notable patterns in these results:
 
 2. The sparse attention to far-away memories outperformed models with only the recurrent connections to memories. To me this result slightly favours the notion that the performance gains reported in the FBT and recirculation papers stem from **mere greater effective depth** rather than **unlocking recurrent computation patterns**.
 
-3. The recurrent/attention hybrid performs on par with the short-range dense attention only model, and so attention over a sparse memory bank could provide a valuable "slow" (long-range) memory for multi-pass models with only the "fast" (short-term) recurrent pattern. However, supplying the short-range dense attention only model with sparse long-range attention 
+3. The recurrent/attention hybrid performs on par with the short-range dense attention only model, and so sparse Memory Attention could provide a valuable "slow" (long-range) memory for multi-pass models with only the "fast" (short-term) recurrent pattern. However, supplying the short-range dense attention only model with sparse long-range attention improves performance even further at a smaller compute budget, and so the attention only v
 
 The experiment is riddled with confounders such as differing compute budgets, parameter count, and starting-point inequality (some mechanisms are more easily slotted into a pretrained model, and the vanilla backbone had no pre-run adaptation). Moreover, I simply do not have the computational resources to provide the exhaustive sweeps and ablations one needs to make convincing optimality arguments. However, I do think the results point towards potential improvements to the existing architectures.
 
-### The memory-bank models
+### The Memory Attention models
 
 In recurrent patterns, like those of FBT and adaptive Recirculation, token $t$ on pass $k$ receives essentially one predetermined shifted state, $m_{t-1}^{k-1}$:
 
 > **Recurrent feedback:**<br>
 > $`h_t^{(k)} = \mathrm{Mix}\left(h_t^{(k)}, m_{t-1}^{(k-1)}\right)`$
 
-The Bank models instead expose previous-pass memory states as a separately addressable key/value source. Token $t$ may attend to some causally valid subset of the previous-pass memory tape, which I denote by the access pattern $A_t$:
+Memory Attention instead exposes previous-pass states as a separately addressable key/value source. Token $t$ may attend to some causally valid subset of the previous-pass memory tape, which I denote by the access pattern $A_t$:
 
-> **Memory Bank:**<br>
+> **Cross-pass memory attention:**<br>
 >    $`h_t^{(k)} = h_t^{(k)} + \mathrm{CrossAttention}\left(Q=h_t^{(k)},\ KV=M^{(k-1)};\ \mathrm{mask}=A_t\right)`$
 
 Here $M^{(k-1)}$ denotes the previous-pass memory states and $A_t$ determines which of those states token $t$ is allowed to access.
 
 ![Memory Access Through Cross-attention](/docs/memory_attn.png)
 
-Recirculation fixes the feedback source in advance, while Bank attention lets each token content-select among the previous-pass representations made available to it. The Bank readers are separate GQA cross-attention residuals inserted at selected decoder layers; memory positions retain their original sequence coordinates for RoPE.
+Recirculation fixes the feedback source in advance, while Memory Attention lets each token content-select among the previous-pass representations made available to it. Memory-attention readers are separate GQA cross-attention residuals inserted at selected decoder layers; memory positions retain their original sequence coordinates for RoPE.
 
-The Bank variants differ primarily in their **memory access pattern**:
+The Memory Attention variants differ primarily in their **memory access pattern**:
 
 | Variant               | Accessible memories                      | Attention pattern |
 | --------------------- | ---------------------------------------- | ----------------- |
-| **Dense Bank**        | recent previous-pass states              | local dense SWA   |
-| **Periodic Bank**     | periodically spaced previous-pass states | long-range sparse |
-| **Memory-token Bank** | explicit `<MEM>` states                  | long-range sparse |
-| **Multiscale Bank**   | dense recent + sparse older states       | multiscale        |
+| **Dense Memory Attention**        | recent previous-pass states              | local dense SWA   |
+| **Periodic Memory Attention**     | periodically spaced previous-pass states | long-range sparse |
+| **Memory-token Attention** | explicit `<MEM>` states                  | long-range sparse |
+| **Multiscale Memory Attention**   | dense recent + sparse older states       | multiscale        |
 
-These access patterns admit several equivalent conceptual realizations. For example, a sparse Bank can be understood either as retaining only the memory states that will be addressable, or as retaining a denser tape and masking the inaccessible states during attention. The implementation uses selective memory writes and bounded retained KV records for efficiency, but that is not essential to the Bank abstraction itself.
+These access patterns admit several equivalent conceptual realizations. For example, sparse Memory Attention can be understood either as retaining only the memory states that will be addressable, or as retaining a denser tape and masking the inaccessible states during attention. The implementation uses selective memory writes and bounded retained KV records for efficiency, but that is not essential to the Memory Attention abstraction itself.
 
-`memory_window: 32` therefore refers to the implementation's capacity of **32 retained addressable memory records**, not a 32-token receptive field. For a periodic Bank with stride 32, those 32 records can represent memories spread over roughly $32\times$ the sequence range of a dense Bank with the same retained capacity. The hybrid combines both routes: adaptive Recirculation provides a **fast**, local feedback channel, while the sparse Bank provides a **slow**, longer-range content-addressed memory. This is the motivation for viewing the two mechanisms as complementary rather than mutually exclusive. Multiscale Bank is the attention-only control for the recurrent/Bank hybrid. It gives each Bank reader access to both dense recent memories and sparse older memories in one softmax, but removes the recurrent channel. Sparse SWA is the vanilla Transformer control. At selected layers, it extends ordinary sliding-window self-attention with sparse attention to fixed past tokens. It is one-pass, reads current-pass token states rather than a previous-pass Bank, and adds no parameters.
+`memory_window: 32` therefore refers to the implementation's capacity of **32 retained addressable memory records**, not a 32-token receptive field. For a periodic Memory Attention model with stride 32, those 32 records can represent memories spread over roughly $32\times$ the sequence range of a dense model with the same retained capacity. The hybrid combines both routes: adaptive Recirculation provides a **fast**, local feedback channel, while sparse Memory Attention provides a **slow**, longer-range content-addressed memory. This is the motivation for viewing the two mechanisms as complementary rather than mutually exclusive. Multiscale Memory Attention is the attention-only control for the recurrent/Memory Attention hybrid. It gives each memory-attention reader access to both dense recent memories and sparse older memories in one softmax, but removes the recurrent channel. Sparse SWA is the vanilla Transformer control. At selected layers, it extends ordinary sliding-window self-attention with sparse attention to fixed past tokens. It is one-pass, reads current-pass token states rather than previous-pass memory records, and adds no parameters.
 
 The current implementation configures these access patterns through the memory-write policy:
 
 ```yaml
-variant: bank
+variant: memory_attention
 
 memory_window: 32
 
@@ -70,9 +70,9 @@ memory_layers: [3, 7]
 memory_position_encoding: rope
 ```
 
-Periodic and memory-token Banks additionally set `memory_write_stride`. In memory-token mode, `<MEM>` is input-only: it is not part of the LM output vocabulary and receives no direct LM loss. In the `write_only` configuration used in the main comparison, later tokens can access its state only through the Bank.
+Historical configs use `variant: bank`; both names construct the same model. Periodic and memory-token Memory Attention additionally set `memory_write_stride`. In memory-token mode, `<MEM>` is input-only: it is not part of the LM output vocabulary and receives no direct LM loss. In the `write_only` configuration used in the main comparison, later tokens can access its state only through Memory Attention.
 
-See `docs/BANK_MEMORY.md` for the exact implementation-level attention masks, retention/write timing, cached-inference behavior, and hybrid contracts. See `docs/ARCHITECTURES.md` for the two attention-control architectures.
+See `docs/MEMORY_ATTENTION.md` for the conceptual vocabulary and `docs/BANK_MEMORY.md` for the exact implementation-level attention masks, retention/write timing, cached-inference behavior, and hybrid contracts. See `docs/ARCHITECTURES.md` for the two attention-control architectures.
 
 ### A Note on Efficiency
 
@@ -82,7 +82,7 @@ See `docs/BANK_MEMORY.md` for the exact implementation-level attention masks, re
 
 1. **Next Memory Prediction.** This branch implements a training-only auxiliary objective inspired by [NextLat](https://arxiv.org/abs/2511.05963), with future memory representations as targets. I have a strong and unproven suspicion that this will work nicely: since there is a lot of pressure on the memory latents to be useful **inputs** to the model, they should contain information that is already useful for NTP prediction and so should be less prone to collapse. In some sense, predicting these memories amounts to predicting features that the model will think are useful later. I like this notion that one should want to predict what is itself predictive. The implementation is tested, but I have not yet evaluated whether NMP improves language-model quality. See `docs/NEXT_MEMORY_PREDICTION.md`.
 
-2. The sparse SWA and Multiscale Bank controls are implemented, and their 100M-token runs are complete.
+2. The sparse SWA and Multiscale Memory Attention controls are implemented, and their 100M-token runs are complete.
 
 3. Most SOTA models still use dense attention in at least a few layers. I suspect that a local SWA attention + dense long-range attention over memories might perform better than placing the dense attention in a normal layer.
 
@@ -124,13 +124,15 @@ Learning-rate schedules and run token budgets use linguistic tokens. Throughput 
 
 ## Current research status
 
-The locked eight-arm study compares vanilla, adaptive Recirculation, three Bank access patterns, the Recirculation–Periodic Bank hybrid, Multiscale Bank, and Sparse SWA. Its configs remain under `benchmarks/core/stage_5_cloud_100m/`; all eight 100M-token runs are complete and their full artifacts are under `benchmarks/core/stage_5_cloud_100m/results/`. Multiscale Bank used its verified frozen-backbone wiring checkpoint. Sparse SWA has no added parameters and started in Phase B. The runnable path is documented in `benchmarks/development/experimental_pipeline.md`.
+The locked eight-arm study compares vanilla, adaptive Recirculation, three Memory Attention access patterns, the Recirculation–Periodic Memory Attention hybrid, Multiscale Memory Attention, and Sparse SWA. Its configs remain under `benchmarks/core/stage_5_cloud_100m/`; all eight 100M-token runs are complete and their full artifacts are under `benchmarks/core/stage_5_cloud_100m/results/`. Multiscale Memory Attention used its verified frozen-backbone wiring checkpoint. Sparse SWA has no added parameters and started in Phase B. The runnable path is documented in `benchmarks/development/experimental_pipeline.md`.
 
 Next Memory Prediction is implemented and tested on this branch, but does not yet have a reported language-model quality result.
 
 FBT and MemoryAdd are retired controls. Their implementations and focused correctness tests remain only for historical checkpoint/provenance compatibility, like other archived research controls, but neither appears in the active studies, efficiency qualifications, cloud campaign, or current results. BankAddHybrid, which uses the same MemoryAdd fast channel, is also retired from the active experiment surface.
 
 Historical benchmark results remain read-only evidence; they do not define the active architecture API.
+
+**Terminology note:** Existing `bank` identifiers remain in configs, checkpoints, result directories, and internal symbols for reproducibility. New research discussion and model aliases use **Memory Attention**; `bank*` names are compatibility aliases.
 
 ## Validate
 

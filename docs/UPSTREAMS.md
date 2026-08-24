@@ -15,7 +15,7 @@ Research infrastructure must not change ordinary vanilla behavior silently.
 Baseline tests, HF-comparison scripts, and `VANILLA_SOURCE.sha256` are the
 guardrails.
 
-Bank and Sparse SWA add two tested substrate capabilities. Self-attention K/V
+Memory Attention and Sparse SWA add two tested substrate capabilities. Self-attention K/V
 entries can carry a validity mask, and selected layers can use a bounded
 dense-recent/fixed-periodic-old mask. Write-only `<MEM>` positions retain their
 physical, RoPE, and cache coordinates while remaining unavailable as K/V. An
@@ -34,7 +34,7 @@ pretraining recipe.
 `PeterBjerreHansen/multi-pass-transformer-training` at
 `79398be4ac33a7489029e6075bdce930a0ec44b2` is a design reference for
 previous-pass top-state feedback, strict recurrence causality, retired
-MemoryAdd, and per-layer Bank cross-attention. Current implementations are
+MemoryAdd, and per-layer cross-pass Memory Attention. Current implementations are
 written directly against this repository's Mistral/GQA/local-attention
 interfaces.
 

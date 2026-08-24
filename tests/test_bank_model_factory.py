@@ -3,6 +3,7 @@ import pytest
 from conftest import micro_config
 from tiny_mistral.modeling import MistralForCausalLM
 from tiny_mistral_mptt.model_factory import build_variant
+from tiny_mistral_mptt.config import ExperimentConfig, canonical_variant_name
 from tiny_mistral_mptt.variants.bank import BankVariant
 from tiny_mistral_mptt.variants.bank_add_hybrid import BankAddHybridVariant
 from tiny_mistral_mptt.variants.bank_recirculation_hybrid import (
@@ -29,6 +30,33 @@ def test_factory_exposes_only_clean_bank_names_and_policies():
         memory_token_visibility="write_only",
     )
     assert isinstance(hybrid, BankAddHybridVariant)
+
+
+def test_memory_attention_names_are_public_compatibility_aliases():
+    assert canonical_variant_name("memory_attention") == "bank"
+    assert canonical_variant_name("bank") == "bank"
+    config = ExperimentConfig(
+        variant="memory_attention",
+        memory_write_mode="dense",
+        max_unique_tokens=1,
+    )
+    config.validate()
+    model = build_variant("memory_attention", backbone(), memory_write_mode="dense")
+    assert isinstance(model, BankVariant)
+    assert model.variant_name == "memory_attention"
+
+    multiscale = build_variant(
+        "memory_attention_multiscale",
+        MistralForCausalLM(
+            micro_config(num_hidden_layers=3), attention_backend="reference"
+        ),
+        memory_dense_window=4,
+        memory_sparse_window=3,
+        memory_sparse_stride=8,
+        memory_layers=[1, 2],
+    )
+    assert isinstance(multiscale, MultiscaleBankVariant)
+    assert multiscale.variant_name == "memory_attention_multiscale"
 
 
 def test_factory_selects_only_requested_memory_layers_and_defaults_to_rope():

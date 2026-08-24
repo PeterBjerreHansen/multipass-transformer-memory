@@ -12,9 +12,9 @@ Prepare and verify `data/dolmino/wiring_2048` first. Every arm consumes its
 rate of `1e-4`.
 
 Use `--arm <id>` to run one arm. Generated checkpoints and metrics live below
-`results/<arm>/` and are ignored by Git. Bank is wired separately for
+`results/<arm>/` and are ignored by Git. Memory Attention is wired separately for
 dense, periodic-C32, and write-only explicit-`<MEM>`-C32 writes. The periodic
-hybrid is wired with adaptive Recirculation. Multiscale Bank has a separate
+hybrid is wired with adaptive Recirculation. Multiscale Memory Attention has a separate
 wiring arm. Sparse SWA has no added parameters and does not use Phase A.
 
 These local configs keep only the newest checkpoint generation. Copy completed
