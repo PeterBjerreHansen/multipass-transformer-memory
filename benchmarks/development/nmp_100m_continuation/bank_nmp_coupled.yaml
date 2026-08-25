@@ -49,5 +49,5 @@ checkpoint_every_tokens: 1048576
 checkpoint_every_seconds: 900.0
 checkpoint_keep_last: 2
 snapshot_at_tokens: [10485760, 26214400, 52428800]
-init_from: benchmarks/core/stage_5_cloud_100m/results/hybrid_recirculation_100m/checkpoints/checkpoint_000100007936.pt
+init_from: benchmarks/core/stage_5_cloud_100m/results/hybrid_recirculation_100m/snapshots/model_000100007936.safetensors
 resume_from: null

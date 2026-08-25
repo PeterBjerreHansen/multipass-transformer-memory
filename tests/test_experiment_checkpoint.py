@@ -1,7 +1,9 @@
+import json
 from pathlib import Path
 
 import pytest
 import torch
+from safetensors.torch import save_file as save_safetensors
 
 from tiny_mistral_mptt.data.packed_dataset import StatefulBlockSampler
 from tiny_mistral_mptt.training.checkpoint import (
@@ -9,6 +11,7 @@ from tiny_mistral_mptt.training.checkpoint import (
     TrainState,
     load_checkpoint,
     load_checkpoint_for_evaluation,
+    load_model_weights,
     save_checkpoint,
 )
 
@@ -59,6 +62,50 @@ def test_checkpoint_restores_model_optimizer_sampler_and_all_counters(tmp_path):
     assert restored_sampler.next_indices(8) == expected_next
     for name, tensor in replacement.state_dict().items():
         torch.testing.assert_close(tensor, expected_parameters[name], atol=0, rtol=0)
+
+
+def test_init_from_accepts_weights_only_snapshot_with_run_metadata(tmp_path):
+    source, _ = _objects()
+    snapshot_dir = tmp_path / "source-run" / "snapshots"
+    snapshot_dir.mkdir(parents=True)
+    snapshot = snapshot_dir / "model_000000000128.safetensors"
+    save_safetensors(
+        {
+            name: tensor.detach().contiguous()
+            for name, tensor in source.state_dict().items()
+        },
+        str(snapshot),
+    )
+    snapshot.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "optimizer_steps": 16,
+                "unique_tokens_seen": 128,
+                "model_positions_seen": 128,
+                "phase": "B",
+                "variant": "vanilla",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (snapshot_dir.parent / "run.json").write_text(
+        json.dumps({"config": {"variant": "vanilla"}}),
+        encoding="utf-8",
+    )
+
+    replacement, _ = _objects()
+    provenance = load_model_weights(
+        snapshot,
+        model=replacement,
+        expected_experiment_config={"variant": "vanilla"},
+    )
+
+    assert provenance["source_format"] == "safetensors_snapshot"
+    assert provenance["source_train_state"]["unique_tokens_seen"] == 128
+    for name, tensor in replacement.state_dict().items():
+        torch.testing.assert_close(
+            tensor, source.state_dict()[name], atol=0, rtol=0
+        )
 
 
 def test_checkpoint_rejects_training_config_changes(tmp_path):

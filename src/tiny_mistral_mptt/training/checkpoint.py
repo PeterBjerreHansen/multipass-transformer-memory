@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 import torch
+from safetensors.torch import load_file as load_safetensors
 
 
 FORMAT_VERSION = 3
@@ -501,10 +502,56 @@ def load_model_weights(
     expected_experiment_config: dict[str, Any],
     allow_nmp_warm_start: bool = False,
 ) -> dict[str, Any]:
-    payload = torch.load(Path(path), map_location="cpu", weights_only=False)
-    _require_payload(payload)
-    checkpoint_state = payload["model"]
-    source_config = payload["experiment_config"]
+    source_path = Path(path)
+    source_format = "experiment_checkpoint"
+    snapshot_metadata: dict[str, Any] | None = None
+    if source_path.suffix == ".safetensors":
+        source_format = "safetensors_snapshot"
+        checkpoint_state = load_safetensors(str(source_path), device="cpu")
+        metadata_path = source_path.with_suffix(".json")
+        if not metadata_path.is_file():
+            raise ValueError(
+                f"initialization snapshot is missing metadata: {metadata_path}"
+            )
+        snapshot_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        run_path = source_path.parent.parent / "run.json"
+        if not run_path.is_file():
+            raise ValueError(
+                f"initialization snapshot is missing source run metadata: {run_path}"
+            )
+        source_run = json.loads(run_path.read_text(encoding="utf-8"))
+        source_config = source_run.get("config")
+        if not isinstance(source_config, dict):
+            raise ValueError("initialization snapshot run.json has no experiment config")
+        source_train_state = {
+            key: snapshot_metadata[key]
+            for key in (
+                "optimizer_steps",
+                "unique_tokens_seen",
+                "model_positions_seen",
+                "phase",
+            )
+            if key in snapshot_metadata
+        }
+        if "unique_tokens_seen" not in source_train_state:
+            raise ValueError(
+                "initialization snapshot metadata has no unique_tokens_seen"
+            )
+        metadata_variant = snapshot_metadata.get("variant")
+        if (
+            metadata_variant is not None
+            and _canonical_init_variant(metadata_variant)
+            != _canonical_init_variant(source_config.get("variant"))
+        ):
+            raise ValueError(
+                "initialization snapshot variant disagrees with run.json"
+            )
+    else:
+        payload = torch.load(source_path, map_location="cpu", weights_only=False)
+        _require_payload(payload)
+        checkpoint_state = payload["model"]
+        source_config = payload["experiment_config"]
+        source_train_state = payload["train_state"]
     changed_architecture = _changed_init_architecture_fields(
         source_config, expected_experiment_config
     )
@@ -556,12 +603,14 @@ def load_model_weights(
             "init_from compatibility check disagreed with PyTorch state loading"
         )
     return {
-        "source_path": str(path),
-        "source_train_state": payload["train_state"],
+        "source_path": str(source_path),
+        "source_format": source_format,
+        "source_train_state": source_train_state,
         "source_experiment_config": source_config,
         "init_compatibility_view": _init_compatibility_view(source_config),
         "source_has_nmp": source_has_nmp,
         "freshly_initialized_model_keys": sorted(allowed_missing),
+        "snapshot_metadata": snapshot_metadata,
     }
 
 
