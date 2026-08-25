@@ -147,11 +147,15 @@ class MultiPassVariant(ExperimentalVariant):
         self.nmp_target_mode = str(target_mode)
         self.nmp_detach_predictor_input = detach_predictor_input
 
-    def added_parameters(self):
+    def nmp_predictor_parameters(self):
+        """Yield parameters belonging only to training-time NMP heads."""
         if self.recurrent_nmp_predictor is not None:
             yield from self.recurrent_nmp_predictor.parameters()
         if self.bank_nmp_predictor is not None:
             yield from self.bank_nmp_predictor.parameters()
+
+    def added_parameters(self):
+        yield from self.nmp_predictor_parameters()
 
     def initialization_only_state_prefixes(self) -> tuple[str, ...]:
         """State prefixes allowed to be absent from an ``init_from`` checkpoint."""

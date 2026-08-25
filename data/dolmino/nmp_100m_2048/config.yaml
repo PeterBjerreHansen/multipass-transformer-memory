@@ -1,7 +1,7 @@
 output_dir: data/dolmino/nmp_100m_2048
 model_dir: checkpoints/TinyMistral-248M-v3
 sequence_length: 2048
-train_tokens: 5242880
+train_tokens: 52428800
 validation_tokens: 524288
 train_skip_tokens: 105250816
 seed: 1337

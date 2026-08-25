@@ -1,6 +1,6 @@
 name: nmp_100m_continuation
 status: planned
-question: Does periodic Memory-Attention NMP improve a 100M hybrid checkpoint beyond matched NTP continuation and a head-only placebo?
+question: Does mixed-pass shared-final Memory-Attention NMP improve a 100M hybrid checkpoint beyond matched NTP continuation and a head-only placebo over 50 Mi new tokens?
 arms:
   - {id: ntp_control, config: ntp_control.yaml}
   - {id: bank_nmp_coupled, config: bank_nmp_coupled.yaml}
@@ -14,4 +14,5 @@ comparisons:
       - nmp_warmup_tokens
       - nmp_eval_passes
       - nmp_detach_predictor_input
+      - nmp_predictor_learning_rate
     allowed_differences: []

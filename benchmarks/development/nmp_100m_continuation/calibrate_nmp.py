@@ -113,7 +113,15 @@ def _cosine(left: Sequence[torch.Tensor], right: Sequence[torch.Tensor]) -> floa
     return float((dot / (left_norm * right_norm)).cpu())
 
 
-def _objective(model, ids, cfg, *, recurrent: float, bank: float):
+def _objective(
+    model,
+    ids,
+    cfg,
+    *,
+    passes: int,
+    recurrent: float,
+    bank: float,
+):
     old_recurrent = model.recurrent_nmp_weight
     old_bank = model.bank_nmp_weight
     model.recurrent_nmp_weight = float(recurrent)
@@ -122,10 +130,12 @@ def _objective(model, ids, cfg, *, recurrent: float, bank: float):
         return model.compute_loss(
             ids,
             phase=cfg.phase,
-            passes=2,
-            loss_weights=cfg.ntp_loss_weights_for_passes(2),
-            recurrent_nmp_loss_weights=cfg.recurrent_nmp_loss_weights_for_passes(2),
-            bank_nmp_loss_weights=cfg.bank_nmp_loss_weights_for_passes(2),
+            passes=passes,
+            loss_weights=cfg.ntp_loss_weights_for_passes(passes),
+            recurrent_nmp_loss_weights=cfg.recurrent_nmp_loss_weights_for_passes(
+                passes
+            ),
+            bank_nmp_loss_weights=cfg.bank_nmp_loss_weights_for_passes(passes),
             nmp_weight_scale=1.0,
         )
     finally:
@@ -133,11 +143,56 @@ def _objective(model, ids, cfg, *, recurrent: float, bank: float):
         model.bank_nmp_weight = old_bank
 
 
-def _measure(model, ids, cfg, groups) -> dict[str, float | None]:
-    ntp_output = _objective(model, ids, cfg, recurrent=0.0, bank=0.0)
-    ntp = _gradients(ntp_output.loss, groups)
+def _weighted_metric(outputs, probabilities: dict[int, float], name: str) -> float:
+    return sum(
+        float(probabilities[passes]) * float(output.metrics[name])
+        for passes, output in outputs.items()
+    )
+
+
+def _weighted_gradients(
+    gradients_by_pass: dict[int, dict[str, list[torch.Tensor]]],
+    probabilities: dict[int, float],
+) -> dict[str, list[torch.Tensor]]:
+    first = next(iter(gradients_by_pass.values()))
+    return {
+        group: [
+            sum(
+                (
+                    float(probabilities[passes]) * gradients[group][index]
+                    for passes, gradients in gradients_by_pass.items()
+                ),
+                tensor.new_zeros(tensor.shape),
+            )
+            for index, tensor in enumerate(values)
+        ]
+        for group, values in first.items()
+    }
+
+
+def _measure(
+    model,
+    ids,
+    cfg,
+    groups,
+    pass_probabilities: dict[int, float],
+) -> dict[str, float | None]:
+    ntp_outputs = {}
+    ntp_gradients_by_pass = {}
+    for passes in pass_probabilities:
+        output = _objective(
+            model,
+            ids,
+            cfg,
+            passes=passes,
+            recurrent=0.0,
+            bank=0.0,
+        )
+        ntp_outputs[passes] = output
+        ntp_gradients_by_pass[passes] = _gradients(output.loss, groups)
+    ntp = _weighted_gradients(ntp_gradients_by_pass, pass_probabilities)
     result: dict[str, float | None] = {
-        "ntp_loss": float(ntp_output.metrics["ntp_loss"]),
+        "ntp_loss": _weighted_metric(ntp_outputs, pass_probabilities, "ntp_loss"),
     }
     for group, gradients in ntp.items():
         result[f"ntp_{group}_gradient_norm"] = _norm(gradients)
@@ -148,10 +203,26 @@ def _measure(model, ids, cfg, groups) -> dict[str, float | None]:
     if model.bank_nmp_predictor is not None:
         objectives.append(("bank", 0.0, 1.0))
     for name, recurrent, bank in objectives:
-        output = _objective(model, ids, cfg, recurrent=recurrent, bank=bank)
-        total = _gradients(output.loss, groups)
+        outputs = {}
+        total_gradients_by_pass = {}
+        for passes in pass_probabilities:
+            output = _objective(
+                model,
+                ids,
+                cfg,
+                passes=passes,
+                recurrent=recurrent,
+                bank=bank,
+            )
+            outputs[passes] = output
+            total_gradients_by_pass[passes] = _gradients(output.loss, groups)
+        total = _weighted_gradients(
+            total_gradients_by_pass, pass_probabilities
+        )
         auxiliary = _subtract(total, ntp)
-        result[f"{name}_nmp_loss"] = float(output.metrics[f"{name}_nmp_loss"])
+        result[f"{name}_nmp_loss"] = _weighted_metric(
+            outputs, pass_probabilities, f"{name}_nmp_loss"
+        )
         for group, gradients in auxiliary.items():
             result[f"{name}_{group}_gradient_norm"] = _norm(gradients)
             result[f"{name}_{group}_vs_ntp_cosine"] = _cosine(
@@ -195,15 +266,38 @@ def main() -> None:
     parser.add_argument("--batches", type=int, default=8)
     parser.add_argument("--start-index", type=int, default=32)
     parser.add_argument("--head-warmup-batches", type=int, default=32)
+    parser.add_argument(
+        "--schedule-stage",
+        type=int,
+        default=0,
+        help="zero-based pass-schedule stage whose exact mixture is calibrated",
+    )
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
-    if args.batches <= 0 or args.head_warmup_batches <= 0 or args.start_index < 0:
+    if (
+        args.batches <= 0
+        or args.head_warmup_batches <= 0
+        or args.start_index < 0
+        or args.schedule_stage < 0
+    ):
         raise SystemExit("batches and head warm-up must be positive; start must be non-negative")
 
     config_path = _resolve(args.config)
     cfg = load_experiment_config(config_path)
     if cfg.nmp_detach_predictor_input:
         raise ValueError("calibration config must use coupled predictor inputs")
+    stages = cfg.normalized_pass_schedule()
+    if args.schedule_stage >= len(stages):
+        raise ValueError(
+            f"schedule stage {args.schedule_stage} does not exist; "
+            f"config has {len(stages)} stage(s)"
+        )
+    pass_probabilities = {
+        int(passes): float(probability)
+        for passes, probability in stages[args.schedule_stage][
+            "probabilities"
+        ].items()
+    }
     checkpoint = _resolve(args.checkpoint or cfg.init_from or "")
     if not checkpoint.is_file():
         raise FileNotFoundError(f"checkpoint does not exist: {checkpoint}")
@@ -228,53 +322,73 @@ def main() -> None:
     if not groups["head"] or not groups["pretrained"] or not groups["memory"]:
         raise RuntimeError("calibration requires head, pretrained, and memory parameters")
 
-    def measure() -> list[dict[str, float | None]]:
+    def measure(probabilities: dict[int, float]) -> list[dict[str, float | None]]:
         model.eval()
         records = []
         with torch.enable_grad():
             for index in range(args.start_index, args.start_index + args.batches):
                 ids = data.batch([index], device=device)
                 with autocast_context(device, cfg.autocast_dtype):
-                    records.append(_measure(model, ids, cfg, groups))
+                    records.append(
+                        _measure(model, ids, cfg, groups, probabilities)
+                    )
         return records
 
-    initial = _summary(measure())
+    initial_by_pass = {
+        str(passes): _summary(measure({passes: 1.0}))
+        for passes in pass_probabilities
+    }
+    initial_mixture = _summary(measure(pass_probabilities))
     original_requires_grad = [parameter.requires_grad for parameter in model.parameters()]
     head_ids = {id(parameter) for parameter in groups["head"]}
     for parameter in model.parameters():
         parameter.requires_grad_(id(parameter) in head_ids)
-    optimizer = torch.optim.AdamW(groups["head"], lr=cfg.added_lr, weight_decay=0.0)
+    optimizer = torch.optim.AdamW(
+        groups["head"], lr=cfg.nmp_predictor_lr, weight_decay=0.0
+    )
     model.train()
     for index in range(args.head_warmup_batches):
         ids = data.batch([index], device=device)
         optimizer.zero_grad(set_to_none=True)
-        with autocast_context(device, cfg.autocast_dtype):
-            output = _objective(
-                model,
-                ids,
-                cfg,
-                recurrent=float(model.recurrent_nmp_predictor is not None),
-                bank=float(model.bank_nmp_predictor is not None),
-            )
-        output.loss.backward()
+        for passes, probability in pass_probabilities.items():
+            with autocast_context(device, cfg.autocast_dtype):
+                output = _objective(
+                    model,
+                    ids,
+                    cfg,
+                    passes=passes,
+                    recurrent=float(model.recurrent_nmp_predictor is not None),
+                    bank=float(model.bank_nmp_predictor is not None),
+                )
+                loss = float(probability) * output.loss
+            loss.backward()
         torch.nn.utils.clip_grad_norm_(groups["head"], cfg.grad_clip)
         optimizer.step()
     for parameter, requires_grad in zip(
         model.parameters(), original_requires_grad, strict=True
     ):
         parameter.requires_grad_(requires_grad)
-    post_warmup = _summary(measure())
+    post_warmup_by_pass = {
+        str(passes): _summary(measure({passes: 1.0}))
+        for passes in pass_probabilities
+    }
+    post_warmup_mixture = _summary(measure(pass_probabilities))
 
     report = {
         "config": str(config_path),
         "checkpoint": str(checkpoint),
         "checkpoint_train_state": provenance["source_train_state"],
         "target_mode": cfg.nmp_target_mode,
+        "schedule_stage": args.schedule_stage,
+        "pass_probabilities": pass_probabilities,
         "batches": args.batches,
         "head_warmup_batches": args.head_warmup_batches,
-        "initial": initial,
-        "post_head_warmup": post_warmup,
-        "candidate_weights": _candidate_weights(post_warmup),
+        "head_warmup_learning_rate": cfg.nmp_predictor_lr,
+        "initial_by_pass": initial_by_pass,
+        "initial_mixture": initial_mixture,
+        "post_head_warmup_by_pass": post_warmup_by_pass,
+        "post_head_warmup_mixture": post_warmup_mixture,
+        "candidate_weights": _candidate_weights(post_warmup_mixture),
     }
     output_path = _resolve(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

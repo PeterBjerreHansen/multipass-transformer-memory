@@ -103,19 +103,40 @@ def test_nmp_continuation_initializes_head_and_applies_token_ramp(tmp_path):
         init_from=str(ntp_checkpoint),
         recurrent_nmp_weight=0.1,
         nmp_warmup_tokens=16,
+        pretrained_learning_rate=1e-6,
+        added_learning_rate=2e-5,
+        nmp_predictor_learning_rate=3e-4,
         eval_every_tokens=0,
         eval_batches=0,
         checkpoint_every_tokens=0,
     )
     nmp_config.validate()
     model = make_memory_add(seed=99, nmp_weight=0.1)
-    Trainer(
+    trainer = Trainer(
         model=model,
         config=nmp_config,
         train_data=train,
         validation_data=val,
         device=torch.device("cpu"),
-    ).train()
+    )
+    groups = {
+        group["group_name"]: group for group in trainer.optimizer.param_groups
+    }
+    assert {name: group["base_lr"] for name, group in groups.items()} == {
+        "pretrained": 1e-6,
+        "added": 2e-5,
+        "nmp_predictor": 3e-4,
+    }
+    predictor_ids = {
+        id(parameter) for parameter in model.nmp_predictor_parameters()
+    }
+    assert predictor_ids == {
+        id(parameter) for parameter in groups["nmp_predictor"]["params"]
+    }
+    assert predictor_ids.isdisjoint(
+        id(parameter) for parameter in groups["added"]["params"]
+    )
+    trainer.train()
     records = [
         json.loads(line)
         for line in (tmp_path / "nmp" / "metrics.jsonl").read_text().splitlines()
@@ -125,6 +146,37 @@ def test_nmp_continuation_initializes_head_and_applies_token_ramp(tmp_path):
     assert all("recurrent_nmp_loss" in record for record in records)
     assert model.recurrent_nmp_predictor is not None
     assert torch.count_nonzero(model.recurrent_nmp_predictor.output.weight) > 0
+
+    nmp_checkpoint = candidate_checkpoint_paths(tmp_path / "nmp")[0]
+    resumed_config = ExperimentConfig.from_dict(
+        {
+            **nmp_config.to_dict(),
+            "output_dir": str(tmp_path / "nmp-resumed"),
+            "init_from": None,
+            "resume_from": str(nmp_checkpoint),
+        }
+    )
+    resumed_model = make_memory_add(seed=99, nmp_weight=0.1)
+    resumed_trainer = Trainer(
+        model=resumed_model,
+        config=resumed_config,
+        train_data=train,
+        validation_data=val,
+        device=torch.device("cpu"),
+    )
+    assert resumed_trainer.state.unique_tokens_seen == 16
+    assert {
+        group["group_name"]: group["base_lr"]
+        for group in resumed_trainer.optimizer.param_groups
+    } == {
+        "pretrained": 1e-6,
+        "added": 2e-5,
+        "nmp_predictor": 3e-4,
+    }
+    for name, tensor in model.state_dict().items():
+        torch.testing.assert_close(
+            tensor, resumed_model.state_dict()[name], atol=0, rtol=0
+        )
 
 
 def test_phase_a_fixed_two_pass_training_counts_compute_and_freezes_backbone(tmp_path):

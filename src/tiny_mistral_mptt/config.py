@@ -297,6 +297,9 @@ class ExperimentConfig:
     learning_rate: float = 1e-6
     pretrained_learning_rate: float | None = None
     added_learning_rate: float | None = None
+    # A fresh NMP head may need a different LR from mature architecture-added
+    # modules. ``None`` preserves the historical shared ``added`` group.
+    nmp_predictor_learning_rate: float | None = None
     min_lr_ratio: float = 0.1
     warmup_tokens: int = 0
     lr_schedule: dict[str, Any] | None = None
@@ -443,6 +446,14 @@ class ExperimentConfig:
     def added_lr(self) -> float:
         return self.learning_rate if self.added_learning_rate is None else float(self.added_learning_rate)
 
+    @property
+    def nmp_predictor_lr(self) -> float:
+        return (
+            self.added_lr
+            if self.nmp_predictor_learning_rate is None
+            else float(self.nmp_predictor_learning_rate)
+        )
+
     def ntp_loss_weights_for_passes(self, passes: int) -> list[float] | None:
         if passes < 1:
             raise ValueError("passes must be positive")
@@ -535,6 +546,7 @@ class ExperimentConfig:
         for name, value in (
             ("pretrained_learning_rate", self.pretrained_learning_rate),
             ("added_learning_rate", self.added_learning_rate),
+            ("nmp_predictor_learning_rate", self.nmp_predictor_learning_rate),
         ):
             if value is not None and (not math.isfinite(float(value)) or float(value) < 0):
                 raise ValueError(f"{name} must be finite and non-negative")
@@ -602,6 +614,10 @@ class ExperimentConfig:
         ):
             raise ValueError("nmp_warmup_tokens must lie in [0, max_unique_tokens]")
         nmp_enabled = self.recurrent_nmp_weight > 0 or self.bank_nmp_weight > 0
+        if not nmp_enabled and self.nmp_predictor_learning_rate is not None:
+            raise ValueError(
+                "nmp_predictor_learning_rate requires an enabled NMP objective"
+            )
         if self.nmp_eval_passes is not None:
             if not self.nmp_eval_passes or any(
                 passes < 1 for passes in self.nmp_eval_passes

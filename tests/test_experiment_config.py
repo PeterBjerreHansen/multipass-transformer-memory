@@ -406,12 +406,21 @@ def test_nmp_target_and_validation_controls_are_explicit_and_scoped():
         nmp_target_mode="same_pass",
         nmp_detach_predictor_input=True,
         nmp_eval_passes=[3, 2, 2],
+        nmp_predictor_learning_rate=3e-5,
     )
     cfg.validate()
     assert cfg.nmp_eval_passes == [2, 3]
+    assert cfg.nmp_predictor_lr == 3e-5
+    assert cfg.to_dict()["nmp_predictor_learning_rate"] == 3e-5
     with pytest.raises(ValueError, match="nmp_target_mode"):
         ExperimentConfig(**common, nmp_target_mode="moving_average").validate()
     with pytest.raises(ValueError, match="require an enabled NMP objective"):
         ExperimentConfig(nmp_detach_predictor_input=True).validate()
     with pytest.raises(ValueError, match="positive pass counts"):
         ExperimentConfig(**common, nmp_eval_passes=[0]).validate()
+    with pytest.raises(ValueError, match="requires an enabled NMP objective"):
+        ExperimentConfig(nmp_predictor_learning_rate=3e-5).validate()
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        ExperimentConfig(
+            **common, nmp_predictor_learning_rate=float("nan")
+        ).validate()

@@ -367,6 +367,7 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
     canonical.setdefault("bank_nmp_pass_loss_weights_by_k", None)
     canonical.setdefault("nmp_target_mode", "shared_final")
     canonical.setdefault("nmp_detach_predictor_input", False)
+    canonical.setdefault("nmp_predictor_learning_rate", None)
     canonical.setdefault("allow_nmp_warm_start", False)
     canonical.setdefault("fbt_normalize_gate_input", False)
     canonical.setdefault("fbt_latent_jitter_std", 0.0)

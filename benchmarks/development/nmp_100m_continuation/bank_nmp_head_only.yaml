@@ -21,30 +21,33 @@ seed: 1337
 architecture_seed: 4242
 batch_size: 1
 grad_accum_steps: 1
-max_unique_tokens: 5242880
+max_unique_tokens: 52428800
 learning_rate: 1.0e-7
 pretrained_learning_rate: 1.0e-7
-added_learning_rate: 3.0e-5
+added_learning_rate: 3.0e-6
+nmp_predictor_learning_rate: 3.0e-5
 lr_schedule: {type: constant}
 weight_decay: 0.01
 grad_clip: 1.0
 pass_schedule:
-  - probabilities: {2: 1.0}
+  - probabilities: {2: 0.9, 3: 0.1}
 ntp_pass_loss_weights_by_k:
   2: [0.1, 0.9]
+  3: [0.1, 0.0, 0.9]
 bank_nmp_weight: 0.8510068634
 bank_nmp_pass_loss_weights_by_k:
-  2: [0.5, 0.5]
+  2: [0.1, 0.9]
+  3: [0.1, 0.0, 0.9]
 nmp_target_mode: shared_final
 nmp_detach_predictor_input: true
 nmp_warmup_tokens: 262144
-nmp_eval_passes: [2]
-eval_every_tokens: 262144
+nmp_eval_passes: [2, 3]
+eval_every_tokens: 1048576
 eval_passes: 4
 eval_batches: 64
-checkpoint_every_tokens: 262144
+checkpoint_every_tokens: 1048576
 checkpoint_every_seconds: 900.0
 checkpoint_keep_last: 2
-snapshot_at_tokens: [1048576, 5242880]
+snapshot_at_tokens: [10485760, 26214400, 52428800]
 init_from: benchmarks/core/stage_5_cloud_100m/results/hybrid_recirculation_100m/checkpoints/checkpoint_000100007936.pt
 resume_from: null

@@ -230,6 +230,15 @@ class Trainer:
             for parameter in model.parameters()
             if parameter.requires_grad and id(parameter) in added_ids
         ]
+        predictor_ids = {
+            id(parameter)
+            for parameter in getattr(model, "nmp_predictor_parameters", lambda: ())()
+        }
+        trainable_predictor = [
+            parameter
+            for parameter in model.parameters()
+            if parameter.requires_grad and id(parameter) in predictor_ids
+        ]
         microbatch_tokens = config.batch_size * self.linguistic_per_block
         microbatch_positions = config.batch_size * train_data.sequence_length
         nominal_optimizer_batch_tokens = microbatch_tokens * config.grad_accum_steps
@@ -262,6 +271,9 @@ class Trainer:
             "trainable_parameters": trainable,
             "trainable_pretrained_parameters": _parameter_count(trainable_pretrained),
             "trainable_added_parameters": _parameter_count(trainable_added),
+            "trainable_nmp_predictor_parameters": _parameter_count(
+                trainable_predictor
+            ),
             "added_parameters_total": _parameter_count(model.added_parameters()),
             "initialization_provenance": initialization_provenance,
         }
@@ -421,6 +433,15 @@ class Trainer:
 
     def _build_optimizer(self) -> torch.optim.Optimizer:
         added_ids = {id(parameter) for parameter in self.model.added_parameters()}
+        predictor_ids = {
+            id(parameter)
+            for parameter in getattr(
+                self.model, "nmp_predictor_parameters", lambda: ()
+            )()
+        }
+        if not predictor_ids <= added_ids:
+            raise RuntimeError("NMP predictor parameters must be architecture-added")
+        separate_predictor = self.config.nmp_predictor_learning_rate is not None
         pretrained = [
             parameter
             for parameter in self.model.parameters()
@@ -429,7 +450,16 @@ class Trainer:
         added = [
             parameter
             for parameter in self.model.parameters()
-            if parameter.requires_grad and id(parameter) in added_ids
+            if parameter.requires_grad
+            and id(parameter) in added_ids
+            and (not separate_predictor or id(parameter) not in predictor_ids)
+        ]
+        predictor = [
+            parameter
+            for parameter in self.model.parameters()
+            if parameter.requires_grad
+            and separate_predictor
+            and id(parameter) in predictor_ids
         ]
         groups: list[dict] = []
         if pretrained:
@@ -452,23 +482,50 @@ class Trainer:
                     "weight_decay": self.config.weight_decay,
                 }
             )
+        if predictor:
+            groups.append(
+                {
+                    "params": predictor,
+                    "lr": self.config.nmp_predictor_lr,
+                    "base_lr": self.config.nmp_predictor_lr,
+                    "group_name": "nmp_predictor",
+                    "weight_decay": self.config.weight_decay,
+                }
+            )
         if not groups:
             raise RuntimeError("no optimizer parameters")
         return torch.optim.AdamW(groups, foreach=False)
 
     def _repair_optimizer_group_metadata(self) -> None:
         added_ids = {id(parameter) for parameter in self.model.added_parameters()}
+        predictor_ids = {
+            id(parameter)
+            for parameter in getattr(
+                self.model, "nmp_predictor_parameters", lambda: ()
+            )()
+        }
+        separate_predictor = self.config.nmp_predictor_learning_rate is not None
+
+        def category(parameter) -> str:
+            parameter_id = id(parameter)
+            if separate_predictor and parameter_id in predictor_ids:
+                return "nmp_predictor"
+            if parameter_id in added_ids:
+                return "added"
+            return "pretrained"
+
+        base_lrs = {
+            "pretrained": self.config.pretrained_lr,
+            "added": self.config.added_lr,
+            "nmp_predictor": self.config.nmp_predictor_lr,
+        }
         for group in self.optimizer.param_groups:
-            flags = {id(parameter) in added_ids for parameter in group["params"]}
-            if len(flags) != 1:
-                raise RuntimeError("optimizer group mixes pretrained and added parameters")
-            is_added = next(iter(flags))
-            name = "added" if is_added else "pretrained"
+            categories = {category(parameter) for parameter in group["params"]}
+            if len(categories) != 1:
+                raise RuntimeError("optimizer group mixes parameter categories")
+            name = next(iter(categories))
             group.setdefault("group_name", name)
-            group.setdefault(
-                "base_lr",
-                self.config.added_lr if is_added else self.config.pretrained_lr,
-            )
+            group.setdefault("base_lr", base_lrs[name])
 
     def _set_lr(self) -> dict[str, float]:
         multiplier = lr_multiplier(
