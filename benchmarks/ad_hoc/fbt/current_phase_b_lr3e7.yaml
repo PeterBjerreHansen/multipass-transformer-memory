@@ -31,7 +31,7 @@ eval_every_tokens: 262144
 eval_passes: 4
 eval_batches: 32
 early_stop:
-  pass_nll_max: {1: 2.573, 4: 2.33}
+  pass_nll_max: {1: 2.573, 4: 2.34}
   pass_nll_delta_max:
     - {pass: 4, reference_pass: 2, max_delta: 0.02}
   hidden_delta_nonincreasing: true

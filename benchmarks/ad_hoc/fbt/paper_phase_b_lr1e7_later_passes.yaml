@@ -1,8 +1,8 @@
 variant: fbt
-phase: A
+phase: B
 model_dir: checkpoints/TinyMistral-248M-v3
 data_dir: data/dolmino/wiring_2048
-output_dir: benchmarks/ad_hoc/fbt/results/paper_phase_a_control
+output_dir: benchmarks/ad_hoc/fbt/results/paper_phase_b_lr1e7_later_passes
 device: mps
 dtype: float32
 autocast_dtype: null
@@ -11,9 +11,9 @@ seed: 1337
 architecture_seed: 4242
 batch_size: 1
 grad_accum_steps: 1
-max_unique_tokens: 5242880
+max_unique_tokens: 31457280
 learning_rate: 1.0e-4
-pretrained_learning_rate: 0.0
+pretrained_learning_rate: 1.0e-7
 added_learning_rate: 1.0e-4
 lr_schedule: {type: constant}
 weight_decay: 0.01
@@ -21,13 +21,14 @@ grad_clip: 1.0
 prefix_mixin_probability: 1.0
 fbt_normalize_gate_input: true
 fbt_latent_jitter_std: 0.02
-# Phase A cannot learn on K=1 batches because FBT's added path starts at pass 2.
-# Reweight the paper's feedback-bearing 22:3 subset while retaining K=3 exposure.
+# K=4 is trained directly; later-pass batches carry half the probability mass.
 pass_schedule:
-  - probabilities: {2: 0.88, 3: 0.12}
+  - probabilities: {1: 0.50, 2: 0.25, 3: 0.15, 4: 0.10}
 ntp_pass_loss_weights_by_k:
-  2: [0.5, 0.5]
-  3: [0.5, 0.25, 0.25]
+  1: [1.0]
+  2: [0.45, 0.55]
+  3: [0.40, 0.30, 0.30]
+  4: [0.35, 0.20, 0.20, 0.25]
 eval_every_tokens: 262144
 eval_passes: 4
 eval_batches: 32
@@ -39,6 +40,6 @@ early_stop:
 checkpoint_every_tokens: 262144
 checkpoint_every_seconds: 900.0
 checkpoint_keep_last: 2
-snapshot_at_tokens: [5242880]
+snapshot_at_tokens: [5242880, 10485760, 15728640, 20971520, 26214400, 31457280]
 resume_from: null
-init_from: null
+init_from: benchmarks/ad_hoc/fbt/results/paper_phase_b_lr1e7/checkpoints/checkpoint_000031457280.pt

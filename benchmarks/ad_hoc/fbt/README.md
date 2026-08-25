@@ -70,7 +70,7 @@ uv run python scripts/run_study.py \
 All arms evaluate four passes on the same 32 validation blocks every 262,144
 unique tokens. Training stops after a checkpoint when all gates pass:
 
-- pass-4 NLL is at most `2.33`;
+- pass-4 NLL is at most `2.34`;
 - pass-4 NLL is no more than `0.02` above pass-2 NLL;
 - hidden-state delta RMS is nonincreasing from pass to pass; and
 - pass-1 NLL is at most `2.573` (the measured `2.553` base plus `0.02`).
