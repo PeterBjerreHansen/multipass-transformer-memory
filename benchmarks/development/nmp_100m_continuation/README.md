@@ -28,11 +28,10 @@ substitutes. The primary comparison is the common 52,428,800-token endpoint.
    training tokens after skipping the 5,242,880-token wiring slice and the
    completed 100,007,936-token Phase-B slice.
 2. Run `make check` and the study verifier.
-3. Run `calibrate_nmp.py` on CUDA after isolated head warm-up. It measures K=2,
-   K=3, and the exact configured 90/10 gradient mixture. The committed
-   coefficient `0.8510068634` is only the legacy 10M-parent 5% shared-gradient
-   coefficient. Replace it in both NMP configs if the 100M mixed-pass
-   calibration differs materially, and commit the compact report.
+3. Review `CALIBRATION.md`. CUDA calibration after isolated head warm-up
+   measures K=2, K=3, and the exact configured 90/10 gradient mixture. The
+   locked coefficient `0.427766729982766` targets 5% of the pretrained NTP
+   gradient norm on the 100M parent.
 4. Wire all three arms at both sampled pass depths.
 
 The continuation preserves the parent's terminal mature-module learning rates:
@@ -45,6 +44,7 @@ uv run python scripts/prepare_data.py \
   --config data/dolmino/nmp_100m_2048/config.yaml
 uv run python scripts/verify_data.py data/dolmino/nmp_100m_2048
 make check
+# Re-run only if the source, target, mixture, or predictor setup changes.
 uv run python benchmarks/development/nmp_100m_continuation/calibrate_nmp.py \
   --config benchmarks/development/nmp_100m_continuation/bank_nmp_coupled.yaml \
   --output benchmarks/development/nmp_100m_continuation/results/calibration.json

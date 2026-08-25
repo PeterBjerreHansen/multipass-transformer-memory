@@ -75,10 +75,9 @@ The script measures the same fixed blocks at each K and differentiates the
 exact probability-weighted loss. It does not estimate the 90/10 mixture from a
 small random sample.
 
-Use the post-warm-up 5% coefficient for this campaign unless it is non-finite
-or clearly pathological. Write the chosen value into both NMP configs and
-record the calibration JSON under the ignored results directory; commit a
-compact reviewed summary, not large artifacts.
+The post-warm-up 5% coefficient is `0.427766729982766`. It is locked in both
+NMP configs. The full calibration JSON is ignored; `CALIBRATION.md` is the
+committed reviewed summary.
 
 ### 3. Verify the separate predictor LR
 
