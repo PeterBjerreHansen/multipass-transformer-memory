@@ -80,13 +80,11 @@ See `docs/MEMORY_ATTENTION.md` for the conceptual vocabulary and `docs/BANK_MEMO
 
 ### More Ideas, Future Work
 
-1. **Next Memory Prediction.** This branch implements a training-only auxiliary objective inspired by [NextLat](https://arxiv.org/abs/2511.05963), with future memory representations as targets. I have a strong and unproven suspicion that this will work nicely: since there is a lot of pressure on the memory latents to be useful **inputs** to the model, they should contain information that is already useful for NTP prediction and so should be less prone to collapse. In some sense, predicting these memories amounts to predicting features that the model will think are useful later. I like this notion that one should want to predict what is itself predictive. The implementation is tested, but I have not yet evaluated whether NMP improves language-model quality. See `docs/NEXT_MEMORY_PREDICTION.md`.
+1. The sparse SWA and Multiscale Memory Attention controls are implemented, and their 100M-token runs are complete.
 
-2. The sparse SWA and Multiscale Memory Attention controls are implemented, and their 100M-token runs are complete.
+2. Most SOTA models still use dense attention in at least a few layers. I suspect that a local SWA attention + dense long-range attention over memories might perform better than placing the dense attention in a normal layer.
 
-3. Most SOTA models still use dense attention in at least a few layers. I suspect that a local SWA attention + dense long-range attention over memories might perform better than placing the dense attention in a normal layer.
-
-4. I want to properly wire in the [FBT](https://arxiv.org/abs/2608.08888) model next and test out hybrids. However, the process is a little more tricky for FBT as the mechanism is not residual.
+3. I want to properly wire in the [FBT](https://arxiv.org/abs/2608.08888) model next and test out hybrids. However, the process is a little more tricky for FBT as the mechanism is not residual.
 
 ## Repository map
 
@@ -125,8 +123,6 @@ Learning-rate schedules and run token budgets use linguistic tokens. Throughput 
 ## Current research status
 
 The locked eight-arm study compares vanilla, adaptive Recirculation, three Memory Attention access patterns, the Recirculation–Periodic Memory Attention hybrid, Multiscale Memory Attention, and Sparse SWA. Its configs remain under `benchmarks/core/stage_5_cloud_100m/`; all eight 100M-token runs are complete and their full artifacts are under `benchmarks/core/stage_5_cloud_100m/results/`. Multiscale Memory Attention used its verified frozen-backbone wiring checkpoint. Sparse SWA has no added parameters and started in Phase B. The runnable path is documented in `benchmarks/development/experimental_pipeline.md`.
-
-Next Memory Prediction is implemented and tested on this branch, but does not yet have a reported language-model quality result.
 
 FBT and MemoryAdd are retired controls. Their implementations and focused correctness tests remain only for historical checkpoint/provenance compatibility, like other archived research controls, but neither appears in the active studies, efficiency qualifications, cloud campaign, or current results. BankAddHybrid, which uses the same MemoryAdd fast channel, is also retired from the active experiment surface.
 

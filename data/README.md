@@ -12,8 +12,5 @@ materialized dataset files are ignored.
   training may repeat it when a declared campaign budget exceeds one epoch.
 - `dolmino/gpu_2048_staged/config.yaml`: shared validation plus non-overlapping
   wiring and Phase-B slices for initialized serious-run controls.
-- `dolmino/nmp_100m_2048/config.yaml`: the fresh 5M-token slice immediately
-  after the staged 100M Phase-B slice, reserved for matched NMP continuations.
-
 Use `scripts/prepare_data.py` and `scripts/verify_data.py` rather than editing a
 generated artifact in place.

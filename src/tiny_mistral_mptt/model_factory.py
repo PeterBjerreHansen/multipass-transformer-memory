@@ -50,12 +50,6 @@ def build_variant(
     recirculation_destination_layer: int | None = None,
     recirculation_alpha: float = 0.1,
     recirculation_mode: str = "fixed",
-    recurrent_nmp_weight: float = 0.0,
-    bank_nmp_weight: float = 0.0,
-    recurrent_nmp_target_normalization: str = "rms",
-    nmp_projection_factor: float = 1.3,
-    nmp_target_mode: str = "shared_final",
-    nmp_detach_predictor_input: bool = False,
 ) -> ExperimentalVariant:
     requested_name = str(name)
     name = canonical_variant_name(requested_name)
@@ -173,21 +167,6 @@ def build_variant(
     else:
         raise ValueError(f"unknown variant {name!r}")
 
-    if recurrent_nmp_weight or bank_nmp_weight:
-        from .variants import MultiPassVariant
-
-        if not isinstance(variant, MultiPassVariant):
-            raise ValueError(f"{name} does not support NMP")
-        variant.configure_nmp(
-            recurrent_weight=recurrent_nmp_weight,
-            bank_weight=bank_nmp_weight,
-            recurrent_target_normalization=recurrent_nmp_target_normalization,
-            projection_factor=nmp_projection_factor,
-            initialization_seed=architecture_seed,
-            target_mode=nmp_target_mode,
-            detach_predictor_input=nmp_detach_predictor_input,
-        )
-
     reference_parameter = next(backbone.parameters())
     variant.to(device=reference_parameter.device, dtype=reference_parameter.dtype)
     # Keep the public alias visible for experiment metadata while preserving
@@ -225,12 +204,6 @@ def load_variant(
     recirculation_destination_layer: int | None = None,
     recirculation_alpha: float = 0.1,
     recirculation_mode: str = "fixed",
-    recurrent_nmp_weight: float = 0.0,
-    bank_nmp_weight: float = 0.0,
-    recurrent_nmp_target_normalization: str = "rms",
-    nmp_projection_factor: float = 1.3,
-    nmp_target_mode: str = "shared_final",
-    nmp_detach_predictor_input: bool = False,
 ) -> ExperimentalVariant:
     backbone = load_model(
         model_dir,
@@ -262,12 +235,6 @@ def load_variant(
         recirculation_destination_layer=recirculation_destination_layer,
         recirculation_alpha=recirculation_alpha,
         recirculation_mode=recirculation_mode,
-        recurrent_nmp_weight=recurrent_nmp_weight,
-        bank_nmp_weight=bank_nmp_weight,
-        recurrent_nmp_target_normalization=recurrent_nmp_target_normalization,
-        nmp_projection_factor=nmp_projection_factor,
-        nmp_target_mode=nmp_target_mode,
-        nmp_detach_predictor_input=nmp_detach_predictor_input,
     )
 
 
@@ -314,10 +281,4 @@ def load_variant_from_config(
         recirculation_destination_layer=cfg.recirculation_destination_layer,
         recirculation_alpha=cfg.recirculation_alpha,
         recirculation_mode=cfg.recirculation_mode,
-        recurrent_nmp_weight=cfg.recurrent_nmp_weight,
-        bank_nmp_weight=cfg.bank_nmp_weight,
-        recurrent_nmp_target_normalization=cfg.recurrent_nmp_target_normalization,
-        nmp_projection_factor=cfg.nmp_projection_factor,
-        nmp_target_mode=cfg.nmp_target_mode,
-        nmp_detach_predictor_input=cfg.nmp_detach_predictor_input,
     )

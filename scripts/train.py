@@ -73,10 +73,8 @@ def main() -> None:
             # Once a trajectory exists, automatic recovery must take
             # precedence over one-time model initialisation.
             cfg.resume_from = None
-            # Keep the original NTP parent in the config.  Trainer will load
-            # the newest run checkpoint after constructing the model, while
-            # retaining ``init_from`` lets NMP continuation validation know
-            # that this trajectory originated from an NTP-trained model.
+            # Keep the original initialization parent in the config. Trainer
+            # loads the newest run checkpoint after constructing the model.
     elif args.init_from is not None:
         cfg.init_from = args.init_from
         cfg.resume_from = None

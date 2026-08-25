@@ -421,7 +421,6 @@ class BankVariant(MultiPassVariant):
 
     variant_name = "bank"
     supports_cached_feedback = True
-    supports_bank_nmp = True
 
     def __init__(
         self,
@@ -624,15 +623,6 @@ class BankVariant(MultiPassVariant):
         ordinary = ~self.memory_token_mask(input_ids)
         positions = ordinary.long().cumsum(dim=1) - 1
         return positions.clamp_min(0)
-
-    def nmp_written_states(self, final_bank_source: torch.Tensor) -> torch.Tensor:
-        return self.writer(final_bank_source)
-
-    def nmp_write_mask(self, input_ids: torch.Tensor) -> torch.Tensor:
-        return self.write_mask(input_ids)
-
-    def nmp_sequence_positions(self, input_ids: torch.Tensor) -> torch.Tensor:
-        return self.sequence_positions(input_ids)
 
     def next_sequence_positions(self, input_ids: torch.Tensor) -> torch.Tensor:
         self._validate_input_ids(input_ids)

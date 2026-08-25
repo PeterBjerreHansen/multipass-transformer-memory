@@ -84,9 +84,9 @@ def _comparison_view(
     experimental_axes: set[str],
     allowed_differences: set[str],
 ) -> dict[str, Any]:
-    # Study manifests written before the explicit NTP/NMP naming split may
-    # still declare the generic pass-loss names. Compare against the canonical
-    # serialized config while retaining compatibility with those manifests.
+    # Older study manifests may still declare the generic pass-loss names.
+    # Compare against the canonical serialized config while retaining
+    # compatibility with those manifests.
     declared = {
         _CONFIG_FIELD_ALIASES.get(field, field)
         for field in experimental_axes | allowed_differences

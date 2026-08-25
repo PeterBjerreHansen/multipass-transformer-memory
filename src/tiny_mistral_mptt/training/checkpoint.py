@@ -11,6 +11,8 @@ from typing import Any
 import torch
 from safetensors.torch import load_file as load_safetensors
 
+from ..config import ExperimentConfig
+
 
 FORMAT_VERSION = 3
 _CHECKPOINT_RE = re.compile(r"^checkpoint_(\d{12})\.pt$")
@@ -355,25 +357,23 @@ def save_checkpoint_generation(
 
 
 def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
-    # Canonicalize the pre-NMP generic NTP pass-weight names and fill defaults
-    # for fields introduced after older checkpoints were written. This keeps
-    # exact resume viable while making new configs self-describing.
+    # Canonicalize historical generic pass-weight names and discard fields
+    # that are no longer part of the current experiment schema. This keeps
+    # exact resume viable for older checkpoints.
     canonical = dict(config)
     if "ntp_pass_loss_weights" not in canonical:
         canonical["ntp_pass_loss_weights"] = canonical.get("pass_loss_weights")
     if "ntp_pass_loss_weights_by_k" not in canonical:
         canonical["ntp_pass_loss_weights_by_k"] = canonical.get("pass_loss_weights_by_k")
-    canonical.setdefault("recurrent_nmp_target_normalization", "rms")
-    canonical.setdefault("recurrent_nmp_pass_loss_weights_by_k", None)
-    canonical.setdefault("bank_nmp_pass_loss_weights_by_k", None)
-    canonical.setdefault("nmp_target_mode", "shared_final")
-    canonical.setdefault("nmp_detach_predictor_input", False)
-    canonical.setdefault("nmp_predictor_learning_rate", None)
-    canonical.setdefault("allow_nmp_warm_start", False)
     canonical.setdefault("fbt_normalize_gate_input", False)
     canonical.setdefault("fbt_latent_jitter_std", 0.0)
     canonical.pop("pass_loss_weights", None)
     canonical.pop("pass_loss_weights_by_k", None)
+    canonical = {
+        key: value
+        for key, value in canonical.items()
+        if key in ExperimentConfig.__dataclass_fields__
+    }
     ignored = {
         "model_dir",
         "data_dir",
@@ -383,7 +383,6 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
         "eval_every_tokens",
         "eval_batches",
         "eval_passes",
-        "nmp_eval_passes",
         "early_stop",
         "checkpoint_every_tokens",
         "checkpoint_every_seconds",
@@ -451,17 +450,6 @@ def _changed_init_architecture_fields(
     )
 
 
-def _source_config_has_nmp(config: dict[str, Any]) -> bool:
-    return any(
-        float(config.get(field, 0.0) or 0.0) > 0.0
-        for field in (
-            "recurrent_nmp_weight",
-            "bank_nmp_weight",
-            "tape_nmp_weight",
-        )
-    )
-
-
 def _validate_payload(
     payload: dict[str, Any],
     *,
@@ -500,7 +488,6 @@ def load_model_weights(
     *,
     model: torch.nn.Module,
     expected_experiment_config: dict[str, Any],
-    allow_nmp_warm_start: bool = False,
 ) -> dict[str, Any]:
     source_path = Path(path)
     source_format = "experiment_checkpoint"
@@ -560,10 +547,6 @@ def load_model_weights(
             "init_from architecture semantics changed: "
             f"{changed_architecture}"
         )
-    source_has_nmp = _source_config_has_nmp(source_config) or any(
-        key.startswith(("recurrent_nmp_predictor.", "bank_nmp_predictor."))
-        for key in checkpoint_state
-    )
     expected_keys = set(model.state_dict())
     checkpoint_keys = set(checkpoint_state)
     missing = expected_keys - checkpoint_keys
@@ -592,11 +575,6 @@ def load_model_weights(
             "init_from model state is incompatible; "
             f"missing={disallowed_missing}, unexpected={sorted(unexpected)}"
         )
-    if source_has_nmp and not allow_nmp_warm_start:
-        raise ValueError(
-            "init_from source already contains NMP training; set "
-            "allow_nmp_warm_start=true only for an intentional NMP warm start"
-        )
     result = model.load_state_dict(checkpoint_state, strict=False)
     if set(result.missing_keys) != allowed_missing or result.unexpected_keys:
         raise RuntimeError(
@@ -608,7 +586,6 @@ def load_model_weights(
         "source_train_state": source_train_state,
         "source_experiment_config": source_config,
         "init_compatibility_view": _init_compatibility_view(source_config),
-        "source_has_nmp": source_has_nmp,
         "freshly_initialized_model_keys": sorted(allowed_missing),
         "snapshot_metadata": snapshot_metadata,
     }

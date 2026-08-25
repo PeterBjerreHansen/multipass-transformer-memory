@@ -84,7 +84,6 @@ class RecirculationVariant(MultiPassVariant):
 
     variant_name = "recirculation"
     supports_cached_feedback = True
-    supports_recurrent_nmp = True
 
     def __init__(
         self,

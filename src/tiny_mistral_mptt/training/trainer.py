@@ -17,7 +17,6 @@ from ..config import ExperimentConfig
 from ..data.manifest import file_sha256, verify_artifact
 from ..data.packed_dataset import MemoryTokenPackedDataset, PackedTokenDataset, StatefulBlockSampler
 from ..evaluation.nll import evaluate_nll
-from ..evaluation.nmp import evaluate_nmp
 from ..evaluation.pass_depth import evaluate_pass_depth
 from ..precision import autocast_context
 from ..variants.base import ExperimentalVariant
@@ -209,7 +208,6 @@ class Trainer:
                 config.init_from,
                 model=self.model,
                 expected_experiment_config=config.to_dict(),
-                allow_nmp_warm_start=config.allow_nmp_warm_start,
             )
             initialization_provenance["source_sha256"] = file_sha256(config.init_from)
 
@@ -229,15 +227,6 @@ class Trainer:
             parameter
             for parameter in model.parameters()
             if parameter.requires_grad and id(parameter) in added_ids
-        ]
-        predictor_ids = {
-            id(parameter)
-            for parameter in getattr(model, "nmp_predictor_parameters", lambda: ())()
-        }
-        trainable_predictor = [
-            parameter
-            for parameter in model.parameters()
-            if parameter.requires_grad and id(parameter) in predictor_ids
         ]
         microbatch_tokens = config.batch_size * self.linguistic_per_block
         microbatch_positions = config.batch_size * train_data.sequence_length
@@ -271,9 +260,6 @@ class Trainer:
             "trainable_parameters": trainable,
             "trainable_pretrained_parameters": _parameter_count(trainable_pretrained),
             "trainable_added_parameters": _parameter_count(trainable_added),
-            "trainable_nmp_predictor_parameters": _parameter_count(
-                trainable_predictor
-            ),
             "added_parameters_total": _parameter_count(model.added_parameters()),
             "initialization_provenance": initialization_provenance,
         }
@@ -433,15 +419,6 @@ class Trainer:
 
     def _build_optimizer(self) -> torch.optim.Optimizer:
         added_ids = {id(parameter) for parameter in self.model.added_parameters()}
-        predictor_ids = {
-            id(parameter)
-            for parameter in getattr(
-                self.model, "nmp_predictor_parameters", lambda: ()
-            )()
-        }
-        if not predictor_ids <= added_ids:
-            raise RuntimeError("NMP predictor parameters must be architecture-added")
-        separate_predictor = self.config.nmp_predictor_learning_rate is not None
         pretrained = [
             parameter
             for parameter in self.model.parameters()
@@ -452,14 +429,6 @@ class Trainer:
             for parameter in self.model.parameters()
             if parameter.requires_grad
             and id(parameter) in added_ids
-            and (not separate_predictor or id(parameter) not in predictor_ids)
-        ]
-        predictor = [
-            parameter
-            for parameter in self.model.parameters()
-            if parameter.requires_grad
-            and separate_predictor
-            and id(parameter) in predictor_ids
         ]
         groups: list[dict] = []
         if pretrained:
@@ -482,34 +451,15 @@ class Trainer:
                     "weight_decay": self.config.weight_decay,
                 }
             )
-        if predictor:
-            groups.append(
-                {
-                    "params": predictor,
-                    "lr": self.config.nmp_predictor_lr,
-                    "base_lr": self.config.nmp_predictor_lr,
-                    "group_name": "nmp_predictor",
-                    "weight_decay": self.config.weight_decay,
-                }
-            )
         if not groups:
             raise RuntimeError("no optimizer parameters")
         return torch.optim.AdamW(groups, foreach=False)
 
     def _repair_optimizer_group_metadata(self) -> None:
         added_ids = {id(parameter) for parameter in self.model.added_parameters()}
-        predictor_ids = {
-            id(parameter)
-            for parameter in getattr(
-                self.model, "nmp_predictor_parameters", lambda: ()
-            )()
-        }
-        separate_predictor = self.config.nmp_predictor_learning_rate is not None
 
         def category(parameter) -> str:
             parameter_id = id(parameter)
-            if separate_predictor and parameter_id in predictor_ids:
-                return "nmp_predictor"
             if parameter_id in added_ids:
                 return "added"
             return "pretrained"
@@ -517,7 +467,6 @@ class Trainer:
         base_lrs = {
             "pretrained": self.config.pretrained_lr,
             "added": self.config.added_lr,
-            "nmp_predictor": self.config.nmp_predictor_lr,
         }
         for group in self.optimizer.param_groups:
             categories = {category(parameter) for parameter in group["params"]}
@@ -640,34 +589,6 @@ class Trainer:
                 "validation_blocks": result.blocks,
                 "eval_passes": result.passes,
             }
-        if self.config.nmp_eval_passes is not None:
-            if not isinstance(self.model, MultiPassVariant):
-                raise ValueError("nmp_eval_passes requires a multipass variant")
-            by_k: dict[str, dict[str, object]] = {}
-            for passes in self.config.nmp_eval_passes:
-                nmp_result = evaluate_nmp(
-                    self.model,
-                    self.validation_data,
-                    device=self.device,
-                    passes=passes,
-                    recurrent_nmp_loss_weights=(
-                        self.config.recurrent_nmp_loss_weights_for_passes(passes)
-                    ),
-                    bank_nmp_loss_weights=(
-                        self.config.bank_nmp_loss_weights_for_passes(passes)
-                    ),
-                    max_blocks=self.config.eval_batches or None,
-                )
-                by_k[str(passes)] = {
-                    "blocks": nmp_result.blocks,
-                    "predicted_tokens": nmp_result.predicted_tokens,
-                    **nmp_result.metrics,
-                }
-            record["nmp_validation"] = {
-                "target_mode": self.config.nmp_target_mode,
-                "predictor_input_detached": self.config.nmp_detach_predictor_input,
-                "by_k": by_k,
-            }
         if self.config.early_stop is not None:
             record["early_stop"] = _validation_stop_status(
                 record, self.config.early_stop
@@ -785,15 +706,6 @@ class Trainer:
                         phase=cfg.phase,
                         passes=passes,
                         loss_weights=cfg.ntp_loss_weights_for_passes(passes),
-                        recurrent_nmp_loss_weights=cfg.recurrent_nmp_loss_weights_for_passes(
-                            passes
-                        ),
-                        bank_nmp_loss_weights=cfg.bank_nmp_loss_weights_for_passes(
-                            passes
-                        ),
-                        nmp_weight_scale=cfg.nmp_weight_scale_at(
-                            self.state.unique_tokens_seen
-                        ),
                     )
                 if not bool(torch.isfinite(output.loss).item()):
                     raise RuntimeError("non-finite training loss")

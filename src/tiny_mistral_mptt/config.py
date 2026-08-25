@@ -9,8 +9,6 @@ from typing import Any
 
 import yaml
 
-from .nmp import NMP_TARGET_NORMALIZATIONS
-
 # The implementation still uses historical ``bank`` names internally so
 # existing checkpoints, configs, and result paths remain loadable. New
 # experiments can use the clearer Memory Attention names below.
@@ -61,7 +59,6 @@ MULTISCALE_MEMORY_ATTENTION_VARIANTS = {
 }
 SUPPORTED_LR_SCHEDULES = {"constant", "cosine", "piecewise_linear"}
 SUPPORTED_AUTOCAST_DTYPES = {"bfloat16"}
-SUPPORTED_NMP_TARGET_MODES = {"shared_final", "same_pass"}
 
 
 def _coerce_pass_probabilities(raw: Any) -> dict[int, float]:
@@ -297,9 +294,6 @@ class ExperimentConfig:
     learning_rate: float = 1e-6
     pretrained_learning_rate: float | None = None
     added_learning_rate: float | None = None
-    # A fresh NMP head may need a different LR from mature architecture-added
-    # modules. ``None`` preserves the historical shared ``added`` group.
-    nmp_predictor_learning_rate: float | None = None
     min_lr_ratio: float = 0.1
     warmup_tokens: int = 0
     lr_schedule: dict[str, Any] | None = None
@@ -309,16 +303,14 @@ class ExperimentConfig:
     eval_every_tokens: int = 32_768
     eval_batches: int = 16
     eval_passes: int = 1
-    nmp_eval_passes: list[int] | None = None
     early_stop: dict[str, Any] | None = None
     checkpoint_every_tokens: int = 65_536
     checkpoint_every_seconds: float = 0.0
     checkpoint_keep_last: int = 2
     snapshot_at_tokens: list[int] | None = None
 
-    # Architecture/training protocol knobs. NTP names are explicit because
-    # recurrent and Memory Attention NMP have independent pass-loss weightings
-    # below. Historical bank field names remain serialized for compatibility.
+    # Architecture/training protocol knobs. Explicit NTP names and historical
+    # bank field names remain serialized for checkpoint compatibility.
     phase: str = "B"
     pass_schedule: list[dict[str, Any]] | None = None
     ntp_pass_loss_weights: list[float] | None = None
@@ -353,24 +345,6 @@ class ExperimentConfig:
     recirculation_alpha: float = 0.1
     recirculation_mode: str = "fixed"
 
-    # Training-only next-memory prediction (NMP). Disabled objectives do not
-    # instantiate heads and therefore preserve historical model state exactly.
-    recurrent_nmp_weight: float = 0.0
-    bank_nmp_weight: float = 0.0
-    # Recirculation sources are high-amplitude residual-stream states, so the
-    # default target is parameter-free RMS-normalized. ``none`` remains useful
-    # as a raw-state ablation. Memory Attention targets are always the
-    # post-writer memory
-    # representation and are intentionally not normalized here.
-    recurrent_nmp_target_normalization: str = "rms"
-    recurrent_nmp_pass_loss_weights_by_k: dict[int, list[float]] | None = None
-    bank_nmp_pass_loss_weights_by_k: dict[int, list[float]] | None = None
-    nmp_projection_factor: float = 1.3
-    nmp_warmup_tokens: int = 0
-    nmp_target_mode: str = "shared_final"
-    nmp_detach_predictor_input: bool = False
-    allow_nmp_warm_start: bool = False
-
     # ``resume_from`` restores the exact run. ``init_from`` loads model weights
     # only and begins a fresh trajectory/optimizer/data schedule.
     resume_from: str | None = None
@@ -392,11 +366,7 @@ class ExperimentConfig:
             self.ntp_pass_loss_weights = self.pass_loss_weights
         if self.ntp_pass_loss_weights_by_k is None:
             self.ntp_pass_loss_weights_by_k = self.pass_loss_weights_by_k
-        for field_name in (
-            "ntp_pass_loss_weights_by_k",
-            "recurrent_nmp_pass_loss_weights_by_k",
-            "bank_nmp_pass_loss_weights_by_k",
-        ):
+        for field_name in ("ntp_pass_loss_weights_by_k",):
             value = getattr(self, field_name)
             if value is not None:
                 setattr(
@@ -408,8 +378,6 @@ class ExperimentConfig:
             self.pass_loss_weights_by_k = self.ntp_pass_loss_weights_by_k
         if self.snapshot_at_tokens is not None:
             self.snapshot_at_tokens = sorted({int(value) for value in self.snapshot_at_tokens})
-        if self.nmp_eval_passes is not None:
-            self.nmp_eval_passes = sorted({int(value) for value in self.nmp_eval_passes})
         self.early_stop = _coerce_early_stop(self.early_stop)
         if self.variant in MEMORY_ATTENTION_VARIANTS:
             self.memory_layers = _coerce_layer_indices(
@@ -446,14 +414,6 @@ class ExperimentConfig:
     def added_lr(self) -> float:
         return self.learning_rate if self.added_learning_rate is None else float(self.added_learning_rate)
 
-    @property
-    def nmp_predictor_lr(self) -> float:
-        return (
-            self.added_lr
-            if self.nmp_predictor_learning_rate is None
-            else float(self.nmp_predictor_learning_rate)
-        )
-
     def ntp_loss_weights_for_passes(self, passes: int) -> list[float] | None:
         if passes < 1:
             raise ValueError("passes must be positive")
@@ -470,45 +430,6 @@ class ExperimentConfig:
     def loss_weights_for_passes(self, passes: int) -> list[float] | None:
         return self.ntp_loss_weights_for_passes(passes)
 
-    @staticmethod
-    def _nmp_loss_weights_for_passes(
-        mapping: dict[int, list[float]] | None,
-        passes: int,
-        *,
-        label: str,
-    ) -> list[float] | None:
-        if passes < 1:
-            raise ValueError("passes must be positive")
-        if mapping is None:
-            # MultiPassVariant normalizes None to uniform weights. Keeping the
-            # default implicit avoids duplicating every K in every config.
-            return None
-        try:
-            return mapping[passes]
-        except KeyError as exc:
-            raise ValueError(f"no {label} pass-loss weights configured for sampled K={passes}") from exc
-
-    def recurrent_nmp_loss_weights_for_passes(self, passes: int) -> list[float] | None:
-        return self._nmp_loss_weights_for_passes(
-            self.recurrent_nmp_pass_loss_weights_by_k,
-            passes,
-            label="recurrent NMP",
-        )
-
-    def bank_nmp_loss_weights_for_passes(self, passes: int) -> list[float] | None:
-        return self._nmp_loss_weights_for_passes(
-            self.bank_nmp_pass_loss_weights_by_k,
-            passes,
-            label="Bank NMP",
-        )
-
-    def nmp_weight_scale_at(self, unique_tokens_seen: int) -> float:
-        if unique_tokens_seen < 0:
-            raise ValueError("unique_tokens_seen must be non-negative")
-        if self.nmp_warmup_tokens == 0:
-            return 1.0
-        return min(float(unique_tokens_seen) / float(self.nmp_warmup_tokens), 1.0)
-
     def validate(self) -> None:
         if self.variant not in SUPPORTED_VARIANTS:
             raise ValueError(f"variant must be one of {sorted(SUPPORTED_VARIANTS)}; got {self.variant!r}")
@@ -516,17 +437,6 @@ class ExperimentConfig:
             raise ValueError("phase must be 'A' or 'B'")
         if self.resume_from and self.init_from:
             raise ValueError("resume_from and init_from are mutually exclusive")
-        if not isinstance(self.allow_nmp_warm_start, bool):
-            raise ValueError("allow_nmp_warm_start must be boolean")
-        if self.allow_nmp_warm_start and not (self.init_from or self.resume_from):
-            raise ValueError("allow_nmp_warm_start requires init_from or resume_from")
-        if self.nmp_target_mode not in SUPPORTED_NMP_TARGET_MODES:
-            raise ValueError(
-                "nmp_target_mode must be one of "
-                f"{sorted(SUPPORTED_NMP_TARGET_MODES)}"
-            )
-        if not isinstance(self.nmp_detach_predictor_input, bool):
-            raise ValueError("nmp_detach_predictor_input must be boolean")
         if self.autocast_dtype is not None:
             if self.autocast_dtype not in SUPPORTED_AUTOCAST_DTYPES:
                 raise ValueError(
@@ -546,7 +456,6 @@ class ExperimentConfig:
         for name, value in (
             ("pretrained_learning_rate", self.pretrained_learning_rate),
             ("added_learning_rate", self.added_learning_rate),
-            ("nmp_predictor_learning_rate", self.nmp_predictor_learning_rate),
         ):
             if value is not None and (not math.isfinite(float(value)) or float(value) < 0):
                 raise ValueError(f"{name} must be finite and non-negative")
@@ -591,67 +500,6 @@ class ExperimentConfig:
                 raise ValueError("snapshot_at_tokens values must lie in (0, max_unique_tokens]")
         if self.memory_window <= 0:
             raise ValueError("memory_window must be positive")
-
-        for name, value in (
-            ("recurrent_nmp_weight", self.recurrent_nmp_weight),
-            ("bank_nmp_weight", self.bank_nmp_weight),
-        ):
-            if not math.isfinite(float(value)) or float(value) < 0:
-                raise ValueError(f"{name} must be finite and non-negative")
-        if self.recurrent_nmp_target_normalization not in NMP_TARGET_NORMALIZATIONS:
-            raise ValueError(
-                "recurrent_nmp_target_normalization must be one of "
-                f"{sorted(NMP_TARGET_NORMALIZATIONS)}"
-            )
-        if (
-            not math.isfinite(float(self.nmp_projection_factor))
-            or self.nmp_projection_factor <= 0
-        ):
-            raise ValueError("nmp_projection_factor must be finite and positive")
-        if (
-            self.nmp_warmup_tokens < 0
-            or self.nmp_warmup_tokens > self.max_unique_tokens
-        ):
-            raise ValueError("nmp_warmup_tokens must lie in [0, max_unique_tokens]")
-        nmp_enabled = self.recurrent_nmp_weight > 0 or self.bank_nmp_weight > 0
-        if not nmp_enabled and self.nmp_predictor_learning_rate is not None:
-            raise ValueError(
-                "nmp_predictor_learning_rate requires an enabled NMP objective"
-            )
-        if self.nmp_eval_passes is not None:
-            if not self.nmp_eval_passes or any(
-                passes < 1 for passes in self.nmp_eval_passes
-            ):
-                raise ValueError("nmp_eval_passes must contain positive pass counts")
-            if not nmp_enabled:
-                raise ValueError("nmp_eval_passes requires an enabled NMP objective")
-        if not nmp_enabled and (
-            self.nmp_target_mode != "shared_final"
-            or self.nmp_detach_predictor_input
-        ):
-            raise ValueError("NMP target/input controls require an enabled NMP objective")
-        if not nmp_enabled and self.nmp_warmup_tokens != 0:
-            raise ValueError("nmp_warmup_tokens requires an enabled NMP objective")
-        if nmp_enabled and not (self.init_from or self.resume_from):
-            raise ValueError(
-                "NMP continuation must use init_from or resume_from from an "
-                "NTP-trained run"
-            )
-        if nmp_enabled and self.nmp_warmup_tokens == 0:
-            raise ValueError("enabled NMP objectives require a positive nmp_warmup_tokens ramp")
-        recurrent_nmp_variants = {
-            "memory_add",
-            "recirculation",
-            "bank_add_hybrid",
-            "bank_recirculation_hybrid",
-            "memory_attention_add_hybrid",
-            "memory_attention_recirculation_hybrid",
-        }
-        bank_nmp_variants = MEMORY_ATTENTION_VARIANTS
-        if self.recurrent_nmp_weight > 0 and self.variant not in recurrent_nmp_variants:
-            raise ValueError(f"variant={self.variant} does not support recurrent NMP")
-        if self.bank_nmp_weight > 0 and self.variant not in bank_nmp_variants:
-            raise ValueError(f"variant={self.variant} does not support bank NMP")
 
         recirculation_variants = {
             "recirculation",
@@ -849,24 +697,6 @@ class ExperimentConfig:
                     raise ValueError(
                         f"ntp_pass_loss_weights_by_k[{passes}] must contain exactly {passes} weights"
                     )
-        for name, mapping in (
-            ("recurrent_nmp_pass_loss_weights_by_k", self.recurrent_nmp_pass_loss_weights_by_k),
-            ("bank_nmp_pass_loss_weights_by_k", self.bank_nmp_pass_loss_weights_by_k),
-        ):
-            if mapping is None:
-                continue
-            configured = set(mapping)
-            if configured != pass_counts:
-                raise ValueError(
-                    f"{name} keys must exactly match sampled pass counts "
-                    f"{sorted(pass_counts)}; got {sorted(configured)}"
-                )
-            for passes, weights in mapping.items():
-                if len(weights) != passes:
-                    raise ValueError(
-                        f"{name}[{passes}] must contain exactly {passes} weights"
-                    )
-
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ExperimentConfig":
         known = set(cls.__dataclass_fields__)

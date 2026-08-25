@@ -79,7 +79,6 @@ def _wire_arm(config_path: Path, *, wire_device: str | None) -> None:
             init_path,
             model=model,
             expected_experiment_config=cfg.to_dict(),
-            allow_nmp_warm_start=cfg.allow_nmp_warm_start,
         )
     train_data = load_packed_dataset_for_experiment(
         cfg.data_dir,
@@ -103,10 +102,6 @@ def _wire_arm(config_path: Path, *, wire_device: str | None) -> None:
             phase=cfg.phase,
             passes=passes,
             loss_weights=cfg.ntp_loss_weights_for_passes(passes),
-            recurrent_nmp_loss_weights=cfg.recurrent_nmp_loss_weights_for_passes(
-                passes
-            ),
-            bank_nmp_loss_weights=cfg.bank_nmp_loss_weights_for_passes(passes),
         )
         output.loss.backward()
         if not bool(torch.isfinite(output.loss.detach()).item()):

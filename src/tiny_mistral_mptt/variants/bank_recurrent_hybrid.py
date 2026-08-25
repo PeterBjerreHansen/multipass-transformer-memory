@@ -25,8 +25,6 @@ class BankRecurrentHybridVariant(BankVariant, ABC):
     the same Memory Attention implementation and differ only in their fast routing rule.
     """
 
-    supports_recurrent_nmp = True
-
     def __init__(
         self,
         backbone: MistralForCausalLM,

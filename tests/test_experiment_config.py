@@ -64,16 +64,12 @@ def test_yaml_style_string_k_keys_are_canonicalized():
     }
 
 
-def test_objective_specific_pass_weights_are_canonical_and_uniform_defaults_are_explicitly_overridable():
+def test_ntp_pass_weights_are_canonical():
     cfg = _config(
         ntp_pass_loss_weights_by_k={2: [0.25, 0.75], 3: [0.1, 0.2, 0.7]},
-        recurrent_nmp_pass_loss_weights_by_k={2: [0.5, 0.5], 3: [1.0, 1.0, 1.0]},
-        bank_nmp_pass_loss_weights_by_k={2: [0.8, 0.2], 3: [0.2, 0.3, 0.5]},
     )
 
     assert cfg.ntp_loss_weights_for_passes(2) == [0.25, 0.75]
-    assert cfg.recurrent_nmp_loss_weights_for_passes(3) == [1.0, 1.0, 1.0]
-    assert cfg.bank_nmp_loss_weights_for_passes(2) == [0.8, 0.2]
     serialized = cfg.to_dict()
     assert serialized["ntp_pass_loss_weights_by_k"] == {
         2: [0.25, 0.75],
@@ -81,19 +77,6 @@ def test_objective_specific_pass_weights_are_canonical_and_uniform_defaults_are_
     }
     assert "pass_loss_weights" not in serialized
     assert "pass_loss_weights_by_k" not in serialized
-
-
-def test_nmp_pass_weight_maps_require_exact_schedule_coverage_and_lengths():
-    with pytest.raises(ValueError, match="recurrent_nmp_pass_loss_weights_by_k.*exactly match"):
-        _config(recurrent_nmp_pass_loss_weights_by_k={2: [0.5, 0.5]})
-    with pytest.raises(ValueError, match=r"bank_nmp_pass_loss_weights_by_k\[3\].*exactly 3"):
-        _config(
-            bank_nmp_pass_loss_weights_by_k={
-                2: [0.5, 0.5],
-                3: [0.5, 0.5],
-            }
-        )
-
 
 def test_bfloat16_autocast_requires_fp32_parameter_storage():
     cfg = _config(dtype="float32", autocast_dtype="bfloat16")
@@ -106,16 +89,6 @@ def test_bfloat16_autocast_requires_fp32_parameter_storage():
 def test_unvalidated_autocast_dtype_is_rejected():
     with pytest.raises(ValueError, match="autocast_dtype"):
         _config(autocast_dtype="float16")
-
-
-def test_recurrent_nmp_target_normalization_defaults_to_rms_and_validates():
-    cfg = _config(variant="recirculation", recirculation_source_layer=2, recirculation_destination_layer=0)
-    assert cfg.recurrent_nmp_target_normalization == "rms"
-
-    with pytest.raises(ValueError, match="recurrent_nmp_target_normalization"):
-        _config(recurrent_nmp_target_normalization="norm_match")
-
-
 
 def test_bank_config_requires_coherent_write_policy():
     dense = _config(variant="bank", memory_write_mode="dense")
@@ -391,36 +364,3 @@ def test_early_stop_pass_depth_gates_are_canonicalized_and_validated():
             eval_passes=3,
             early_stop={"pass_nll_max": {4: 2.33}},
         )
-
-
-def test_nmp_target_and_validation_controls_are_explicit_and_scoped():
-    common = dict(
-        variant="memory_add",
-        pass_schedule=[{"probabilities": {2: 1.0}}],
-        recurrent_nmp_weight=0.1,
-        nmp_warmup_tokens=10,
-        init_from="ntp.pt",
-    )
-    cfg = ExperimentConfig(
-        **common,
-        nmp_target_mode="same_pass",
-        nmp_detach_predictor_input=True,
-        nmp_eval_passes=[3, 2, 2],
-        nmp_predictor_learning_rate=3e-5,
-    )
-    cfg.validate()
-    assert cfg.nmp_eval_passes == [2, 3]
-    assert cfg.nmp_predictor_lr == 3e-5
-    assert cfg.to_dict()["nmp_predictor_learning_rate"] == 3e-5
-    with pytest.raises(ValueError, match="nmp_target_mode"):
-        ExperimentConfig(**common, nmp_target_mode="moving_average").validate()
-    with pytest.raises(ValueError, match="require an enabled NMP objective"):
-        ExperimentConfig(nmp_detach_predictor_input=True).validate()
-    with pytest.raises(ValueError, match="positive pass counts"):
-        ExperimentConfig(**common, nmp_eval_passes=[0]).validate()
-    with pytest.raises(ValueError, match="requires an enabled NMP objective"):
-        ExperimentConfig(nmp_predictor_learning_rate=3e-5).validate()
-    with pytest.raises(ValueError, match="finite and non-negative"):
-        ExperimentConfig(
-            **common, nmp_predictor_learning_rate=float("nan")
-        ).validate()
