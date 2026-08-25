@@ -8,8 +8,8 @@ The idea behind [multi-pass training](https://github.com/PeterBjerreHansen/multi
 | --------------------------------------------- | -------------------: | -----------------------------: | ---------------: | ----------------------: |
 | Transformer baseline                          |                7.778 |                  0.110 (1.40%) |         248.024M |                 1.0000x |
 | Sparse SWA control                            |                7.811 |                  0.121 (1.52%) |         248.024M |                 1.0004x |
+| Full Bandwidth Transformer                    |                    - |                              - |                - |                       - |
 | Adaptive Recirculation                        |                7.678 |                  0.110 (1.42%) |         253.275M |                 2.1267x |
-| Sparse Memory-token Attention                 |                7.616 |                  0.133 (1.72%) |         254.321M |                 2.1872x |
 | Sparse Periodic Memory Attention              |                7.599 |                  0.113 (1.46%) |         254.320M |                 2.1222x |
 | Dense Memory Attention                        |                7.534 |                  0.112 (1.46%) |         254.320M |                 2.1327x |
 | Adaptive Recirculation + Sparse Memory Attention |              7.519 |                  0.120 (1.57%) |         259.571M |                 2.1489x |
