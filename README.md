@@ -1,6 +1,6 @@
 # Attention vs. Recurrence in Multi-Pass Transformers
 
-**tl;dr:** Recent work such as the [full bandwidth transformer](https://arxiv.org/abs/2608.08888) and [recirculation](https://arxiv.org/abs/2608.17981) suggests that recurrently feeding intermediate representations back through a transformer gives you performance gains almost for free. I found that replacing the recurrent mechanisms with **Memory Attention** over previous-pass states performs better, also when that attention is sparse (and thus not always attending to recent hidden states).
+**tl;dr:** Recent work such as the [full bandwidth transformer](https://arxiv.org/abs/2608.08888) and [recirculation](https://arxiv.org/abs/2608.17981) suggests that recurrently feeding intermediate representations back through a transformer gives you performance gains almost for free. In my experiment I found that replacing the recurrent mechanisms with attention over previous-pass states (I call these memories) performs better, also when that attention is sparse (and thus not always attending to recent hidden states).
 
 The idea behind [multi-pass training](https://github.com/PeterBjerreHansen/multi-pass-transformer-training) goes something like this: Pass 1 is an ordinary transformer pass. Pass 2 runs the same transformer again, but can use additional hidden states produced on pass 1. The question is if that information should arrive through a recurrent connection or through cross-pass attention over previous-pass states. To test this I first retrofitted [a TinyMistral model](https://huggingface.co/M4-ai/TinyMistral-248M-v3) into doing feedback inference by training it with multi-pass Jacobi-style updates. The new parameters were first wired into the frozen backbone for 5 million tokens, then the whole models were trained on 100M tokens from the [OLMo2 annealing mixture](https://huggingface.co/datasets/allenai/dolmino-mix-1124).
 
@@ -8,7 +8,7 @@ The idea behind [multi-pass training](https://github.com/PeterBjerreHansen/multi
 | --------------------------------------------- | -------------------: | -----------------------------: | ---------------: | ----------------------: |
 | Transformer baseline                          |                7.778 |                  0.110 (1.40%) |         248.024M |                 1.0000x |
 | Sparse SWA control                            |                7.811 |                  0.121 (1.52%) |         248.024M |                 1.0004x |
-| Full Bandwidth Transformer                    |                    - |                              - |                - |                       - |
+| <span style="color:#b00020">Full Bandwidth Transformer (exploratory; not ranked)</span> | <span style="color:#b00020">7.831</span> | <span style="color:#b00020">0.124 (1.56%)</span> | <span style="color:#b00020">250.122M</span> | <span style="color:#b00020">-</span> |
 | Adaptive Recirculation                        |                7.678 |                  0.110 (1.42%) |         253.275M |                 2.1267x |
 | Sparse Periodic Memory Attention              |                7.599 |                  0.113 (1.46%) |         254.320M |                 2.1222x |
 | Dense Memory Attention                        |                7.534 |                  0.112 (1.46%) |         254.320M |                 2.1327x |
@@ -21,10 +21,11 @@ I think there are three notable patterns in these results:
 
 2. The sparse attention to far-away memories outperformed models with only the recurrent connections to memories. To me this result slightly favours the notion that the performance gains reported in the FBT and recirculation papers stem from **mere greater effective depth** rather than **unlocking recurrent computation patterns**.
 
-3. The recurrent/attention hybrid performs on par with the short-range dense attention only model, and so sparse Memory Attention could provide a valuable "slow" (long-range) memory for multi-pass models with only the "fast" (short-term) recurrent pattern. However, supplying the short-range dense attention only model with sparse long-range attention improves performance even further at a smaller compute budget, and so the attention only v
+3. The recurrent/attention hybrid performs on par with the short-range dense attention only model, and so sparse Memory Attention could provide a valuable "slow" (long-range) memory for multi-pass models with only the "fast" (short-term) recurrent pattern. However, supplying the short-range dense attention only model with sparse long-range attention improves performance even further at a smaller compute budget, and so the attention only variant looks superior. 
 
 The experiment is riddled with confounders such as differing compute budgets, parameter count, and starting-point inequality (some mechanisms are more easily slotted into a pretrained model, and the vanilla backbone had no pre-run adaptation). Moreover, I simply do not have the computational resources to provide the exhaustive sweeps and ablations one needs to make convincing optimality arguments. However, I do think the results point towards potential improvements to the existing architectures.
 
+<span style="color:#b00020">FBT is omitted from the common-protocol comparison for now since it requires some architecture-specific initialization and pretraining adjustments. It performs poorly when wired and/or trained with the common protocol, but it might do better in a comparison with architecture-specific optimisation.</span>
 ### The Memory Attention models
 
 In recurrent patterns, like those of FBT and adaptive Recirculation, token $t$ on pass $k$ receives essentially one predetermined shifted state, $m_{t-1}^{k-1}$:
@@ -70,7 +71,7 @@ memory_layers: [3, 7]
 memory_position_encoding: rope
 ```
 
-Historical configs use `variant: bank`; both names construct the same model. Periodic and memory-token Memory Attention additionally set `memory_write_stride`. In memory-token mode, `<MEM>` is input-only: it is not part of the LM output vocabulary and receives no direct LM loss. In the `write_only` configuration used in the main comparison, later tokens can access its state only through Memory Attention.
+Periodic and memory-token Memory Attention additionally set `memory_write_stride`. In memory-token mode, `<MEM>` is input-only: it is not part of the LM output vocabulary and receives no direct LM loss. In the `write_only` configuration used in the main comparison, later tokens can access its state only through Memory Attention.
 
 See `docs/MEMORY_ATTENTION.md` for the conceptual vocabulary and `docs/BANK_MEMORY.md` for the exact implementation-level attention masks, retention/write timing, cached-inference behavior, and hybrid contracts. See `docs/ARCHITECTURES.md` for the two attention-control architectures.
 
@@ -80,11 +81,9 @@ See `docs/MEMORY_ATTENTION.md` for the conceptual vocabulary and `docs/BANK_MEMO
 
 ### More Ideas, Future Work
 
-1. The sparse SWA and Multiscale Memory Attention controls are implemented, and their 100M-token runs are complete.
+1. Most SOTA models still use dense attention in at least a few layers. I suspect that a local SWA attention + dense long-range attention over memories might perform better than placing the dense attention in a normal layer.
 
-2. Most SOTA models still use dense attention in at least a few layers. I suspect that a local SWA attention + dense long-range attention over memories might perform better than placing the dense attention in a normal layer.
-
-3. I want to properly wire in the [FBT](https://arxiv.org/abs/2608.08888) model next and test out hybrids. However, the process is a little more tricky for FBT as the mechanism is not residual.
+2. I want to properly wire in the [FBT](https://arxiv.org/abs/2608.08888) model next and test out hybrids. However, the process is a little more tricky for FBT as the mechanism is not residual.
 
 ## Repository map
 
@@ -124,7 +123,7 @@ Learning-rate schedules and run token budgets use linguistic tokens. Throughput 
 
 The locked eight-arm study compares vanilla, adaptive Recirculation, three Memory Attention access patterns, the Recirculation–Periodic Memory Attention hybrid, Multiscale Memory Attention, and Sparse SWA. Its configs remain under `benchmarks/core/stage_5_cloud_100m/`; all eight 100M-token runs are complete and their full artifacts are under `benchmarks/core/stage_5_cloud_100m/results/`. Multiscale Memory Attention used its verified frozen-backbone wiring checkpoint. Sparse SWA has no added parameters and started in Phase B. The runnable path is documented in `benchmarks/development/experimental_pipeline.md`.
 
-FBT and MemoryAdd are retired controls. Their implementations and focused correctness tests remain only for historical checkpoint/provenance compatibility, like other archived research controls, but neither appears in the active studies, efficiency qualifications, cloud campaign, or current results. BankAddHybrid, which uses the same MemoryAdd fast channel, is also retired from the active experiment surface.
+FBT and MemoryAdd are retired controls. Their implementations and focused correctness tests remain only for historical checkpoint/provenance compatibility, like other archived research controls, but neither appears in the active studies, efficiency qualifications, or cloud campaign. BankAddHybrid, which uses the same MemoryAdd fast channel, is also retired from the active experiment surface.
 
 Historical benchmark results remain read-only evidence; they do not define the active architecture API.
 
