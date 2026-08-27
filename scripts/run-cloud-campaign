@@ -130,7 +130,7 @@ def _parser() -> argparse.ArgumentParser:
         dest="arms",
         action="append",
         choices=ARMS,
-        help="run only this arm; repeat for a selected subset (default: all non-vanilla arms)",
+        help="run only this arm; repeat for a selected subset (default: all non-SWA Transformer arms)",
     )
     parser.add_argument("--ssh-key", type=Path, default=Path("~/.ssh/id_ed25519").expanduser())
     parser.add_argument("--verda", default="verda")

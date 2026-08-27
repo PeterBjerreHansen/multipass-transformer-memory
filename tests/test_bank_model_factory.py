@@ -10,6 +10,13 @@ from tiny_mistral_mptt.variants.bank_recirculation_hybrid import (
     BankRecirculationHybridVariant,
 )
 from tiny_mistral_mptt.variants.bank_multiscale import MultiscaleBankVariant
+from tiny_mistral_mptt.variants import (
+    MemoryAttentionVariant,
+    MultiscaleMemoryAttentionVariant,
+    RecirculationStridedMemoryAttentionVariant,
+    StridedAttentionVariant,
+    SwaTransformerVariant,
+)
 from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
 
 
@@ -32,7 +39,7 @@ def test_factory_exposes_only_clean_bank_names_and_policies():
     assert isinstance(hybrid, BankAddHybridVariant)
 
 
-def test_memory_attention_names_are_public_compatibility_aliases():
+def test_memory_attention_names_are_public_model_names():
     assert canonical_variant_name("memory_attention") == "bank"
     assert canonical_variant_name("bank") == "bank"
     config = ExperimentConfig(
@@ -57,6 +64,42 @@ def test_memory_attention_names_are_public_compatibility_aliases():
     )
     assert isinstance(multiscale, MultiscaleBankVariant)
     assert multiscale.variant_name == "memory_attention_multiscale"
+
+
+def test_public_model_names_select_public_implementations():
+    baseline = build_variant("swa_transformer", backbone())
+    assert isinstance(baseline, SwaTransformerVariant)
+    strided = build_variant(
+        "strided_attention",
+        MistralForCausalLM(micro_config(num_hidden_layers=1), attention_backend="reference"),
+        sparse_attention_stride=8,
+        sparse_attention_window=8,
+    )
+    assert isinstance(strided, StridedAttentionVariant)
+    memory = build_variant(
+        "strided_memory_attention",
+        backbone(),
+        memory_write_mode="strided",
+        memory_write_stride=8,
+    )
+    assert isinstance(memory, MemoryAttentionVariant)
+    multi = build_variant(
+        "multiscale_memory_attention",
+        MistralForCausalLM(micro_config(num_hidden_layers=2), attention_backend="reference"),
+        memory_dense_window=2,
+        memory_sparse_window=2,
+        memory_sparse_stride=4,
+    )
+    assert isinstance(multi, MultiscaleMemoryAttentionVariant)
+    hybrid = build_variant(
+        "recirculation_strided_memory_attention",
+        MistralForCausalLM(micro_config(num_hidden_layers=2), attention_backend="reference"),
+        memory_write_mode="strided",
+        memory_write_stride=8,
+        recirculation_source_layer=1,
+        recirculation_destination_layer=0,
+    )
+    assert isinstance(hybrid, RecirculationStridedMemoryAttentionVariant)
 
 
 def test_factory_selects_only_requested_memory_layers_and_defaults_to_rope():

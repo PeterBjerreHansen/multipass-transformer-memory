@@ -18,6 +18,8 @@ from tiny_mistral_mptt.model_factory import load_variant
 from tiny_mistral_mptt.config import (
     MEMORY_ATTENTION_VARIANTS,
     MULTISCALE_MEMORY_ATTENTION_VARIANTS,
+    canonical_memory_write_mode,
+    canonical_variant_name,
 )
 from tiny_mistral_mptt.precision import PrecisionNotSupportedError, autocast_context
 from tiny_mistral_mptt.training.phases import configure_phase
@@ -171,6 +173,7 @@ def _precision_error(text: str, autocast_dtype: str | None) -> bool:
 def _run_case(case: dict[str, Any]) -> dict[str, Any]:
     device = resolve_device(str(case.get("device", "auto")))
     variant = str(case["variant"])
+    implementation_variant = canonical_variant_name(variant)
     passes = int(case["passes"])
     sequence_length = int(case["sequence_length"])
     batch_size = int(case["batch_size"])
@@ -189,7 +192,7 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
     memory_window = int(case.get("memory_window", 32))
     memory_write_mode = case.get("memory_write_mode")
     if memory_write_mode is not None:
-        memory_write_mode = str(memory_write_mode)
+        memory_write_mode = canonical_memory_write_mode(str(memory_write_mode))
     memory_write_stride = case.get("memory_write_stride")
     if memory_write_stride is not None:
         memory_write_stride = int(memory_write_stride)
@@ -229,36 +232,36 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
                 memory_token_visibility,
             )
         ):
-            raise ValueError("bank_multiscale efficiency cases do not use memory_write_* fields")
+            raise ValueError("Multiscale Memory Attention efficiency cases do not use memory_write_* fields")
         if min(memory_dense_window + memory_sparse_window, memory_sparse_stride) <= 0:
-            raise ValueError("bank_multiscale efficiency cases require valid retention fields")
+            raise ValueError("Multiscale Memory Attention efficiency cases require valid retention fields")
         memory_window = memory_dense_window + memory_sparse_window
     elif is_bank:
         if memory_write_mode not in {"dense", "periodic", "memory_token"}:
-            raise ValueError("bank efficiency cases require memory_write_mode: dense|periodic|memory_token")
+            raise ValueError("Memory Attention efficiency cases require memory_write_mode: dense|strided|memory_token")
         if memory_write_mode == "dense":
             if memory_write_stride is not None:
-                raise ValueError("dense bank efficiency cases must not set memory_write_stride")
+                raise ValueError("dense Memory Attention efficiency cases must not set memory_write_stride")
             if memory_token_visibility is not None:
                 raise ValueError("memory_token_visibility applies only to memory_token mode")
         else:
             if memory_write_stride is None or memory_write_stride <= 0:
-                raise ValueError(f"{memory_write_mode} bank requires positive memory_write_stride")
+                raise ValueError(f"{memory_write_mode} Memory Attention requires positive memory_write_stride")
             if memory_write_mode == "periodic" and memory_token_visibility is not None:
                 raise ValueError("memory_token_visibility applies only to memory_token mode")
             if memory_write_mode == "memory_token" and memory_token_visibility not in {"visible", "write_only"}:
-                raise ValueError("memory_token bank requires memory_token_visibility: visible|write_only")
+                raise ValueError("memory-token Memory Attention requires memory_token_visibility: visible|write_only")
     elif any(value is not None for value in (memory_write_mode, memory_write_stride, memory_token_visibility)):
-        raise ValueError("memory_* efficiency fields apply only to bank variants")
+        raise ValueError("memory_* efficiency fields apply only to Memory Attention variants")
 
     if passes not in WEIGHTS_BY_K:
         raise ValueError("efficiency benchmark currently supports K=1,2,3")
-    single_pass = variant in {"vanilla", "sparse_swa"}
+    single_pass = implementation_variant in {"vanilla", "sparse_swa"}
     if single_pass and passes != 1:
         raise ValueError(f"{variant} efficiency cases require passes=1")
     if not single_pass and passes < 2:
         raise ValueError("multipass efficiency cases require passes>=2")
-    if variant == "sparse_swa" and (
+    if implementation_variant == "sparse_swa" and (
         sparse_attention_stride is None
         or sparse_attention_stride <= 0
         or sparse_attention_window is None

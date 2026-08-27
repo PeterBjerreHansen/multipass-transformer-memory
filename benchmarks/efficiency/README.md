@@ -155,7 +155,7 @@ For a measured comparison of the exact eight 100M study architectures, run:
 make efficiency-cuda-stage5
 ```
 
-This suite measures K=1 for vanilla and K=2/K=3 for each multipass method at
+This suite measures K=1 for the SWA Transformer and K=2/K=3 for each multipass method at
 2048 tokens, batch size 1, FP32 parameter/optimizer storage, and BF16 autocast.
 It includes the study's actual Memory Attention reader layers and adaptive recirculation
 source/destination layers. Combine the K=2 and K=3 rows using the study's
@@ -180,8 +180,8 @@ write cadence.
 ## Attention-control suite
 
 `benchmarks/efficiency/suites/attention_controls.yaml` remains a focused subset
-of the locked Stage-5 suite: one-pass `sparse_swa`, multipass
-`bank_multiscale`, the sparse Strided Memory Attention endpoint, and the existing
+of the locked Stage-5 suite: one-pass `strided_attention`, multipass
+`multiscale_memory_attention`, the strided Memory Attention endpoint, and the existing
 Recirculation–Strided Memory Attention hybrid. The complete eight-arm suite is
 `stage_5_architectures.yaml`. Run either with the shared efficiency runner or
 pass it to `scripts/estimate_training_flops.py` for dominant-matmul accounting.

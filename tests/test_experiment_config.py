@@ -105,6 +105,12 @@ def test_bank_config_requires_coherent_write_policy():
     assert periodic.memory_write_stride == 4
     assert periodic.memory_layers == [3, 7]
     assert periodic.memory_position_encoding == "rope"
+    strided = _config(
+        variant="memory_attention",
+        memory_write_mode="strided",
+        memory_write_stride=4,
+    )
+    assert strided.memory_write_mode == "strided"
 
     mem = _config(
         variant="bank_add_hybrid",
@@ -137,9 +143,9 @@ def test_bank_config_requires_coherent_write_policy():
 
 
 def test_bank_fields_cannot_silently_change_other_variants():
-    with pytest.raises(ValueError, match="supported only for bank variants"):
+    with pytest.raises(ValueError, match="supported only for Memory Attention variants"):
         _config(variant="memory_add", memory_write_stride=4)
-    with pytest.raises(ValueError, match="supported only for bank variants"):
+    with pytest.raises(ValueError, match="supported only for Memory Attention variants"):
         _config(variant="memory_add", memory_layers=[3])
 
 
@@ -196,7 +202,7 @@ def test_sparse_swa_config_is_single_pass_and_rejects_bank_fields():
             sparse_attention_stride=32,
             sparse_attention_window=32,
         )
-    with pytest.raises(ValueError, match="supported only for bank variants"):
+    with pytest.raises(ValueError, match="supported only for Memory Attention variants"):
         _config(
             variant="sparse_swa",
             pass_schedule=[{"probabilities": {1: 1.0}}],

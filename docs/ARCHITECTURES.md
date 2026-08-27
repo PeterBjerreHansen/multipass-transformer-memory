@@ -2,17 +2,16 @@
 
 This file defines the reusable model interfaces. Study-specific settings belong
 under `benchmarks/`. See [MEMORY_ATTENTION.md](MEMORY_ATTENTION.md) for the
-public terminology and [BANK_MEMORY.md](BANK_MEMORY.md) for the compatibility
-contract. [NEXT_MEMORY_PREDICTION.md](NEXT_MEMORY_PREDICTION.md) documents the
-optional training-only objective.
+public terminology and [BANK_MEMORY.md](BANK_MEMORY.md) for the implementation
+contract.
 
-## Vanilla
+## SWA Transformer
 
 One ordinary TinyMistral causal pass with no architecture-added parameters.
 
-## Sparse SWA control
+## Strided Attention control
 
-`SparseSWAVariant` is a one-pass, parameter-free Transformer control. At the
+`StridedAttentionVariant` is a one-pass, parameter-free Transformer control. At the
 selected `sparse_attention_layers`, the existing Mistral self-attention uses
 one softmax over the union of its ordinary SWA keys and a bounded set of older
 fixed-stride keys. It reuses the pretrained Q/K/V/O projections and does not
@@ -25,7 +24,7 @@ retains `W-1` recent K/V entries plus at most `S` older strided entries with
 their absolute RoPE positions.
 
 ```yaml
-variant: sparse_swa
+variant: strided_attention
 sparse_attention_stride: 32
 sparse_attention_window: 32
 sparse_attention_layers: [3, 7]
@@ -41,7 +40,7 @@ recurrent inference interfaces as the other one-state feedback variants.
 
 ## Retired one-state controls
 
-MemoryAdd and BankAddHybrid remain for historical checkpoint compatibility.
+MemoryAdd and MemoryAttentionAddHybrid remain for historical checkpoint compatibility.
 They are not part of new studies.
 
 ### MemoryAdd
@@ -99,8 +98,8 @@ recirculation_destination_layer: 3
 
 ## Memory Attention
 
-`BankVariant` (public alias `MemoryAttentionVariant`, `variant:
-memory_attention`) has one shared identity-initialized bias-free writer
+`MemoryAttentionVariant` (`variant: memory_attention`) has one shared
+identity-initialized bias-free writer
 
 ```text
 m = W_write h
@@ -114,7 +113,7 @@ the same previous-pass top-layer memory records. Within a selected decoder
 layer the memory-attention residual is applied after the ordinary self-attention
 residual and before the MLP.
 
-Reader output projections are zero-initialized, so every pass is exact vanilla
+Reader output projections are zero-initialized, so every pass is exact SWA Transformer
 at construction. Q/K/V remain normally initialized and begin receiving
 gradients after an output projection has moved away from zero.
 
@@ -125,11 +124,10 @@ mode a control slot inherits the preceding linguistic boundary so inserting
 control computation does not inflate memory age. `memory_position_encoding:
 none` is retained only as an explicit ablation.
 
-The architecture has three write policies. The public name for the sparse
-policy is **strided**; its historical config value remains `periodic`:
+The architecture has three write policies:
 
 - `dense`: write every ordinary position;
-- `periodic` (strided): write positions satisfying `(t + 1) % C == 0`;
+- `strided`: write positions satisfying `(t + 1) % C == 0`;
 - `memory_token`: write only explicit input-only `<MEM>` positions.
 
 `memory_window=W` counts committed memory records, not source-token distance.
@@ -141,8 +139,8 @@ numerically identical with matching weights.
 
 ### Multiscale Memory Attention control
 
-`MultiscaleBankVariant` (public alias `MultiscaleMemoryAttentionVariant`,
-`variant: memory_attention_multiscale`) is the attention-only analogue of a
+`MultiscaleMemoryAttentionVariant` (`variant: multiscale_memory_attention`) is
+the attention-only analogue of a
 short/long-range recurrent–Memory Attention hybrid. It writes the same dense
 previous-pass top-state stream as Dense Memory Attention, then presents each reader with a
 non-overlapping union of the preceding `D` records and the last `S` older
@@ -151,7 +149,7 @@ regions.
 The model does not add a second reader residual.
 
 ```yaml
-variant: memory_attention_multiscale  # historical alias: bank_multiscale
+variant: multiscale_memory_attention
 memory_dense_window: 32
 memory_sparse_stride: 32
 memory_sparse_window: 32
@@ -162,11 +160,11 @@ memory_position_encoding: rope
 At query `t`, the dense region is `[t-D,t)`. Sparse positions satisfy
 `s < t-D` and `(s+1) % C == 0`, with only the most recent `S` retained. The
 maximum Memory Attention capacity is `D+S`. The approximate oldest direct reach is
-`D + C*S` tokens. Vanilla SWA is unchanged.
+`D + C*S` tokens. SWA Transformer is unchanged.
 
 ### Memory Attention + MemoryAdd hybrid (retired)
 
-`BankAddHybridVariant` (public alias `MemoryAttentionAddHybridVariant`) is the
+`MemoryAttentionAddHybridVariant` is the
 same Memory Attention path plus the MemoryAdd path. There is no
 gate, controller, or fusion MLP between the channels.
 

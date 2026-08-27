@@ -20,17 +20,18 @@ from ..attention.memory_local import (
     strict_past_bank_attention,
     strict_past_multiscale_bank_attention,
 )
-from ..feedback import BankState
+from ..feedback import MemoryAttentionState
+from ..config import canonical_memory_write_mode
 from .multipass import MultiPassVariant
 
 
-MEMORY_WRITE_MODES = {"dense", "periodic", "memory_token"}
+MEMORY_WRITE_MODES = {"dense", "strided", "periodic", "memory_token"}
 MEMORY_TOKEN_VISIBILITIES = {"visible", "write_only"}
 MEMORY_POSITION_ENCODINGS = {"rope", "none"}
 
 
-class BankReader(nn.Module):
-    """Memory-attention reader with the historical ``BankReader`` name."""
+class MemoryAttentionReader(nn.Module):
+    """GQA reader over previous-pass memory records."""
 
     def __init__(
         self,
@@ -349,7 +350,7 @@ class BankReader(nn.Module):
 
 
 @dataclass(frozen=True)
-class BankBatch:
+class MemoryAttentionBatch:
     """Compact full-sequence memory records with original sequence coordinates."""
 
     memories: torch.Tensor  # [B,M,D], padded chronologically per example
@@ -360,29 +361,29 @@ class BankBatch:
 
     def __post_init__(self) -> None:
         if self.memories.ndim != 3:
-            raise ValueError("BankBatch.memories must be [B,M,D]")
+            raise ValueError("MemoryAttentionBatch.memories must be [B,M,D]")
         if self.valid.shape != self.memories.shape[:2] or self.valid.dtype != torch.bool:
-            raise ValueError("BankBatch.valid must be bool [B,M]")
+            raise ValueError("MemoryAttentionBatch.valid must be bool [B,M]")
         if self.writes_before.ndim != 2:
-            raise ValueError("BankBatch.writes_before must be [B,T]")
+            raise ValueError("MemoryAttentionBatch.writes_before must be [B,T]")
         if self.writes_before.shape[0] != self.memories.shape[0]:
-            raise ValueError("bank batch sizes differ")
+            raise ValueError("Memory Attention batch sizes differ")
         if self.memory_positions.shape != self.valid.shape or (
             self.memory_positions.dtype not in (torch.int32, torch.int64)
         ):
-            raise ValueError("BankBatch.memory_positions must be integer [B,M]")
+            raise ValueError("MemoryAttentionBatch.memory_positions must be integer [B,M]")
         if self.query_positions.shape != self.writes_before.shape or (
             self.query_positions.dtype not in (torch.int32, torch.int64)
         ):
-            raise ValueError("BankBatch.query_positions must be integer [B,T]")
+            raise ValueError("MemoryAttentionBatch.query_positions must be integer [B,T]")
         if bool((self.memory_positions[self.valid] < 0).any()):
-            raise ValueError("valid BankBatch memory positions must be non-negative")
+            raise ValueError("valid MemoryAttentionBatch memory positions must be non-negative")
         if bool((self.query_positions < 0).any()):
-            raise ValueError("BankBatch query positions must be non-negative")
+            raise ValueError("MemoryAttentionBatch query positions must be non-negative")
 
 
 @dataclass(frozen=True)
-class BankCoreRun:
+class MemoryAttentionCoreRun:
     """Decoder result with an optional internal-layer recurrence source."""
 
     hidden_states: torch.Tensor
@@ -390,7 +391,7 @@ class BankCoreRun:
     captured_hidden: torch.Tensor | None = None
 
 
-class BankWriter(nn.Module):
+class MemoryAttentionWriter(nn.Module):
     """Minimal learned D->D memory-record transform, identity-initialized."""
 
     def __init__(self, hidden_size: int):
@@ -408,7 +409,7 @@ class BankWriter(nn.Module):
         return self.proj(hidden_states)
 
 
-class BankVariant(MultiPassVariant):
+class MemoryAttentionVariant(MultiPassVariant):
     """Memory Attention with dense, strided, or explicit-memory-token writes.
 
     Dense mode writes every top state; strided mode writes selected ordinary-token top states. Memory-token mode
@@ -416,10 +417,9 @@ class BankVariant(MultiPassVariant):
     position with its own learned embedding; that ID is never an LM output
     class. A MEM state predicts nothing and writes exactly one memory record.
 
-    ``BankVariant`` is retained as the historical class name.
     """
 
-    variant_name = "bank"
+    variant_name = "memory_attention"
     supports_cached_feedback = True
 
     def __init__(
@@ -427,7 +427,7 @@ class BankVariant(MultiPassVariant):
         backbone: MistralForCausalLM,
         *,
         memory_window: int = 32,
-        memory_write_mode: str = "periodic",
+        memory_write_mode: str = "strided",
         memory_write_stride: int = 8,
         memory_token_visibility: str = "visible",
         memory_layers: str | list[int] = "all",
@@ -437,8 +437,9 @@ class BankVariant(MultiPassVariant):
         super().__init__(backbone)
         if memory_window <= 0:
             raise ValueError("memory_window must be positive")
+        memory_write_mode = canonical_memory_write_mode(memory_write_mode)
         if memory_write_mode not in MEMORY_WRITE_MODES:
-            raise ValueError("memory_write_mode must be 'dense', 'periodic', or 'memory_token'")
+            raise ValueError("memory_write_mode must be 'dense', 'strided', or 'memory_token'")
         if memory_write_stride <= 0:
             raise ValueError("memory_write_stride must be positive")
         if memory_token_visibility not in MEMORY_TOKEN_VISIBILITIES:
@@ -473,7 +474,7 @@ class BankVariant(MultiPassVariant):
         self.base_vocab_size = base_vocab
 
         hidden_size = int(backbone.config.hidden_size)
-        self.writer = BankWriter(hidden_size)
+        self.writer = MemoryAttentionWriter(hidden_size)
         if self.memory_write_mode == "memory_token":
             # Zero-init is deliberately conservative: the control slot begins
             # without adding lexical content but can contextualize through the
@@ -483,7 +484,7 @@ class BankVariant(MultiPassVariant):
             self.register_parameter("memory_token_embedding", None)
         self.memory_readers = nn.ModuleDict(
             {
-                str(layer_index): BankReader(
+                str(layer_index): MemoryAttentionReader(
                     backbone,
                     window=self.memory_window,
                     position_encoding=self.memory_position_encoding,
@@ -694,7 +695,7 @@ class BankVariant(MultiPassVariant):
         self,
         previous_hidden: torch.Tensor,
         input_ids: torch.Tensor,
-    ) -> BankBatch:
+    ) -> MemoryAttentionBatch:
         if previous_hidden.ndim != 3 or input_ids.ndim != 2:
             raise ValueError("previous_hidden must be [B,T,D] and input_ids [B,T]")
         if previous_hidden.shape[:2] != input_ids.shape:
@@ -708,7 +709,7 @@ class BankVariant(MultiPassVariant):
         memories = self.writer(selected)
         cumulative = mask.long().cumsum(dim=1)
         writes_before = cumulative - mask.long()
-        return BankBatch(
+        return MemoryAttentionBatch(
             memories=memories,
             valid=valid,
             writes_before=writes_before,
@@ -728,7 +729,7 @@ class BankVariant(MultiPassVariant):
     def _run_bank_core(
         self,
         token_embeddings: torch.Tensor,
-        bank: BankBatch | BankState | None,
+        bank: MemoryAttentionBatch | MemoryAttentionState | None,
         *,
         past_key_values: tuple[LayerKVCache, ...] | None,
         use_cache: bool,
@@ -736,18 +737,18 @@ class BankVariant(MultiPassVariant):
         query_position_ids: torch.Tensor | None = None,
         post_layer: Callable[[int, torch.Tensor], torch.Tensor] | None = None,
         capture_layer: int | None = None,
-    ) -> BankCoreRun:
+    ) -> MemoryAttentionCoreRun:
         if token_embeddings.ndim != 3:
             raise ValueError("token_embeddings must be [B,T,D]")
         if bank is not None and token_embeddings.shape[0] != bank.memories.shape[0]:
-            raise ValueError("token and bank batch sizes differ")
+            raise ValueError("token and memory-state batch sizes differ")
         if bank is not None and token_embeddings.shape[-1] != bank.memories.shape[-1]:
-            raise ValueError("token and bank hidden dimensions differ")
-        cached_bank = isinstance(bank, BankState)
+            raise ValueError("token and memory-state hidden dimensions differ")
+        cached_bank = isinstance(bank, MemoryAttentionState)
         if cached_bank and token_embeddings.shape[1] != 1:
-            raise ValueError("cached bank query must contain exactly one token")
+            raise ValueError("cached Memory Attention query must contain exactly one token")
         if cached_bank and bank.capacity != self.memory_window:
-            raise ValueError("cached bank capacity differs from memory_window")
+            raise ValueError("cached Memory Attention capacity differs from memory_window")
         if past_key_values is not None and len(past_key_values) != len(self.backbone.model.layers):
             raise ValueError("past_key_values must contain one cache per layer")
 
@@ -756,13 +757,13 @@ class BankVariant(MultiPassVariant):
         position_ids = torch.arange(
             start, start + seq_len, device=token_embeddings.device, dtype=torch.long
         )[None, :].expand(bsz, -1)
-        if isinstance(bank, BankBatch):
+        if isinstance(bank, MemoryAttentionBatch):
             memory_query_positions = bank.query_positions
-        elif isinstance(bank, BankState):
+        elif isinstance(bank, MemoryAttentionState):
             if query_position_ids is None:
                 query_position_ids = bank.next_sequence_positions[:, None]
             if query_position_ids.shape != (bsz, seq_len):
-                raise ValueError("cached Bank query positions must be [B,1]")
+                raise ValueError("cached Memory Attention query positions must be [B,1]")
             memory_query_positions = query_position_ids
         else:
             memory_query_positions = None
@@ -785,14 +786,14 @@ class BankVariant(MultiPassVariant):
             hidden_states = residual + x
             if new_caches is not None:
                 if cache is None:
-                    raise RuntimeError("cached bank layer did not return KV state")
+                    raise RuntimeError("cached Memory Attention layer did not return KV state")
                 new_caches.append(cache)
 
             reader_key = str(layer_index)
             if bank is not None and reader_key in self.memory_readers:
                 memory_reader = self.memory_readers[reader_key]
                 if cached_bank:
-                    assert isinstance(bank, BankState)
+                    assert isinstance(bank, MemoryAttentionState)
                     if bank.projected_keys is None:
                         memory_delta = memory_reader.forward_bank(
                             hidden_states,
@@ -803,7 +804,7 @@ class BankVariant(MultiPassVariant):
                         )
                     else:
                         if bank.projected_values is None or len(bank.projected_keys) != len(self.memory_readers):
-                            raise ValueError("BankState projected K/V does not match bank readers")
+                            raise ValueError("MemoryAttentionState projected K/V does not match Memory Attention readers")
                         cache_index = self._reader_cache_index[layer_index]
                         memory_delta = memory_reader.forward_projected_bank(
                             hidden_states,
@@ -813,7 +814,7 @@ class BankVariant(MultiPassVariant):
                             query_position_ids=memory_query_positions,
                         )
                 else:
-                    assert isinstance(bank, BankBatch)
+                    assert isinstance(bank, MemoryAttentionBatch)
                     memory_delta = self._full_bank_memory_delta(
                         memory_reader,
                         hidden_states,
@@ -832,7 +833,7 @@ class BankVariant(MultiPassVariant):
         hidden_states = self.backbone.model.norm(hidden_states)
         if capture_layer is not None and captured_hidden is None:
             raise RuntimeError("requested recurrence source layer was not reached")
-        return BankCoreRun(
+        return MemoryAttentionCoreRun(
             hidden_states=hidden_states,
             past_key_values=(tuple(new_caches) if new_caches is not None else None),
             captured_hidden=captured_hidden,
@@ -840,9 +841,9 @@ class BankVariant(MultiPassVariant):
 
     def _full_bank_memory_delta(
         self,
-        memory_reader: BankReader,
+        memory_reader: MemoryAttentionReader,
         hidden_states: torch.Tensor,
-        bank: BankBatch,
+        bank: MemoryAttentionBatch,
         *,
         query_position_ids: torch.Tensor,
     ) -> torch.Tensor:
@@ -866,7 +867,7 @@ class BankVariant(MultiPassVariant):
     def _run_bank_feedback_core(
         self,
         token_embeddings: torch.Tensor,
-        bank: BankBatch | BankState,
+        bank: MemoryAttentionBatch | MemoryAttentionState,
         *,
         past_key_values: tuple[LayerKVCache, ...] | None,
         use_cache: bool,
@@ -915,21 +916,21 @@ class BankVariant(MultiPassVariant):
             self_attention_mask=self.self_attention_key_mask(input_ids),
         )
         if cache is None:
-            raise RuntimeError("cached Bank prefill did not return KV state")
+            raise RuntimeError("cached Memory Attention prefill did not return KV state")
         return hidden, cache
 
     def _run_feedback_token_cached(
         self,
         token_embedding: torch.Tensor,
-        feedback_memory: BankState,
+        feedback_memory: MemoryAttentionState,
         past_key_values: tuple[LayerKVCache, ...],
         *,
         token: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, tuple[LayerKVCache, ...]]:
-        if not isinstance(feedback_memory, BankState):
-            raise TypeError("Bank cached feedback requires BankState")
+        if not isinstance(feedback_memory, MemoryAttentionState):
+            raise TypeError("Memory Attention cached feedback requires MemoryAttentionState")
         if token is None:
-            raise ValueError("cached Bank requires the current token ID")
+            raise ValueError("cached Memory Attention requires the current token ID")
         query_positions = self._cached_query_positions(feedback_memory, token)
         hidden, cache = self._run_bank_feedback_core(
             token_embedding,
@@ -940,14 +941,14 @@ class BankVariant(MultiPassVariant):
             query_position_ids=query_positions,
         )
         if cache is None:
-            raise RuntimeError("cached Bank token did not return KV state")
+            raise RuntimeError("cached Memory Attention token did not return KV state")
         return hidden, cache
 
     def _cached_query_positions(
-        self, state: BankState, token: torch.Tensor
+        self, state: MemoryAttentionState, token: torch.Tensor
     ) -> torch.Tensor:
         if token.shape != (state.batch_size, 1):
-            raise ValueError("cached Bank token must be [B,1]")
+            raise ValueError("cached Memory Attention token must be [B,1]")
         query_positions = state.next_sequence_positions[:, None]
         if self.uses_memory_tokens:
             query_positions = torch.where(
@@ -957,7 +958,7 @@ class BankVariant(MultiPassVariant):
             )
         return query_positions
 
-    def _state_from_bank_batch(self, bank: BankBatch) -> BankState:
+    def _state_from_bank_batch(self, bank: MemoryAttentionBatch) -> MemoryAttentionState:
         bsz, _, dim = bank.memories.shape
         result = bank.memories.new_zeros((bsz, self.memory_window, dim))
         valid = torch.zeros((bsz, self.memory_window), dtype=torch.bool, device=bank.memories.device)
@@ -983,7 +984,7 @@ class BankVariant(MultiPassVariant):
         valid: torch.Tensor,
         positions: torch.Tensor,
         next_sequence_positions: torch.Tensor,
-    ) -> BankState:
+    ) -> MemoryAttentionState:
         projected_keys: list[torch.Tensor] = []
         projected_values: list[torch.Tensor] = []
         for reader in self.memory_readers.values():
@@ -992,7 +993,7 @@ class BankVariant(MultiPassVariant):
             )
             projected_keys.append(key.detach())
             projected_values.append(value.detach())
-        return BankState(
+        return MemoryAttentionState(
             memories=memories.detach(),
             valid=valid.detach(),
             positions=positions.detach(),
@@ -1006,7 +1007,7 @@ class BankVariant(MultiPassVariant):
         hidden_states: torch.Tensor,
         *,
         input_ids: torch.Tensor | None = None,
-    ) -> BankState:
+    ) -> MemoryAttentionState:
         if hidden_states.ndim != 3 or hidden_states.shape[1] < 1:
             raise ValueError("hidden_states must be non-empty [B,T,D]")
         if input_ids is None:
@@ -1035,13 +1036,13 @@ class BankVariant(MultiPassVariant):
 
     def _append_bank(
         self,
-        state: BankState,
+        state: MemoryAttentionState,
         new_hidden: torch.Tensor,
         *,
         trigger: torch.Tensor,
         write_positions: torch.Tensor,
         next_sequence_positions: torch.Tensor,
-    ) -> BankState:
+    ) -> MemoryAttentionState:
         if new_hidden.ndim != 3 or new_hidden.shape[1] != 1:
             raise ValueError("new_hidden must be [B,1,D]")
         if trigger.shape != (new_hidden.shape[0],) or trigger.dtype != torch.bool:
@@ -1056,7 +1057,7 @@ class BankVariant(MultiPassVariant):
         ):
             raise ValueError("next_sequence_positions must be integer [B]")
         if state.batch_size != new_hidden.shape[0] or state.hidden_size != new_hidden.shape[-1]:
-            raise ValueError("bank and new hidden shapes are incompatible")
+            raise ValueError("memory state and new hidden shapes are incompatible")
         new_record = self.writer(new_hidden).detach()
         memories = state.memories.clone()
         valid = state.valid.clone()
@@ -1088,7 +1089,7 @@ class BankVariant(MultiPassVariant):
 
         assert state.projected_values is not None
         if len(state.projected_keys) != len(self.memory_readers):
-            raise ValueError("BankState projected K/V does not match bank readers")
+            raise ValueError("MemoryAttentionState projected K/V does not match Memory Attention readers")
         projected_keys: list[torch.Tensor] = []
         projected_values: list[torch.Tensor] = []
         for cache_index, reader in enumerate(self.memory_readers.values()):
@@ -1110,7 +1111,7 @@ class BankVariant(MultiPassVariant):
             old_value = torch.where(trigger[:, None, None, None], candidate_value, old_value)
             projected_keys.append(old_key.detach())
             projected_values.append(old_value.detach())
-        return BankState(
+        return MemoryAttentionState(
             memories=memories.detach(),
             valid=valid.detach(),
             positions=positions.detach(),
@@ -1121,17 +1122,17 @@ class BankVariant(MultiPassVariant):
 
     def _append_feedback_memory(
         self,
-        feedback_memory: BankState,
+        feedback_memory: MemoryAttentionState,
         new_hidden: torch.Tensor,
         *,
         token: torch.Tensor | None = None,
         position: int | None = None,
-    ) -> BankState:
-        if not isinstance(feedback_memory, BankState):
-            raise TypeError("Bank feedback requires BankState")
+    ) -> MemoryAttentionState:
+        if not isinstance(feedback_memory, MemoryAttentionState):
+            raise TypeError("Memory Attention feedback requires MemoryAttentionState")
         trigger = self._write_trigger(token=token, position=position)
         if token is None:
-            raise ValueError("Bank feedback update requires current token")
+            raise ValueError("Memory Attention feedback update requires current token")
         current_positions = feedback_memory.next_sequence_positions
         next_positions = current_positions + 1
         if self.uses_memory_tokens:
@@ -1151,3 +1152,24 @@ class BankVariant(MultiPassVariant):
             write_positions=write_positions,
             next_sequence_positions=next_positions,
         )
+
+
+# Historical imports remain valid for checkpoints and downstream scripts.
+BankReader = MemoryAttentionReader
+BankBatch = MemoryAttentionBatch
+BankWriter = MemoryAttentionWriter
+BankVariant = MemoryAttentionVariant
+BankCoreRun = MemoryAttentionCoreRun
+
+__all__ = [
+    "MemoryAttentionReader",
+    "MemoryAttentionBatch",
+    "MemoryAttentionWriter",
+    "MemoryAttentionVariant",
+    "MemoryAttentionCoreRun",
+    "BankReader",
+    "BankBatch",
+    "BankWriter",
+    "BankVariant",
+    "BankCoreRun",
+]

@@ -1,14 +1,11 @@
-"""Recirculation + Strided Memory Attention implementation exports."""
+"""Recirculation + Strided Memory Attention exports."""
 
 from .bank_recirculation_hybrid import (
     BankRecirculationHybridVariant,
     RecirculationStridedMemoryAttentionVariant,
 )
 
-MemoryAttentionRecirculationHybridVariant = RecirculationStridedMemoryAttentionVariant
-
 __all__ = [
     "RecirculationStridedMemoryAttentionVariant",
-    "MemoryAttentionRecirculationHybridVariant",
     "BankRecirculationHybridVariant",
 ]

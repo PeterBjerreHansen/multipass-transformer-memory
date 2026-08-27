@@ -55,7 +55,7 @@ The preflight checks:
 - output directory containment beneath the persistent root;
 - free disk space for durable checkpoint rotation;
 - linguistic versus physical batching quantities for memory-token runs;
-- the exact Memory Attention or Sparse SWA attention configuration.
+- the exact Memory Attention or Strided Attention configuration.
 
 ## Spot-safe checkpoint policy
 
@@ -190,6 +190,6 @@ the final Verda delete operation. On failure it shuts down the compute
 instance but retains remote artifacts for recovery; it does not delete a
 failed run's data.
 
-The campaign wrapper has a fixed list of the non-vanilla Stage-5 arms, including
-Multiscale Memory Attention and Sparse SWA. Use `--arm` to run only the selected controls;
+The campaign wrapper has a fixed list of the non-SWA Transformer Stage-5 arms, including
+Multiscale Memory Attention and Strided Attention. Use `--arm` to run only the selected controls;
 locally complete arms are skipped, so the same command is safe to resume.

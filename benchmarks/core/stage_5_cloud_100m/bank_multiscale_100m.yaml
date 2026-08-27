@@ -1,4 +1,4 @@
-variant: bank_multiscale
+variant: multiscale_memory_attention
 phase: B
 memory_dense_window: 32
 memory_sparse_window: 32

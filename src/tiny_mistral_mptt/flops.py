@@ -22,6 +22,7 @@ from tiny_mistral.config import MistralConfig
 from .config import (
     MEMORY_ATTENTION_VARIANTS,
     MULTISCALE_MEMORY_ATTENTION_VARIANTS,
+    canonical_memory_write_mode,
     canonical_variant_name,
 )
 
@@ -147,8 +148,9 @@ def bank_write_positions(
 ) -> tuple[bool, tuple[int, ...], tuple[bool, ...]]:
     """Return physical layout, write positions, and self-attention key mask."""
     linguistic_length = _validate_positive("linguistic_length", linguistic_length)
+    memory_write_mode = canonical_memory_write_mode(memory_write_mode)
     if memory_write_mode not in {"dense", "periodic", "memory_token"}:
-        raise ValueError("memory_write_mode must be dense, periodic, or memory_token")
+        raise ValueError("memory_write_mode must be dense, strided, or memory_token")
 
     if memory_write_mode == "memory_token":
         if memory_write_stride is None:
@@ -247,7 +249,7 @@ class PassFlopEstimate:
 
 @dataclass(frozen=True, slots=True)
 class ScheduledFlopEstimate:
-    """Weighted FLOPs for a pass-count schedule relative to vanilla K=1."""
+    """Weighted FLOPs for a pass-count schedule relative to SWA Transformer K=1."""
 
     variant: str
     pass_probabilities: dict[int, float]
@@ -296,9 +298,9 @@ def _backbone_pass_breakdown(
     total_pairs = layers * local_pairs
     if sparse_attention_window:
         if config.sliding_window is None:
-            raise ValueError("sparse SWA requires a finite sliding_window")
+            raise ValueError("Strided Attention requires a finite sliding_window")
         if sparse_attention_stride is None:
-            raise ValueError("sparse SWA requires sparse_attention_stride")
+            raise ValueError("Strided Attention requires sparse_attention_stride")
         if not 0 < int(sparse_attention_layers) <= layers:
             raise ValueError("sparse_attention_layers count is outside the backbone")
         multiresolution_pairs = _multiresolution_pairs(
@@ -422,6 +424,7 @@ def estimate_pass(
 ) -> PassFlopEstimate:
     """Estimate forward/training FLOPs for one fixed K-pass optimizer step."""
     variant = canonical_variant_name(str(variant))
+    memory_write_mode = canonical_memory_write_mode(memory_write_mode)
     passes = _validate_positive("passes", passes)
     linguistic_sequence_length = _validate_positive(
         "linguistic_sequence_length", linguistic_sequence_length
@@ -562,7 +565,7 @@ def estimate_schedule(
     sparse_attention_layers: Iterable[int] | str = "all",
     recirculation_mode: str = "fixed",
 ) -> ScheduledFlopEstimate:
-    """Estimate a pass schedule and normalize it to vanilla K=1."""
+    """Estimate a pass schedule and normalize it to SWA Transformer K=1."""
     if not pass_probabilities:
         raise ValueError("pass_probabilities must be non-empty")
     probabilities = {int(key): float(value) for key, value in pass_probabilities.items()}

@@ -1,7 +1,7 @@
-variant: bank
+variant: memory_attention
 phase: A
 memory_window: 32
-memory_write_mode: periodic
+memory_write_mode: strided
 memory_write_stride: 32
 memory_token_visibility: null
 memory_layers: [3, 7]

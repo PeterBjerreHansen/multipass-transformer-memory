@@ -13,7 +13,7 @@ from tiny_mistral.config import MistralConfig
 from tiny_mistral.device import mps_available, synchronize
 from tiny_mistral.modeling import MistralForCausalLM
 from tiny_mistral_mptt.training.phases import configure_phase
-from tiny_mistral_mptt.variants import MultiscaleBankVariant
+from tiny_mistral_mptt.variants import MultiscaleMemoryAttentionVariant
 
 
 def config() -> MistralConfig:
@@ -82,37 +82,37 @@ def main() -> None:
     synchronize(device)
     print(f"loss={out.loss.item():.6f}")
 
-    bank_backbone = MistralForCausalLM(
+    memory_backbone = MistralForCausalLM(
         cfg, attention_backend="local"
     ).to(device=device, dtype=torch.float16)
-    bank_backbone.load_state_dict(ref.state_dict())
-    bank = MultiscaleBankVariant(
-        bank_backbone,
+    memory_backbone.load_state_dict(ref.state_dict())
+    memory_attention = MultiscaleMemoryAttentionVariant(
+        memory_backbone,
         memory_dense_window=8,
         memory_sparse_window=4,
         memory_sparse_stride=8,
         memory_layers=[0],
     ).to(device=device, dtype=torch.float16).train()
-    configure_phase(bank, "A")
-    bank_output = bank.compute_loss(
+    configure_phase(memory_attention, "A")
+    memory_output = memory_attention.compute_loss(
         ids,
         phase="A",
         passes=2,
         loss_weights=[0.0, 1.0],
     )
-    if not bool(torch.isfinite(bank_output.loss).item()):
+    if not bool(torch.isfinite(memory_output.loss).item()):
         raise RuntimeError("non-finite Multiscale Memory Attention loss")
-    bank_output.loss.backward()
+    memory_output.loss.backward()
     if not any(
         parameter.grad is not None
         and bool(parameter.grad.detach().ne(0).any().item())
-        for parameter in bank.added_parameters()
+        for parameter in memory_attention.added_parameters()
         if parameter.requires_grad
     ):
         raise RuntimeError("Multiscale Memory Attention produced no added-parameter gradients")
     synchronize(device)
-    print(f"multiscale_memory_attention_loss={bank_output.loss.item():.6f}")
-    print("PASS: MPS local, Sparse SWA, and Multiscale Memory Attention smoke tests")
+    print(f"multiscale_memory_attention_loss={memory_output.loss.item():.6f}")
+    print("PASS: MPS local, Strided Attention, and Multiscale Memory Attention smoke tests")
 
 
 if __name__ == "__main__":

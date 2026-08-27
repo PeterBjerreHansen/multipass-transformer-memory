@@ -13,6 +13,7 @@ import yaml
 
 from tiny_mistral.config import MistralConfig, tiny_mistral_248m_config
 from tiny_mistral_mptt.flops import estimate_schedule
+from tiny_mistral_mptt.config import canonical_variant_name
 
 
 ARCHITECTURE_FIELDS = (
@@ -92,7 +93,8 @@ def _config(path: str | None) -> MistralConfig:
 
 def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[int, float]):
     variant = str(case["variant"])
-    if variant in {"vanilla", "sparse_swa"}:
+    implementation_variant = canonical_variant_name(variant)
+    if implementation_variant in {"vanilla", "sparse_swa"}:
         probabilities = {1: 1.0}
     else:
         probabilities = schedule
@@ -134,7 +136,9 @@ def build_report(
         first = group_cases[0]
         observed_passes = {int(case["passes"]) for case in group_cases}
         expected_passes = (
-            {1} if first["variant"] in {"vanilla", "sparse_swa"} else set(schedule)
+            {1}
+            if canonical_variant_name(str(first["variant"])) in {"vanilla", "sparse_swa"}
+            else set(schedule)
         )
         if not expected_passes.issubset(observed_passes):
             raise ValueError(

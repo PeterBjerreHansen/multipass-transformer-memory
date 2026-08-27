@@ -11,12 +11,12 @@ import yaml
 
 SEEDS = (2027, 4099)
 PILOT_CONFIGS = {
-    "vanilla": "vanilla_seed1337.yaml",
+    "swa_transformer": "vanilla_seed1337.yaml",
     "recirculation_adaptive": "recirculation_adaptive_seed1337.yaml",
-    "bank_dense": "bank_dense_seed1337.yaml",
-    "bank_periodic32": "bank_periodic32_seed1337.yaml",
-    "bank_memory_token32": "bank_memory_token32_seed1337.yaml",
-    "hybrid_recirculation": "hybrid_recirculation_seed1337.yaml",
+    "dense_memory_attention": "bank_dense_seed1337.yaml",
+    "strided_memory_attention32": "bank_periodic32_seed1337.yaml",
+    "memory_token_attention32": "bank_memory_token32_seed1337.yaml",
+    "recirculation_strided_memory_attention": "hybrid_recirculation_seed1337.yaml",
 }
 
 
@@ -30,9 +30,9 @@ def main() -> None:
     parser.add_argument(
         "--memory-attention",
         "--bank",
-        dest="bank",
+        dest="memory_attention",
         required=True,
-        choices=("dense", "periodic32", "memory_token32"),
+        choices=("dense", "strided32", "memory_token32"),
     )
     parser.add_argument(
         "--hybrid",
@@ -45,8 +45,13 @@ def main() -> None:
     stage_dir = Path(__file__).resolve().parent
     root = stage_dir.parents[2]
     pilot_dir = root / "benchmarks" / "development" / "stage_3_cloud_pilot"
-    hybrid = "hybrid_recirculation"
-    selected = ("vanilla", args.fast, f"bank_{args.bank}", hybrid)
+    memory_key = {
+        "dense": "dense_memory_attention",
+        "strided32": "strided_memory_attention32",
+        "memory_token32": "memory_token_attention32",
+    }[args.memory_attention]
+    hybrid = "recirculation_strided_memory_attention"
+    selected = ("swa_transformer", args.fast, memory_key, hybrid)
     generated: list[tuple[str, str]] = []
 
     destinations = [stage_dir / "STUDY.yaml"]
@@ -102,7 +107,7 @@ def main() -> None:
         yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
     )
     print(
-        f"PASS: prepared Stage 4 fast={args.fast} memory_attention={args.bank} hybrid={args.hybrid} "
+        f"PASS: prepared Stage 4 fast={args.fast} memory_attention={args.memory_attention} hybrid={args.hybrid} "
         f"arms={','.join(arm_id for arm_id, _ in generated)}"
     )
 

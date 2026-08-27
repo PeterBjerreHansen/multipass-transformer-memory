@@ -15,12 +15,12 @@ Research infrastructure must not change ordinary vanilla behavior silently.
 Baseline tests, HF-comparison scripts, and `VANILLA_SOURCE.sha256` are the
 guardrails.
 
-Memory Attention and Sparse SWA add two tested substrate capabilities. Self-attention K/V
+Memory Attention and Strided Attention add two tested substrate capabilities. Self-attention K/V
 entries can carry a validity mask, and selected layers can use a bounded
 dense-recent/fixed-stride-old mask. Write-only `<MEM>` positions retain their
 physical, RoPE, and cache coordinates while remaining unavailable as K/V. An
 empty attention row returns exact zero in every backend. Ordinary layers retain
-the original local path, while Sparse SWA reuses the pretrained projections.
+the original local path, while Strided Attention reuses the pretrained projections.
 
 ## FBT architecture reference
 

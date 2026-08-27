@@ -23,7 +23,7 @@ reference masking, and cached explicit-position retention must agree.
 
 The suite must enforce:
 
-- ordinary pass 1 matches the vanilla backbone path;
+- ordinary pass 1 matches the SWA Transformer backbone path;
 - FBT exact cached inference matches full-prefix multipass recomputation;
 - retired checkpoint controls retain their focused compatibility tests;
 - adaptive recirculation starts at the configured fixed mixture;
@@ -32,7 +32,7 @@ The suite must enforce:
 - dense Memory Attention and strided C1 are identical with matching weights;
 - multiscale Memory Attention reduces to Dense Memory Attention when `S=0` and Strided Memory Attention when
   `D=0`, and uses one softmax over a non-overlapping union otherwise;
-- zero-initialized Memory Attention is an exact vanilla fixed point at all pass depths;
+- zero-initialized Memory Attention is an exact SWA Transformer fixed point at all pass depths;
 - Memory Attention reader allocation and projected caches match `memory_layers`;
 - memory RoPE retains original linguistic write/query positions through cached eviction;
 - strided and MEM writes are strict-past;
@@ -66,8 +66,8 @@ For `A <MEM> B`:
 - the first recurrent continuation transition equals exact K-pass;
 - Memory Attention state remains chronological and bounded;
 - write-only cache validity persists across decode;
-- K=1 remains the vanilla cached boundary;
-- sparse SWA adds no parameters, changes only selected self-attention masks,
+- K=1 remains the SWA Transformer cached boundary;
+- Strided Attention adds no parameters, changes only selected self-attention masks,
   and cached decoding equals full-sequence execution.
 
 ## Training/recovery gates

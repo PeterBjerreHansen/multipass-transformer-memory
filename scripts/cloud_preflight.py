@@ -268,7 +268,7 @@ def main() -> None:
         "effective_mode": effective_mode,
         "source": source,
         "precision": {"parameter_dtype": cfg.dtype, "autocast_dtype": cfg.autocast_dtype},
-        "bank": {
+        "memory_attention": {
             "variant": cfg.variant,
             "memory_window": cfg.memory_window,
             "memory_write_mode": cfg.memory_write_mode,
@@ -280,7 +280,7 @@ def main() -> None:
             "memory_sparse_window": cfg.memory_sparse_window,
             "memory_sparse_stride": cfg.memory_sparse_stride,
         },
-        "sparse_swa": {
+        "strided_attention": {
             "sparse_attention_stride": cfg.sparse_attention_stride,
             "sparse_attention_window": cfg.sparse_attention_window,
             "sparse_attention_layers": cfg.sparse_attention_layers,

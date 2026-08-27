@@ -1,8 +1,8 @@
 # Exact incremental and collapsed recurrent inference
 
 This document defines cached inference for the active `recirculation`,
-`memory_attention`/`bank`, and `memory_attention_multiscale`/`bank_multiscale`
-variants. Prompt refinement depth K is an inference-time
+`memory_attention` and `multiscale_memory_attention` variants. Prompt
+refinement depth K is an inference-time
 parameter and need not equal the training depth.
 
 ## Exact incremental K
@@ -30,11 +30,11 @@ The first processed continuation position therefore sees exactly the same
 feedback and final-stream history as exact K-pass inference. After that position,
 the live final stream writes its own new feedback and closes the recurrent loop.
 
-K=1 is the vanilla cached boundary: recurrent feedback is disabled.
+K=1 is the SWA Transformer cached boundary: recurrent feedback is disabled.
 
 ## Memory Attention state
 
-Cached Memory Attention feedback is a fixed-capacity chronological `BankState` with at most
+Cached Memory Attention feedback is a fixed-capacity chronological `MemoryAttentionState` with at most
 `memory_window` records and an explicit validity mask. Decode obeys:
 
 ```text

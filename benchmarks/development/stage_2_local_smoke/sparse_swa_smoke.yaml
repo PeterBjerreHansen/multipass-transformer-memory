@@ -1,4 +1,4 @@
-variant: sparse_swa
+variant: strided_attention
 phase: B
 sparse_attention_stride: 32
 sparse_attention_window: 32

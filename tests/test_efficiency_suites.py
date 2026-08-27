@@ -36,12 +36,12 @@ def test_efficiency_suite_cases_have_required_dimensions():
         for case in cases:
             merged = {**defaults, **case}
             assert merged["variant"] in {
-                "vanilla",
-                "sparse_swa",
+                "swa_transformer",
+                "strided_attention",
                 "recirculation",
-                "bank",
-                "bank_multiscale",
-                "bank_recirculation_hybrid",
+                "memory_attention",
+                "multiscale_memory_attention",
+                "recirculation_strided_memory_attention",
             }
             assert merged["passes"] in {1, 2, 3}
             assert merged["sequence_length"] > 0
@@ -64,7 +64,7 @@ def test_precision_suites_compare_fp32_and_bfloat16_on_each_backend():
         modes = {case.get("autocast_dtype") for case in raw["cases"]}
         assert modes == {None, "bfloat16"}
         pairs = {(case["variant"], case["passes"]) for case in raw["cases"]}
-    assert pairs == {("vanilla", 1), ("recirculation", 2), ("bank", 3)}
+    assert pairs == {("swa_transformer", 1), ("recirculation", 2), ("memory_attention", 3)}
 
 
 def test_cuda_batch_qualification_is_k2_bf16_and_does_not_accumulate():
@@ -75,9 +75,9 @@ def test_cuda_batch_qualification_is_k2_bf16_and_does_not_accumulate():
     assert raw["defaults"]["grad_accum_steps"] == 1
     assert {(case["variant"], case["passes"]) for case in raw["cases"]} == {
         ("recirculation", 2),
-        ("bank", 2),
+        ("memory_attention", 2),
     }
-    for variant in ("recirculation", "bank"):
+    for variant in ("recirculation", "memory_attention"):
         assert {
             case["batch_size"] for case in raw["cases"] if case["variant"] == variant
         } == {1, 2, 4, 8}

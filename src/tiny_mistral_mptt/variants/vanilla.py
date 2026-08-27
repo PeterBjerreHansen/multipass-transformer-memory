@@ -10,8 +10,8 @@ from ..training.loss import normalize_pass_weights
 from .base import ExperimentalVariant, TrainOutput
 
 
-class VanillaVariant(ExperimentalVariant):
-    variant_name = "vanilla"
+class SWATransformerVariant(ExperimentalVariant):
+    variant_name = "swa_transformer"
 
     def __init__(self, backbone: MistralForCausalLM):
         super().__init__()
@@ -35,12 +35,12 @@ class VanillaVariant(ExperimentalVariant):
         if phase not in {"A", "B"}:
             raise ValueError("phase must be 'A' or 'B'")
         if phase == "A":
-            raise ValueError("vanilla has no Phase-A training")
+            raise ValueError("SWA Transformer has no Phase-A training")
         if passes != 1:
-            raise ValueError("vanilla variant supports exactly one pass")
+            raise ValueError("SWA Transformer supports exactly one pass")
         out = self.backbone(input_ids, labels=input_ids, use_cache=False)
         if out.loss is None:
-            raise RuntimeError("vanilla backbone did not return a loss")
+            raise RuntimeError("SWA Transformer backbone did not return a loss")
         weights = normalize_pass_weights(
             loss_weights,
             1,
@@ -62,3 +62,9 @@ class VanillaVariant(ExperimentalVariant):
 
     def generate(self, *args, **kwargs):
         return self.backbone.generate(*args, **kwargs)
+
+
+SwaTransformerVariant = SWATransformerVariant
+VanillaVariant = SWATransformerVariant
+
+__all__ = ["SWATransformerVariant", "SwaTransformerVariant", "VanillaVariant"]

@@ -10,16 +10,16 @@ defaults:
   batch_size: 1
   grad_accum_steps: 1
 cases:
-- variant: vanilla
+- variant: swa_transformer
   passes: 1
   sequence_length: 512
-- variant: vanilla
+- variant: swa_transformer
   passes: 1
   sequence_length: 2048
-- variant: vanilla
+- variant: swa_transformer
   passes: 1
   sequence_length: 4096
-- variant: vanilla
+- variant: swa_transformer
   passes: 1
   sequence_length: 8192
 - variant: recirculation
@@ -78,35 +78,35 @@ cases:
   recirculation_source_layer: 6
   recirculation_destination_layer: 3
   recirculation_alpha: 0.1
-- variant: bank
+- variant: memory_attention
   passes: 2
   sequence_length: 512
   memory_write_mode: dense
-- variant: bank
+- variant: memory_attention
   passes: 2
   sequence_length: 2048
   memory_write_mode: dense
-- variant: bank
+- variant: memory_attention
   passes: 2
   sequence_length: 4096
   memory_write_mode: dense
-- variant: bank
+- variant: memory_attention
   passes: 2
   sequence_length: 8192
   memory_write_mode: dense
-- variant: bank
+- variant: memory_attention
   passes: 3
   sequence_length: 512
   memory_write_mode: dense
-- variant: bank
+- variant: memory_attention
   passes: 3
   sequence_length: 2048
   memory_write_mode: dense
-- variant: bank
+- variant: memory_attention
   passes: 3
   sequence_length: 4096
   memory_write_mode: dense
-- variant: bank
+- variant: memory_attention
   passes: 3
   sequence_length: 8192
   memory_write_mode: dense

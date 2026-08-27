@@ -3,23 +3,30 @@ from .fbt import FBTVariant
 from .memory_add import MemoryAddVariant
 from .multipass import HiddenRun, MultiPassResult, MultiPassVariant, PassResult, shift_previous_hidden
 from .recirculation import RecirculationVariant
-from .bank import BankBatch, BankReader, BankVariant, BankWriter
-from .bank_add_hybrid import BankAddHybridVariant
-from .bank_recirculation_hybrid import BankRecirculationHybridVariant
-from .bank_recurrent_hybrid import BankRecurrentHybridVariant
-from .bank_multiscale import MultiscaleBankVariant
-from .sparse_swa import SparseSWAVariant
-from .vanilla import VanillaVariant
+from .bank import (
+    BankBatch,
+    BankReader,
+    BankVariant,
+    BankWriter,
+    MemoryAttentionBatch,
+    MemoryAttentionReader,
+    MemoryAttentionVariant,
+    MemoryAttentionWriter,
+)
+from .bank_add_hybrid import BankAddHybridVariant, MemoryAttentionAddHybridVariant
+from .bank_recirculation_hybrid import (
+    BankRecirculationHybridVariant,
+    RecirculationStridedMemoryAttentionVariant,
+)
+from .bank_recurrent_hybrid import (
+    BankRecurrentHybridVariant,
+    MemoryAttentionRecurrentHybridVariant,
+)
+from .bank_multiscale import MultiscaleBankVariant, MultiscaleMemoryAttentionVariant
+from .sparse_swa import SparseSWAVariant, StridedAttentionVariant
+from .vanilla import SWATransformerVariant, SwaTransformerVariant, VanillaVariant
 
-# Public Memory Attention vocabulary.  The Bank* classes remain the concrete
-# implementation names so historical imports and checkpoint provenance stay
-# stable.
-MemoryAttentionVariant = BankVariant
-MemoryAttentionReader = BankReader
-MemoryAttentionWriter = BankWriter
-MultiscaleMemoryAttentionVariant = MultiscaleBankVariant
-MemoryAttentionAddHybridVariant = BankAddHybridVariant
-MemoryAttentionRecirculationHybridVariant = BankRecirculationHybridVariant
+MemoryAttentionRecirculationHybridVariant = RecirculationStridedMemoryAttentionVariant
 
 __all__ = [
     "ExperimentalVariant",
@@ -38,6 +45,12 @@ __all__ = [
     "BankVariant",
     "MultiscaleBankVariant",
     "BankWriter",
+    "MemoryAttentionBatch",
+    "MemoryAttentionRecurrentHybridVariant",
+    "RecirculationStridedMemoryAttentionVariant",
+    "SwaTransformerVariant",
+    "SWATransformerVariant",
+    "StridedAttentionVariant",
     "TrainOutput",
     "VanillaVariant",
     "SparseSWAVariant",

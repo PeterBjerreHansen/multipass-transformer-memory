@@ -1,7 +1,5 @@
-"""Public Memory Attention + residual hybrid compatibility import."""
+"""Memory Attention + residual hybrid implementation exports."""
 
-from .bank_add_hybrid import BankAddHybridVariant
+from .bank_add_hybrid import BankAddHybridVariant, MemoryAttentionAddHybridVariant
 
-MemoryAttentionAddHybridVariant = BankAddHybridVariant
-
-__all__ = ["BankAddHybridVariant", "MemoryAttentionAddHybridVariant"]
+__all__ = ["MemoryAttentionAddHybridVariant", "BankAddHybridVariant"]

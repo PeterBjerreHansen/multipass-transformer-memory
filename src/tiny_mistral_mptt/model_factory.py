@@ -8,18 +8,18 @@ import torch
 from tiny_mistral.loading import load_model
 from tiny_mistral.modeling import MistralForCausalLM
 
-from .config import canonical_variant_name
+from .config import canonical_memory_write_mode, canonical_variant_name
 from .variants import (
     ExperimentalVariant,
     FBTVariant,
     MemoryAddVariant,
     RecirculationVariant,
-    BankAddHybridVariant,
-    BankRecirculationHybridVariant,
-    MultiscaleBankVariant,
-    BankVariant,
-    SparseSWAVariant,
-    VanillaVariant,
+    MemoryAttentionAddHybridVariant,
+    RecirculationStridedMemoryAttentionVariant,
+    MultiscaleMemoryAttentionVariant,
+    MemoryAttentionVariant,
+    StridedAttentionVariant,
+    SWATransformerVariant,
 )
 
 if TYPE_CHECKING:
@@ -53,15 +53,16 @@ def build_variant(
 ) -> ExperimentalVariant:
     requested_name = str(name)
     name = canonical_variant_name(requested_name)
+    memory_write_mode = canonical_memory_write_mode(memory_write_mode)
     if name == "vanilla":
-        variant: ExperimentalVariant = VanillaVariant(backbone)
+        variant: ExperimentalVariant = SWATransformerVariant(backbone)
     elif name == "sparse_swa":
         if sparse_attention_stride is None or sparse_attention_window is None:
             raise ValueError(
-                "sparse_swa requires sparse_attention_stride and "
+                "Strided Attention requires sparse_attention_stride and "
                 "sparse_attention_window"
             )
-        variant = SparseSWAVariant(
+        variant = StridedAttentionVariant(
             backbone,
             sparse_attention_stride=sparse_attention_stride,
             sparse_attention_window=sparse_attention_window,
@@ -101,7 +102,7 @@ def build_variant(
                 "multiscale Memory Attention uses dense source states and does not accept "
                 "memory_write_* controls"
             )
-        variant = MultiscaleBankVariant(
+        variant = MultiscaleMemoryAttentionVariant(
             backbone,
             memory_dense_window=memory_dense_window,
             memory_sparse_window=memory_sparse_window,
@@ -112,7 +113,7 @@ def build_variant(
         )
     elif name in {"bank", "bank_add_hybrid", "bank_recirculation_hybrid"}:
         if memory_write_mode not in {"dense", "periodic", "memory_token"}:
-            raise ValueError("Memory Attention variants require memory_write_mode: dense|periodic|memory_token")
+            raise ValueError("Memory Attention variants require memory_write_mode: dense|strided|memory_token")
         if memory_write_mode == "dense":
             if memory_write_stride is not None:
                 raise ValueError("dense Memory Attention must not set memory_write_stride")
@@ -144,9 +145,9 @@ def build_variant(
             initialization_seed=architecture_seed,
         )
         if name == "bank":
-            variant = BankVariant(backbone, **kwargs)
+            variant = MemoryAttentionVariant(backbone, **kwargs)
         elif name == "bank_add_hybrid":
-            variant = BankAddHybridVariant(backbone, **kwargs)
+            variant = MemoryAttentionAddHybridVariant(backbone, **kwargs)
         else:
             if (
                 recirculation_source_layer is None
@@ -156,7 +157,7 @@ def build_variant(
                     "Memory Attention recirculation hybrid requires recirculation_source_layer "
                     "and recirculation_destination_layer"
                 )
-            variant = BankRecirculationHybridVariant(
+            variant = RecirculationStridedMemoryAttentionVariant(
                 backbone,
                 source_layer=recirculation_source_layer,
                 destination_layer=recirculation_destination_layer,
@@ -169,10 +170,8 @@ def build_variant(
 
     reference_parameter = next(backbone.parameters())
     variant.to(device=reference_parameter.device, dtype=reference_parameter.dtype)
-    # Keep the public alias visible for experiment metadata while preserving
-    # the historical implementation class and checkpoint state layout.
-    if requested_name != name:
-        variant.variant_name = requested_name
+    # Preserve the requested model name in experiment metadata.
+    variant.variant_name = requested_name
     return variant
 
 

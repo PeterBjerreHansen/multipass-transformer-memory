@@ -1,13 +1,13 @@
 # Experimental pipeline
 
 The completed eight-arm study is specified across stages 0 through 5. It compares
-vanilla TinyMistral, adaptive Recirculation, three Memory Attention write
+the SWA Transformer, adaptive Recirculation, three Memory Attention write
 policies, the Recirculation–Strided Memory Attention hybrid, Multiscale Memory
-Attention, and Sparse SWA:
+Attention, and Strided Attention:
 
 - Multiscale Memory Attention tests short- and long-range access to previous-pass states
   without a recurrent channel.
-- Sparse SWA tests the same pattern over ordinary current-pass token states,
+- Strided Attention tests the same pattern over ordinary current-pass token states,
   without recurrence, Memory Attention cross-attention, or added parameters.
 
 These controls separate three possible causes of the reported hybrid gain:
@@ -22,11 +22,11 @@ and write-only memory-token C32. Adaptive Recirculation routes source layer 6
 to destination layer 3. The hybrid places readers after layers 4 and 7.
 
 Multiscale Memory Attention uses the hybrid's reader placement with 32 recent dense records
-and 32 older C32 records. Sparse SWA augments self-attention after layers 3 and
+and 32 older C32 records. Strided Attention augments self-attention after layers 3 and
 7 with 32 older C32 tokens. These are controlled defaults, not claims of
 optimal spacing or placement.
 
-FBT, MemoryAdd, and BankAddHybrid remain only for historical compatibility.
+FBT, MemoryAdd, and MemoryAttentionAddHybrid remain only for historical compatibility.
 They are not active study arms.
 
 ## Pass protocol
@@ -35,7 +35,7 @@ Multipass arms sample K=2 on 90% of batches and K=3 on 10%. Phase A applies
 loss only to the final pass. Phase B gives the first pass weight 0.1 and the
 final pass weight 0.9. This costs 2.1 average passes per batch.
 
-Sparse SWA is a one-pass Transformer. It uses K=1 and has no Phase A because it
+Strided Attention is a one-pass Transformer. It uses K=1 and has no Phase A because it
 adds no trainable parameters.
 
 ## Existing stages
@@ -88,12 +88,12 @@ comparisons.
 
 The completed run used the configs under
 `benchmarks/core/stage_5_cloud_100m/`. Multiscale Memory Attention initialized from its
-Stage-1 checkpoint. Sparse SWA started from the canonical TinyMistral
+Stage-1 checkpoint. Strided Attention started from the canonical TinyMistral
 checkpoint. Both used the same Phase-B data slice and optimizer batch as the
 other six Stage-5 arms.
 
 Their validation and efficiency results are included in the repository README.
-Do not treat Multiscale Memory Attention and Sparse SWA as a tightly matched pair:
+Do not treat Multiscale Memory Attention and Strided Attention as a tightly matched pair:
 they differ in pass count, parameter count, and initialization because those
 differences define the architectures being controlled.
 

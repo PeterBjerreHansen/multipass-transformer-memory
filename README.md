@@ -6,14 +6,14 @@ The idea behind [multi-pass training](https://github.com/PeterBjerreHansen/multi
 
 | Model / method                                | Final validation PPL | Late PPL reduction, 50M → 100M | Total parameters | Relative training FLOPs |
 | --------------------------------------------- | -------------------: | -----------------------------: | ---------------: | ----------------------: |
-| Transformer baseline                          |                7.778 |                  0.110 (1.40%) |         248.024M |                 1.0000x |
-| Sparse SWA control                            |                7.811 |                  0.121 (1.52%) |         248.024M |                 1.0004x |
+| SWA Transformer baseline                          |                7.778 |                  0.110 (1.40%) |         248.024M |                 1.0000x |
+| Strided Attention control                            |                7.811 |                  0.121 (1.52%) |         248.024M |                 1.0004x |
 | 🔴 Full Bandwidth Transformer| - | - | - | - |
 | Adaptive Recirculation                        |                7.678 |                  0.110 (1.42%) |         253.275M |                 2.1267x |
-| Sparse Strided Memory Attention               |                7.599 |                  0.113 (1.46%) |         254.320M |                 2.1222x |
-| Dense Memory Attention                        |                7.534 |                  0.112 (1.46%) |         254.320M |                 2.1327x |
-| Adaptive Recirculation + Sparse Memory Attention |              7.519 |                  0.120 (1.57%) |         259.571M |                 2.1489x |
-| Multiscale Memory Attention control           |                7.504 |                  0.111 (1.46%) |         254.320M |                 2.1332x |
+| Strided Memory Attention               |                7.599 |                  0.113 (1.46%) |         254.320M |                 2.1222x |
+| Dense SWA Memory Attention                        |                7.534 |                  0.112 (1.46%) |         254.320M |                 2.1327x |
+| Adaptive Recirculation + Strided Memory Attention |              7.519 |                  0.120 (1.57%) |         259.571M |                 2.1489x |
+| Dense SWA + Strided Memory Attention           |                7.504 |                  0.111 (1.46%) |         254.320M |                 2.1332x |
 
 I think there are three notable patterns in these results:
 
@@ -21,9 +21,9 @@ I think there are three notable patterns in these results:
 
 2. The sparse attention to far-away memories outperformed models with only the recurrent connections to memories. To me this result slightly favours the notion that the performance gains reported in the FBT and recirculation papers stem from **mere greater effective depth** rather than **unlocking recurrent computation patterns**.
 
-3. The recurrent/attention hybrid performs on par with the short-range dense attention only model, and so sparse Memory Attention could provide a valuable "slow" (long-range) memory for multi-pass models with only the "fast" (short-term) recurrent pattern. However, supplying the short-range dense attention only model with sparse long-range attention improves performance even further at a smaller compute budget, and so the attention only variant looks superior. 
+3. The recurrent/attention hybrid performs on par with the short-range dense attention only model, and so Strided Memory Attention could provide a valuable "slow" (long-range) memory for multi-pass models with only the "fast" (short-term) recurrent pattern. However, supplying the short-range dense attention only model with strided long-range attention improves performance even further at a smaller compute budget, and so the attention only variant looks superior.
 
-The experiment is riddled with confounders such as differing compute budgets, parameter count, and starting-point inequality (some mechanisms are more easily slotted into a pretrained model, and the vanilla backbone had no pre-run adaptation). Moreover, I simply do not have the computational resources to provide the exhaustive sweeps and ablations one needs to make convincing optimality arguments. However, I do think the results point towards potential improvements to the existing architectures.
+The experiment is riddled with confounders such as differing compute budgets, parameter count, and starting-point inequality (some mechanisms are more easily slotted into a pretrained model, and the SWA Transformer backbone had no pre-run adaptation). Moreover, I simply do not have the computational resources to provide the exhaustive sweeps and ablations one needs to make convincing optimality arguments. However, I do think the results point towards potential improvements to the existing architectures.
 
 > 🔴 **FBT is omitted from the common-protocol comparison for now since it requires some architecture-specific initialization and pretraining adjustments. It performs poorly when wired and/or trained with the common protocol, but it might do better in a comparison with architecture-specific optimisation.**
 
@@ -56,7 +56,7 @@ The Memory Attention variants differ primarily in their **memory access pattern*
 
 These access patterns admit several equivalent conceptual realizations. For example, sparse Memory Attention can be understood either as retaining only the memory states that will be addressable, or as retaining a denser memory and masking the inaccessible states during attention. The implementation uses selective memory writes and bounded retained KV records for efficiency, but that is not essential to the Memory Attention abstraction itself.
 
-`memory_window: 32` therefore refers to the implementation's capacity of **32 retained addressable memory records**, not a 32-token receptive field. For a Strided Memory Attention model with stride 32, those 32 records can represent memories spread over roughly $32\times$ the sequence range of a dense model with the same retained capacity. The hybrid combines both routes: adaptive Recirculation provides a **fast**, local feedback channel, while sparse Memory Attention provides a **slow**, longer-range content-addressed memory. This is the motivation for viewing the two mechanisms as complementary rather than mutually exclusive. Multiscale Memory Attention is the attention-only control for the recurrent/Memory Attention hybrid. It gives each memory-attention reader access to both dense recent memories and sparse older memories in one softmax, but removes the recurrent channel. Sparse SWA is the vanilla Transformer control. At selected layers, it extends ordinary sliding-window self-attention with sparse attention to fixed-stride past tokens. It is one-pass, reads current-pass token states rather than previous-pass memory records, and adds no parameters.
+`memory_window: 32` therefore refers to the implementation's capacity of **32 retained addressable memory records**, not a 32-token receptive field. For a Strided Memory Attention model with stride 32, those 32 records can represent memories spread over roughly $32\times$ the sequence range of a dense model with the same retained capacity. The hybrid combines both routes: adaptive Recirculation provides a **fast**, local feedback channel, while Strided Memory Attention provides a **slow**, longer-range content-addressed memory. This is the motivation for viewing the two mechanisms as complementary rather than mutually exclusive. Multiscale Memory Attention is the attention-only control for the recurrent/Memory Attention hybrid. It gives each memory-attention reader access to both dense recent memories and sparse older memories in one softmax, but removes the recurrent channel. Strided Attention is the SWA Transformer control. At selected layers, it extends ordinary sliding-window self-attention with strided attention to fixed-stride past tokens. It is one-pass, reads current-pass token states rather than previous-pass memory records, and adds no parameters.
 
 The current implementation configures these access patterns through the memory-write policy:
 
@@ -65,20 +65,20 @@ variant: memory_attention
 
 memory_window: 32
 
-memory_write_mode: dense       # dense | periodic | memory_token (historical config values)
+memory_write_mode: dense       # dense | strided | memory_token
 
 memory_layers: [3, 7]
 
 memory_position_encoding: rope
 ```
 
-Strided and memory-token Memory Attention additionally set `memory_write_stride`. The Strided access pattern retains the historical `memory_write_mode: periodic` config value. In memory-token mode, `<MEM>` is input-only: it is not part of the LM output vocabulary and receives no direct LM loss. In the `write_only` configuration used in the main comparison, later tokens can access its state only through Memory Attention.
+Strided and memory-token Memory Attention additionally set `memory_write_stride`. In memory-token mode, `<MEM>` is input-only: it is not part of the LM output vocabulary and receives no direct LM loss. In the `write_only` configuration used in the main comparison, later tokens can access its state only through Memory Attention.
 
 See `docs/MEMORY_ATTENTION.md` for the conceptual vocabulary and `docs/BANK_MEMORY.md` for the exact implementation-level attention masks, retention/write timing, cached-inference behavior, and hybrid contracts. See `docs/ARCHITECTURES.md` for the two attention-control architectures.
 
 ### A Note on Efficiency
 
-`Relative training FLOPs` is normalized to the vanilla K=1 run at 1.000x. It uses the 90% K=2 / 10% K=3 training schedule, so most of the $>2x$ multiplier is because I chose to always run at least two passes. This policy puts more pressure on the memory adaptations (which is what I wanted to study most), but is presumably computationally suboptimal since single passes will adapt the backbone to the training distribution more efficiently. The measure counts mostly the dominant dense matrix products in the forward and backward passes, and you can see the estimator in `scripts/estimate_training_flops.py`.
+`Relative training FLOPs` is normalized to the SWA Transformer K=1 run at 1.000x. It uses the 90% K=2 / 10% K=3 training schedule, so most of the $>2x$ multiplier is because I chose to always run at least two passes. This policy puts more pressure on the memory adaptations (which is what I wanted to study most), but is presumably computationally suboptimal since single passes will adapt the backbone to the training distribution more efficiently. The measure counts mostly the dominant dense matrix products in the forward and backward passes, and you can see the estimator in `scripts/estimate_training_flops.py`.
 
 ### More Ideas, Future Work
 
@@ -122,13 +122,12 @@ Learning-rate schedules and run token budgets use linguistic tokens. Throughput 
 
 ## Current research status
 
-The locked eight-arm study compares vanilla, adaptive Recirculation, three Memory Attention access patterns, the Recirculation–Strided Memory Attention hybrid, Multiscale Memory Attention, and Sparse SWA. Its configs remain under `benchmarks/core/stage_5_cloud_100m/`; all eight 100M-token runs are complete and their full artifacts are under `benchmarks/core/stage_5_cloud_100m/results/`. Multiscale Memory Attention used its verified frozen-backbone wiring checkpoint. Sparse SWA has no added parameters and started in Phase B. The runnable path is documented in `benchmarks/development/experimental_pipeline.md`.
+The locked eight-arm study compares the SWA Transformer, adaptive Recirculation, three Memory Attention access patterns, the Recirculation–Strided Memory Attention hybrid, Multiscale Memory Attention, and Strided Attention. Its configs remain under `benchmarks/core/stage_5_cloud_100m/`; all eight 100M-token runs are complete and their full artifacts are under `benchmarks/core/stage_5_cloud_100m/results/`. Multiscale Memory Attention used its verified frozen-backbone wiring checkpoint. Strided Attention has no added parameters and started in Phase B. The runnable path is documented in `benchmarks/development/experimental_pipeline.md`.
 
-FBT and MemoryAdd are retired controls. Their implementations and focused correctness tests remain only for historical checkpoint/provenance compatibility, like other archived research controls, but neither appears in the active studies, efficiency qualifications, or cloud campaign. BankAddHybrid, which uses the same MemoryAdd fast channel, is also retired from the active experiment surface.
+FBT and MemoryAdd are retired controls. Their implementations and focused correctness tests remain only for historical checkpoint/provenance compatibility, like other archived research controls, but neither appears in the active studies, efficiency qualifications, or cloud campaign. MemoryAttentionAddHybrid, which uses the same MemoryAdd fast channel, is also retired from the active experiment surface.
 
 Historical benchmark results remain read-only evidence; they do not define the active architecture API.
 
-**Terminology note:** Existing `bank` and `periodic` identifiers remain in configs, checkpoints, result directories, and internal symbols for reproducibility. New research discussion uses **Memory Attention** and **Strided**; the historical names remain compatibility identifiers.
 
 ## Validate
 

@@ -8,7 +8,7 @@ import math
 import torch
 
 from tiny_mistral.device import resolve_device
-from tiny_mistral_mptt.config import load_experiment_config
+from tiny_mistral_mptt.config import canonical_variant_name, load_experiment_config
 from tiny_mistral_mptt.data.manifest import file_sha256
 from tiny_mistral_mptt.data.packed_dataset import load_packed_dataset_for_experiment
 from tiny_mistral_mptt.model_factory import load_variant_from_config
@@ -16,14 +16,14 @@ from tiny_mistral_mptt.training.checkpoint import load_checkpoint_for_evaluation
 from tiny_mistral_mptt.feedback import HybridPassSource
 from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
 from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
-from tiny_mistral_mptt.variants.bank_add_hybrid import BankAddHybridVariant
+from tiny_mistral_mptt.variants.bank_add_hybrid import MemoryAttentionAddHybridVariant
 from tiny_mistral_mptt.variants.bank_recirculation_hybrid import (
-    BankRecirculationHybridVariant,
+    RecirculationStridedMemoryAttentionVariant,
 )
 from tiny_mistral_mptt.variants.bank_recurrent_hybrid import (
-    BankRecurrentHybridVariant,
+    MemoryAttentionRecurrentHybridVariant,
 )
-from tiny_mistral_mptt.variants.bank import BankVariant
+from tiny_mistral_mptt.variants.bank import MemoryAttentionVariant
 
 
 SUPPORTED = {
@@ -33,10 +33,6 @@ SUPPORTED = {
     "bank_multiscale",
     "bank_add_hybrid",
     "bank_recirculation_hybrid",
-    "memory_attention",
-    "memory_attention_multiscale",
-    "memory_attention_add_hybrid",
-    "memory_attention_recirculation_hybrid",
 }
 
 
@@ -63,7 +59,7 @@ def _condition_hiddens(
     real: torch.Tensor | HybridPassSource,
     mismatch: torch.Tensor | HybridPassSource,
 ) -> dict[str, torch.Tensor]:
-    if isinstance(model, BankRecurrentHybridVariant):
+    if isinstance(model, MemoryAttentionRecurrentHybridVariant):
         if not isinstance(real, HybridPassSource) or not isinstance(
             mismatch, HybridPassSource
         ):
@@ -77,7 +73,7 @@ def _condition_hiddens(
                 ids, token_embeddings, source
             ).hidden_states
 
-        recurrent_label = "fast" if isinstance(model, BankAddHybridVariant) else "recurrent"
+        recurrent_label = "fast" if isinstance(model, MemoryAttentionAddHybridVariant) else "recurrent"
         return {
             "real_memory": run(real.recurrent_hidden, real.bank_hidden),
             "zero_memory": run(zero_recurrent, zero_bank),
@@ -120,7 +116,7 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_experiment_config(args.config)
-    if cfg.variant not in SUPPORTED:
+    if canonical_variant_name(cfg.variant) not in SUPPORTED:
         raise SystemExit(
             "evaluate_memory_interventions requires a MemoryAdd/Recirculation/Memory Attention variant"
         )
@@ -131,9 +127,9 @@ def main() -> None:
             (
                 MemoryAddVariant,
                 RecirculationVariant,
-                BankVariant,
-                BankAddHybridVariant,
-                BankRecirculationHybridVariant,
+                MemoryAttentionVariant,
+                MemoryAttentionAddHybridVariant,
+                RecirculationStridedMemoryAttentionVariant,
             ),
     ):
         raise SystemExit("loaded model does not support memory interventions")
@@ -198,9 +194,9 @@ def main() -> None:
                 values["count"] = int(values["count"]) + count
                 values["delta_sq"] = float(values["delta_sq"]) + delta_sq
 
-            if isinstance(model, (MemoryAddVariant, BankAddHybridVariant)):
+            if isinstance(model, (MemoryAddVariant, MemoryAttentionAddHybridVariant)):
                 embedding_rms_sum += _rms(token_embeddings[:, 1:, :])
-                residual_rms_sum += _rms(model.memory_residual(first_hidden, ids)[:, 1:, :] if isinstance(model, BankAddHybridVariant) else model.memory_residual(first_hidden)[:, 1:, :])
+                residual_rms_sum += _rms(model.memory_residual(first_hidden, ids)[:, 1:, :] if isinstance(model, MemoryAttentionAddHybridVariant) else model.memory_residual(first_hidden)[:, 1:, :])
 
     result: dict[str, object] = {
         "variant": cfg.variant,
@@ -220,7 +216,7 @@ def main() -> None:
             "hidden_delta_rms": math.sqrt(float(values["delta_sq"]) / blocks),
         }
 
-    if isinstance(model, (MemoryAddVariant, BankAddHybridVariant)):
+    if isinstance(model, (MemoryAddVariant, MemoryAttentionAddHybridVariant)):
         embedding_rms = embedding_rms_sum / blocks
         residual_rms = residual_rms_sum / blocks
         result["memory_add_scales"] = {

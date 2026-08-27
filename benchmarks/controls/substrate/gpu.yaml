@@ -1,4 +1,4 @@
-variant: vanilla
+variant: swa_transformer
 phase: B
 model_dir: checkpoints/TinyMistral-248M-v3
 data_dir: data/dolmino/gpu_2048

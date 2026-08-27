@@ -9,21 +9,34 @@ from typing import Any
 
 import yaml
 
-# The implementation still uses historical ``bank`` names internally so
-# existing checkpoints, configs, and result paths remain loadable. New
-# experiments can use the clearer Memory Attention names below.
-
 MEMORY_ATTENTION_VARIANT_ALIASES = {
+    "swa_transformer": "vanilla",
+    "strided_attention": "sparse_swa",
     "memory_attention": "bank",
+    "dense_memory_attention": "bank",
+    "strided_memory_attention": "bank",
+    "memory_token_attention": "bank",
+    "multiscale_memory_attention": "bank_multiscale",
     "memory_attention_multiscale": "bank_multiscale",
     "memory_attention_add_hybrid": "bank_add_hybrid",
     "memory_attention_recirculation_hybrid": "bank_recirculation_hybrid",
+    "recirculation_strided_memory_attention": "bank_recirculation_hybrid",
 }
 
 
 def canonical_variant_name(name: str) -> str:
-    """Return the historical implementation name for a public variant alias."""
+    """Return the implementation key for a public variant name."""
     return MEMORY_ATTENTION_VARIANT_ALIASES.get(name, name)
+
+
+MEMORY_WRITE_MODE_ALIASES = {"strided": "periodic"}
+
+
+def canonical_memory_write_mode(mode: str | None) -> str | None:
+    """Return the implementation key for a public memory-write mode."""
+    if mode is None:
+        return None
+    return MEMORY_WRITE_MODE_ALIASES.get(str(mode), str(mode))
 
 
 SUPPORTED_VARIANTS = {
@@ -48,14 +61,21 @@ MEMORY_ATTENTION_VARIANTS = {
     "memory_attention_recirculation_hybrid",
     "bank_multiscale",
     "memory_attention_multiscale",
+    "multiscale_memory_attention",
+    "recirculation_strided_memory_attention",
+    "dense_memory_attention",
+    "strided_memory_attention",
+    "memory_token_attention",
 }
 MEMORY_ATTENTION_WRITE_VARIANTS = MEMORY_ATTENTION_VARIANTS - {
     "bank_multiscale",
     "memory_attention_multiscale",
+    "multiscale_memory_attention",
 }
 MULTISCALE_MEMORY_ATTENTION_VARIANTS = {
     "bank_multiscale",
     "memory_attention_multiscale",
+    "multiscale_memory_attention",
 }
 SUPPORTED_LR_SCHEDULES = {"constant", "cosine", "piecewise_linear"}
 SUPPORTED_AUTOCAST_DTYPES = {"bfloat16"}
@@ -397,7 +417,7 @@ class ExperimentConfig:
                 self.memory_window = (
                     self.memory_dense_window + self.memory_sparse_window
                 )
-        if self.variant == "sparse_swa":
+        if self.variant in {"sparse_swa", "strided_attention"}:
             self.sparse_attention_layers = _coerce_layer_indices(
                 "all" if self.sparse_attention_layers is None else self.sparse_attention_layers,
                 field_name="sparse_attention_layers",
@@ -505,6 +525,7 @@ class ExperimentConfig:
             "recirculation",
             "bank_recirculation_hybrid",
             "memory_attention_recirculation_hybrid",
+            "recirculation_strided_memory_attention",
         }
         if self.variant in recirculation_variants:
             if self.recirculation_mode not in {"fixed", "adaptive"}:
@@ -548,35 +569,35 @@ class ExperimentConfig:
 
         bank_variants = MEMORY_ATTENTION_WRITE_VARIANTS
         if self.variant in bank_variants:
-            if self.memory_write_mode not in {"dense", "periodic", "memory_token"}:
+            if self.memory_write_mode not in {"dense", "strided", "periodic", "memory_token"}:
                 raise ValueError(
-                    "bank configs require memory_write_mode: dense|periodic|memory_token"
+                    "Memory Attention configs require memory_write_mode: dense|strided|memory_token"
                 )
             if self.memory_write_mode == "dense":
                 if self.memory_write_stride is not None:
-                    raise ValueError("dense bank must not set memory_write_stride")
+                    raise ValueError("dense Memory Attention must not set memory_write_stride")
                 if self.memory_token_visibility is not None:
-                    raise ValueError("dense bank must not set memory_token_visibility")
-            elif self.memory_write_mode == "periodic":
+                    raise ValueError("dense Memory Attention must not set memory_token_visibility")
+            elif self.memory_write_mode in {"strided", "periodic"}:
                 if self.memory_write_stride is None or self.memory_write_stride <= 0:
                     raise ValueError("strided Memory Attention requires positive memory_write_stride")
                 if self.memory_token_visibility is not None:
                     raise ValueError("memory_token_visibility applies only to memory_token mode")
             else:
                 if self.memory_write_stride is None or self.memory_write_stride <= 0:
-                    raise ValueError("memory_token bank requires positive memory_write_stride")
+                    raise ValueError("memory-token Memory Attention requires positive memory_write_stride")
                 if self.memory_token_visibility not in {"visible", "write_only"}:
                     raise ValueError(
-                        "memory_token bank requires memory_token_visibility: visible|write_only"
+                        "memory-token Memory Attention requires memory_token_visibility: visible|write_only"
                     )
             if self.memory_layers is None:
-                raise ValueError("bank configs require memory_layers")
+                raise ValueError("Memory Attention configs require memory_layers")
             self.memory_layers = _coerce_layer_indices(
                 self.memory_layers, field_name="memory_layers"
             )
             if self.memory_position_encoding not in {"rope", "none"}:
                 raise ValueError(
-                    "bank configs require memory_position_encoding: rope|none"
+                    "Memory Attention configs require memory_position_encoding: rope|none"
                 )
             if any(
                 value is not None
@@ -586,32 +607,32 @@ class ExperimentConfig:
                     self.memory_sparse_stride,
                 )
             ):
-                raise ValueError("multiscale memory fields require variant=bank_multiscale")
+                raise ValueError("multiscale memory fields require a multiscale Memory Attention variant")
         elif self.variant in MULTISCALE_MEMORY_ATTENTION_VARIANTS:
             if (
                 self.memory_write_mode is not None
                 or self.memory_write_stride is not None
                 or self.memory_token_visibility is not None
             ):
-                raise ValueError("bank_multiscale uses dense retention, not memory_write_* fields")
+                raise ValueError("Multiscale Memory Attention uses dense retention, not memory_write_* fields")
             if self.memory_dense_window is None or self.memory_sparse_window is None:
                 raise ValueError(
-                    "bank_multiscale requires memory_dense_window and memory_sparse_window"
+                    "Multiscale Memory Attention requires memory_dense_window and memory_sparse_window"
                 )
             if self.memory_dense_window < 0 or self.memory_sparse_window < 0:
                 raise ValueError("multiscale memory windows must be non-negative")
             if self.memory_dense_window + self.memory_sparse_window <= 0:
-                raise ValueError("bank_multiscale requires at least one non-zero memory window")
+                raise ValueError("Multiscale Memory Attention requires at least one non-zero memory window")
             if self.memory_sparse_stride is None or self.memory_sparse_stride <= 0:
-                raise ValueError("bank_multiscale requires positive memory_sparse_stride")
+                raise ValueError("Multiscale Memory Attention requires positive memory_sparse_stride")
             if self.memory_layers is None:
-                raise ValueError("bank_multiscale configs require memory_layers")
+                raise ValueError("Multiscale Memory Attention configs require memory_layers")
             self.memory_layers = _coerce_layer_indices(
                 self.memory_layers, field_name="memory_layers"
             )
             if self.memory_position_encoding not in {"rope", "none"}:
                 raise ValueError(
-                    "bank_multiscale requires memory_position_encoding: rope|none"
+                    "Multiscale Memory Attention requires memory_position_encoding: rope|none"
                 )
         elif (
             self.memory_write_mode is not None
@@ -623,15 +644,15 @@ class ExperimentConfig:
             or self.memory_sparse_window is not None
             or self.memory_sparse_stride is not None
         ):
-            raise ValueError("memory_* fields are supported only for bank variants")
+            raise ValueError("memory_* fields are supported only for Memory Attention variants")
 
-        if self.variant == "sparse_swa":
+        if self.variant in {"sparse_swa", "strided_attention"}:
             if self.sparse_attention_stride is None or self.sparse_attention_stride <= 0:
-                raise ValueError("sparse_swa requires positive sparse_attention_stride")
+                raise ValueError("Strided Attention requires positive sparse_attention_stride")
             if self.sparse_attention_window is None or self.sparse_attention_window <= 0:
-                raise ValueError("sparse_swa requires positive sparse_attention_window")
+                raise ValueError("Strided Attention requires positive sparse_attention_window")
             if self.sparse_attention_layers is None:
-                raise ValueError("sparse_swa requires sparse_attention_layers")
+                raise ValueError("Strided Attention requires sparse_attention_layers")
             self.sparse_attention_layers = _coerce_layer_indices(
                 self.sparse_attention_layers,
                 field_name="sparse_attention_layers",
@@ -641,7 +662,7 @@ class ExperimentConfig:
             or self.sparse_attention_window is not None
             or self.sparse_attention_layers is not None
         ):
-            raise ValueError("sparse_attention_* fields require variant=sparse_swa")
+            raise ValueError("sparse_attention_* fields require variant=strided_attention")
         if (
             not math.isfinite(float(self.prefix_mixin_probability))
             or not 0.0 <= float(self.prefix_mixin_probability) <= 1.0
@@ -664,7 +685,7 @@ class ExperimentConfig:
             raise ValueError("fbt_* fields are supported only for variant=fbt")
         schedule = self.normalized_pass_schedule()
         pass_counts = {passes for stage in schedule for passes in stage["probabilities"]}
-        single_pass_variants = {"vanilla", "sparse_swa"}
+        single_pass_variants = {"vanilla", "sparse_swa", "swa_transformer", "strided_attention"}
         if self.variant in single_pass_variants and pass_counts != {1}:
             raise ValueError(f"{self.variant} supports only one-pass training")
         if self.variant in single_pass_variants and self.eval_passes != 1:

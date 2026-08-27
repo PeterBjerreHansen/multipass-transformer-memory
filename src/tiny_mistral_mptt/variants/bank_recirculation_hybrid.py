@@ -9,13 +9,13 @@ import torch.nn as nn
 from tiny_mistral.modeling import MistralForCausalLM
 
 from .recirculation import _AdaptiveRecirculationController
-from .bank_recurrent_hybrid import BankRecurrentHybridVariant
+from .bank_recurrent_hybrid import MemoryAttentionRecurrentHybridVariant
 
 
-class BankRecirculationHybridVariant(BankRecurrentHybridVariant):
+class RecirculationStridedMemoryAttentionVariant(MemoryAttentionRecurrentHybridVariant):
     """Sparse Memory Attention plus fixed or adaptive layer recirculation."""
 
-    variant_name = "bank_recirculation_hybrid"
+    variant_name = "recirculation_strided_memory_attention"
 
     def __init__(
         self,
@@ -26,7 +26,7 @@ class BankRecirculationHybridVariant(BankRecurrentHybridVariant):
         alpha: float = 0.1,
         mode: str = "adaptive",
         memory_window: int = 32,
-        memory_write_mode: str = "periodic",
+        memory_write_mode: str = "strided",
         memory_write_stride: int = 8,
         memory_token_visibility: str = "visible",
         memory_layers: str | list[int] = "all",
@@ -124,3 +124,11 @@ class BankRecirculationHybridVariant(BankRecurrentHybridVariant):
             hidden_states,
             valid_feedback=valid_feedback,
         )
+
+
+BankRecirculationHybridVariant = RecirculationStridedMemoryAttentionVariant
+
+__all__ = [
+    "RecirculationStridedMemoryAttentionVariant",
+    "BankRecirculationHybridVariant",
+]

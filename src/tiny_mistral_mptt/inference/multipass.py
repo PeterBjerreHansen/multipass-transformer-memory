@@ -63,7 +63,7 @@ def prefill_exact(
             previous = run.feedback_source
 
     if passes == 1:
-        # K=1 is the vanilla cached boundary and must not require a variant to
+        # K=1 is the SWA Transformer cached boundary and must not require a variant to
         # implement any feedback-state protocol. The placeholder memory is not
         # consumed while feedback is disabled.
         streams = (
@@ -127,7 +127,7 @@ def prefill_recurrent(
     the loop by feeding its newly produced final-pass state back to itself.
 
     K=1 is a deliberate boundary case: feedback remains disabled and the state
-    is ordinary vanilla cached TinyMistral inference.
+    is ordinary SWA Transformer cached TinyMistral inference.
     """
     return recurrent_from_exact(prefill_exact(model, input_ids, passes=passes))
 

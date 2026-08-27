@@ -191,7 +191,7 @@ class MistralAttention(nn.Module):
             raise ValueError("sparse attention window must be non-negative")
         if window:
             if self.config.sliding_window is None:
-                raise ValueError("sparse SWA requires a finite sliding_window")
+                raise ValueError("Strided Attention requires a finite sliding_window")
             if stride is None or int(stride) <= 0:
                 raise ValueError("sparse attention stride must be positive")
             self.sparse_attention_stride = int(stride)

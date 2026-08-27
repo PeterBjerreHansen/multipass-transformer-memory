@@ -30,7 +30,7 @@ checkpointed, so fixed or mixed K schedules resume exactly.
 The original multipass study samples K=2 on 90% of batches and K=3 on 10%.
 K-specific loss weights make Phase A estimate `0.9 L2 + 0.1 L3` with 2.1
 average passes. Phase B also retains a first-pass loss. One-pass controls such
-as Sparse SWA use K=1. Runnable protocols live under `benchmarks/development/`.
+as Strided Attention use K=1. Runnable protocols live under `benchmarks/development/`.
 
 ## Parameter groups and schedules
 

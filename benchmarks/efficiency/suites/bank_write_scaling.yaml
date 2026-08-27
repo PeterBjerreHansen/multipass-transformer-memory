@@ -13,26 +13,26 @@ defaults:
   passes: 2
   memory_window: 32
 cases:
-- variant: bank
+- variant: memory_attention
   memory_window: 32
   memory_write_mode: dense
-- variant: bank
+- variant: memory_attention
   memory_window: 32
-  memory_write_mode: periodic
+  memory_write_mode: strided
   memory_write_stride: 1
-- variant: bank
+- variant: memory_attention
   memory_window: 32
-  memory_write_mode: periodic
+  memory_write_mode: strided
   memory_write_stride: 4
-- variant: bank
+- variant: memory_attention
   memory_window: 32
-  memory_write_mode: periodic
+  memory_write_mode: strided
   memory_write_stride: 8
-- variant: bank
+- variant: memory_attention
   memory_window: 32
-  memory_write_mode: periodic
+  memory_write_mode: strided
   memory_write_stride: 16
-- variant: bank
+- variant: memory_attention
   memory_window: 32
-  memory_write_mode: periodic
+  memory_write_mode: strided
   memory_write_stride: 32

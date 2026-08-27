@@ -6,10 +6,8 @@ import torch
 
 
 @dataclass(frozen=True)
-class BankState:
+class MemoryAttentionState:
     """Fixed-capacity chronological Memory Attention records for inference.
-
-    ``BankState`` is retained as the historical checkpoint/API name.
 
     ``memories`` has shape ``[B,W,D]`` and ``valid`` has shape ``[B,W]``.
     Valid entries are kept left-aligned in chronological order.  The fixed
@@ -26,28 +24,28 @@ class BankState:
 
     def __post_init__(self) -> None:
         if self.memories.ndim != 3:
-            raise ValueError("BankState.memories must be [B,W,D]")
+            raise ValueError("MemoryAttentionState.memories must be [B,W,D]")
         if self.valid.ndim != 2 or self.valid.shape != self.memories.shape[:2]:
-            raise ValueError("BankState.valid must be bool [B,W]")
+            raise ValueError("MemoryAttentionState.valid must be bool [B,W]")
         if self.valid.dtype != torch.bool:
-            raise ValueError("BankState.valid must have bool dtype")
+            raise ValueError("MemoryAttentionState.valid must have bool dtype")
         if self.positions.shape != self.valid.shape or self.positions.dtype not in (
             torch.int32,
             torch.int64,
         ):
-            raise ValueError("BankState.positions must be integer [B,W]")
+            raise ValueError("MemoryAttentionState.positions must be integer [B,W]")
         if self.next_sequence_positions.shape != (self.memories.shape[0],) or (
             self.next_sequence_positions.dtype not in (torch.int32, torch.int64)
         ):
             raise ValueError(
-                "BankState.next_sequence_positions must be integer [B]"
+                "MemoryAttentionState.next_sequence_positions must be integer [B]"
             )
         if bool((self.positions[self.valid] < 0).any()):
-            raise ValueError("valid BankState positions must be non-negative")
+            raise ValueError("valid MemoryAttentionState positions must be non-negative")
         if bool((self.next_sequence_positions < 0).any()):
-            raise ValueError("next Bank sequence positions must be non-negative")
+            raise ValueError("next Memory Attention sequence positions must be non-negative")
         if self.memories.shape[1] < 1:
-            raise ValueError("BankState capacity must be positive")
+            raise ValueError("MemoryAttentionState capacity must be positive")
         if (self.projected_keys is None) != (self.projected_values is None):
             raise ValueError("projected_keys and projected_values must be provided together")
         if self.projected_keys is not None:
@@ -102,7 +100,7 @@ class HybridFeedbackState:
     """
 
     fast_hidden: torch.Tensor
-    bank: BankState
+    bank: MemoryAttentionState
 
     def __post_init__(self) -> None:
         if self.fast_hidden.ndim != 3 or self.fast_hidden.shape[1] != 1:
@@ -125,16 +123,14 @@ class HybridFeedbackState:
         return self.fast_hidden
 
     @property
-    def memory_attention(self) -> BankState:
-        """Public terminology alias for the historical ``bank`` field."""
+    def memory_attention(self) -> MemoryAttentionState:
         return self.bank
 
 
-FeedbackMemory = torch.Tensor | BankState | HybridFeedbackState
+BankState = MemoryAttentionState
 
-# Public terminology alias; serialized state and old imports continue to use
-# ``BankState``.
-MemoryAttentionState = BankState
+
+FeedbackMemory = torch.Tensor | MemoryAttentionState | HybridFeedbackState
 
 
 def feedback_shape(memory: FeedbackMemory) -> tuple[int, int]:

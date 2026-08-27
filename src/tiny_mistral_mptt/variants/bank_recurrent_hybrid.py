@@ -8,12 +8,12 @@ import torch.nn as nn
 
 from tiny_mistral.modeling import LayerKVCache, MistralForCausalLM
 
-from ..feedback import HybridFeedbackState, HybridPassSource, BankState
+from ..feedback import HybridFeedbackState, HybridPassSource, MemoryAttentionState
 from .multipass import HiddenRun
-from .bank import BankBatch, BankCoreRun, BankVariant
+from .bank import MemoryAttentionBatch, MemoryAttentionCoreRun, MemoryAttentionVariant
 
 
-class BankRecurrentHybridVariant(BankVariant, ABC):
+class MemoryAttentionRecurrentHybridVariant(MemoryAttentionVariant, ABC):
     """Composable Memory Attention plus fast-recurrence MPT base class.
 
     A recurrent mechanism supplies three small hooks: how it changes the input,
@@ -30,7 +30,7 @@ class BankRecurrentHybridVariant(BankVariant, ABC):
         backbone: MistralForCausalLM,
         *,
         memory_window: int = 32,
-        memory_write_mode: str = "periodic",
+        memory_write_mode: str = "strided",
         memory_write_stride: int = 8,
         memory_token_visibility: str = "visible",
         memory_layers: str | list[int] = "all",
@@ -150,7 +150,7 @@ class BankRecurrentHybridVariant(BankVariant, ABC):
         token_embeddings: torch.Tensor,
         *,
         recurrent_source: torch.Tensor | None,
-        bank: BankBatch | BankState | None,
+        bank: MemoryAttentionBatch | MemoryAttentionState | None,
         past_key_values: tuple[LayerKVCache, ...] | None,
         use_cache: bool,
         full_sequence_feedback: bool,
@@ -199,7 +199,7 @@ class BankRecurrentHybridVariant(BankVariant, ABC):
             past_key_values=core.past_key_values,
         )
 
-    def _recurrent_source_from_core(self, core: BankCoreRun) -> torch.Tensor:
+    def _recurrent_source_from_core(self, core: MemoryAttentionCoreRun) -> torch.Tensor:
         if self.recurrent_capture_layer is None:
             return core.hidden_states
         if core.captured_hidden is None:
@@ -402,3 +402,8 @@ class BankRecurrentHybridVariant(BankVariant, ABC):
         else:
             recurrent = source.recurrent_hidden.detach()
         return HybridFeedbackState(fast_hidden=recurrent, bank=bank)
+
+
+BankRecurrentHybridVariant = MemoryAttentionRecurrentHybridVariant
+
+__all__ = ["MemoryAttentionRecurrentHybridVariant", "BankRecurrentHybridVariant"]

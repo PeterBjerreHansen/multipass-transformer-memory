@@ -1,7 +1,5 @@
-"""Public multiscale Memory Attention name for compatibility imports."""
+"""Multiscale Memory Attention implementation exports."""
 
-from .bank_multiscale import MultiscaleBankVariant
+from .bank_multiscale import MultiscaleBankVariant, MultiscaleMemoryAttentionVariant
 
-MultiscaleMemoryAttentionVariant = MultiscaleBankVariant
-
-__all__ = ["MultiscaleBankVariant", "MultiscaleMemoryAttentionVariant"]
+__all__ = ["MultiscaleMemoryAttentionVariant", "MultiscaleBankVariant"]

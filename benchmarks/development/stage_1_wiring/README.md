@@ -15,7 +15,7 @@ Use `--arm <id>` to run one arm. Generated checkpoints and metrics live below
 `results/<arm>/` and are ignored by Git. Memory Attention is wired separately for
 dense, strided-C32, and write-only explicit-`<MEM>`-C32 writes. The strided
 hybrid is wired with adaptive Recirculation. Multiscale Memory Attention has a separate
-wiring arm. Sparse SWA has no added parameters and does not use Phase A.
+wiring arm. Strided Attention has no added parameters and does not use Phase A.
 
 These local configs keep only the newest checkpoint generation. Copy completed
 wiring checkpoints to durable storage before removing local run directories.

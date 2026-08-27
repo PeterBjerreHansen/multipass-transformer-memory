@@ -205,13 +205,13 @@ def strict_past_bank_attention(
     if writes_before.dtype not in (torch.int32, torch.int64):
         raise ValueError("writes_before must have integer dtype")
     if bool((writes_before < 0).any()) or bool((writes_before > memory_len).any()):
-        raise ValueError("writes_before is outside compact memory-bank bounds")
+        raise ValueError("writes_before is outside compact Memory Attention bounds")
 
     if dense:
         if memory_len != seq_len:
-            raise ValueError("dense bank attention requires one memory record per query position")
+            raise ValueError("dense Memory Attention requires one memory record per query position")
         if not bool(memory_mask.all()):
-            raise ValueError("dense bank attention does not accept padded memory records")
+            raise ValueError("dense Memory Attention does not accept padded memory records")
         return strict_past_local_attention(
             query,
             key,
@@ -317,7 +317,7 @@ def strict_past_multiscale_bank_attention(
         memory_len, device=memory_positions.device, dtype=memory_positions.dtype
     )[None, :].expand_as(memory_positions)
     if not torch.equal(memory_positions, expected):
-        raise ValueError("multiscale Bank requires one dense record per sequence position")
+        raise ValueError("multiscale Memory Attention requires one dense record per sequence position")
 
     if query.device.type == "mps" and query_len == memory_len and torch.equal(query_positions, expected):
         key_bank, value_bank, valid = fast_multiresolution_key_value_windows(

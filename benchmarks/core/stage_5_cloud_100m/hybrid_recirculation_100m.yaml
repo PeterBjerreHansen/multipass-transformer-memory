@@ -1,11 +1,11 @@
-variant: bank_recirculation_hybrid
+variant: recirculation_strided_memory_attention
 phase: B
 recirculation_mode: adaptive
 recirculation_source_layer: 6
 recirculation_destination_layer: 3
 recirculation_alpha: 0.1
 memory_window: 32
-memory_write_mode: periodic
+memory_write_mode: strided
 memory_write_stride: 32
 memory_token_visibility: null
 memory_layers: [4, 7]

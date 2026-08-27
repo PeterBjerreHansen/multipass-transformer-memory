@@ -65,7 +65,7 @@ def test_development_studies_verify_semantically():
 
 def test_active_pipeline_shelves_retired_controls_and_covers_all_bank_policies():
     development = ROOT / "benchmarks" / "development"
-    expected_bank_modes = {"dense", "periodic", "memory_token"}
+    expected_bank_modes = {"dense", "strided", "memory_token"}
 
     for stage_name, expected_retention in (
         ("stage_1_wiring", 1),
@@ -84,9 +84,9 @@ def test_active_pipeline_shelves_retired_controls_and_covers_all_bank_policies()
             for cfg in configs
         )
         assert {
-            cfg.variant for cfg in configs if "hybrid" in cfg.variant
-        } == {"bank_recirculation_hybrid"}
-        bank_configs = [cfg for cfg in configs if cfg.variant == "bank"]
+            cfg.variant for cfg in configs if "recirculation_strided_memory_attention" in cfg.variant
+        } == {"recirculation_strided_memory_attention"}
+        bank_configs = [cfg for cfg in configs if cfg.variant == "memory_attention"]
         assert {cfg.memory_write_mode for cfg in bank_configs} == expected_bank_modes
         explicit = next(
             cfg for cfg in bank_configs if cfg.memory_write_mode == "memory_token"
@@ -117,8 +117,8 @@ def test_attention_controls_follow_their_required_training_paths():
         load_experiment_config(development / "stage_1_wiring" / arm["config"]).variant
         for arm in stage1["arms"]
     }
-    assert "bank_multiscale" in stage1_configs
-    assert "sparse_swa" not in stage1_configs
+    assert "multiscale_memory_attention" in stage1_configs
+    assert "strided_attention" not in stage1_configs
 
     stage2 = yaml.safe_load(
         (development / "stage_2_local_smoke" / "STUDY.yaml").read_text(encoding="utf-8")
@@ -127,7 +127,7 @@ def test_attention_controls_follow_their_required_training_paths():
         load_experiment_config(development / "stage_2_local_smoke" / arm["config"])
         for arm in stage2["arms"]
     ]
-    assert {cfg.variant for cfg in stage2_configs} >= {"bank_multiscale", "sparse_swa"}
+    assert {cfg.variant for cfg in stage2_configs} >= {"multiscale_memory_attention", "strided_attention"}
 
     stage5_dir = ROOT / "benchmarks" / "core" / "stage_5_cloud_100m"
     stage5 = yaml.safe_load((stage5_dir / "STUDY.yaml").read_text(encoding="utf-8"))
@@ -139,11 +139,11 @@ def test_attention_controls_follow_their_required_training_paths():
             if arm["id"] in {"bank_multiscale_100m", "sparse_swa_100m"}
         )
     }
-    assert set(controls) == {"bank_multiscale", "sparse_swa"}
-    assert controls["bank_multiscale"].memory_window == 64
-    assert controls["bank_multiscale"].init_from is not None
-    assert controls["sparse_swa"].init_from is None
-    assert controls["sparse_swa"].normalized_pass_schedule()[0]["probabilities"] == {
+    assert set(controls) == {"multiscale_memory_attention", "strided_attention"}
+    assert controls["multiscale_memory_attention"].memory_window == 64
+    assert controls["multiscale_memory_attention"].init_from is not None
+    assert controls["strided_attention"].init_from is None
+    assert controls["strided_attention"].normalized_pass_schedule()[0]["probabilities"] == {
         1: 1.0
     }
     assert all(cfg.data_dir == "data/dolmino/gpu_2048_staged" for cfg in controls.values())

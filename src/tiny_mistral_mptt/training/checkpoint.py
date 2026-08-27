@@ -11,7 +11,7 @@ from typing import Any
 import torch
 from safetensors.torch import load_file as load_safetensors
 
-from ..config import ExperimentConfig
+from ..config import ExperimentConfig, canonical_memory_write_mode
 
 
 FORMAT_VERSION = 3
@@ -40,11 +40,18 @@ _INIT_ARCHITECTURE_FIELDS = (
 )
 
 _HISTORICAL_VARIANT_NAMES = {
+    "swa_transformer": "vanilla",
+    "strided_attention": "sparse_swa",
+    "memory_attention": "bank",
+    "dense_memory_attention": "bank",
+    "strided_memory_attention": "bank",
+    "memory_token_attention": "bank",
+    "multiscale_memory_attention": "bank_multiscale",
+    "recirculation_strided_memory_attention": "bank_recirculation_hybrid",
     "tape": "bank",
     "tape_multiscale": "bank_multiscale",
     "tape_add_hybrid": "bank_add_hybrid",
     "tape_recirculation_hybrid": "bank_recirculation_hybrid",
-    "memory_attention": "bank",
     "memory_attention_multiscale": "bank_multiscale",
     "memory_attention_add_hybrid": "bank_add_hybrid",
     "memory_attention_recirculation_hybrid": "bank_recirculation_hybrid",
@@ -374,6 +381,9 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
         for key, value in canonical.items()
         if key in ExperimentConfig.__dataclass_fields__
     }
+    canonical["memory_write_mode"] = canonical_memory_write_mode(
+        canonical.get("memory_write_mode")
+    )
     ignored = {
         "model_dir",
         "data_dir",
@@ -432,6 +442,7 @@ def _init_compatibility_view(config: dict[str, Any]) -> dict[str, Any]:
         for field in _INIT_ARCHITECTURE_FIELDS
     }
     view["variant"] = _canonical_init_variant(view["variant"])
+    view["memory_write_mode"] = canonical_memory_write_mode(view["memory_write_mode"])
     for field in ("memory_layers", "sparse_attention_layers"):
         if isinstance(view[field], tuple):
             view[field] = list(view[field])
@@ -631,7 +642,7 @@ def load_checkpoint_for_evaluation(
     """Validate and load a full training checkpoint for evaluation.
 
     Strict state-dict loading only protects tensor structure. The explicit
-    experiment-config check protects behavioral settings such as Bank write
+    experiment-config check protects behavioral settings such as Memory Attention write
     policy, memory visibility, pass schedules, and recurrence configuration.
     """
     payload = torch.load(Path(path), map_location="cpu", weights_only=False)

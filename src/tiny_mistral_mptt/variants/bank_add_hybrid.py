@@ -8,20 +8,20 @@ import torch.nn as nn
 from tiny_mistral.modeling import MistralForCausalLM, MistralRMSNorm
 
 from ..feedback import HybridPassSource
-from .bank_recurrent_hybrid import BankRecurrentHybridVariant
+from .bank_recurrent_hybrid import MemoryAttentionRecurrentHybridVariant
 
 
-class BankAddHybridVariant(BankRecurrentHybridVariant):
+class MemoryAttentionAddHybridVariant(MemoryAttentionRecurrentHybridVariant):
     """Memory Attention plus a one-step MemoryAdd fast channel."""
 
-    variant_name = "bank_add_hybrid"
+    variant_name = "memory_attention_add_hybrid"
 
     def __init__(
         self,
         backbone: MistralForCausalLM,
         *,
         memory_window: int = 32,
-        memory_write_mode: str = "periodic",
+        memory_write_mode: str = "strided",
         memory_write_stride: int = 8,
         memory_token_visibility: str = "visible",
         memory_layers: str | list[int] = "all",
@@ -98,3 +98,8 @@ class BankAddHybridVariant(BankRecurrentHybridVariant):
         return self._run_feedback_state(
             input_ids, token_embeddings, source
         ).hidden_states
+
+
+BankAddHybridVariant = MemoryAttentionAddHybridVariant
+
+__all__ = ["MemoryAttentionAddHybridVariant", "BankAddHybridVariant"]

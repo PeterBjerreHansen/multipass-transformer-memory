@@ -1,19 +1,23 @@
-"""Public Memory Attention names for the historical bank implementation."""
+"""Memory Attention implementation exports."""
 
-from .bank import BankBatch, BankReader, BankVariant, BankWriter
-
-MemoryAttentionBatch = BankBatch
-MemoryAttentionReader = BankReader
-MemoryAttentionVariant = BankVariant
-MemoryAttentionWriter = BankWriter
+from .bank import (
+    BankBatch,
+    BankReader,
+    BankVariant,
+    BankWriter,
+    MemoryAttentionBatch,
+    MemoryAttentionReader,
+    MemoryAttentionVariant,
+    MemoryAttentionWriter,
+)
 
 __all__ = [
-    "BankBatch",
-    "BankReader",
-    "BankVariant",
-    "BankWriter",
     "MemoryAttentionBatch",
     "MemoryAttentionReader",
     "MemoryAttentionVariant",
     "MemoryAttentionWriter",
+    "BankBatch",
+    "BankReader",
+    "BankVariant",
+    "BankWriter",
 ]

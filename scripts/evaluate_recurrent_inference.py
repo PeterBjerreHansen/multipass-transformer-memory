@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from tiny_mistral.device import resolve_device
-from tiny_mistral_mptt.config import load_experiment_config
+from tiny_mistral_mptt.config import canonical_variant_name, load_experiment_config
 from tiny_mistral_mptt.data.manifest import file_sha256
 from tiny_mistral_mptt.data.packed_dataset import load_packed_dataset_for_experiment
 from tiny_mistral_mptt.evaluation.recurrent import evaluate_recurrent_continuation
@@ -15,10 +15,10 @@ from tiny_mistral_mptt.model_factory import load_variant_from_config
 from tiny_mistral_mptt.training.checkpoint import load_checkpoint_for_evaluation
 from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
 from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
-from tiny_mistral_mptt.variants.bank import BankVariant
-from tiny_mistral_mptt.variants.bank_add_hybrid import BankAddHybridVariant
+from tiny_mistral_mptt.variants.bank import MemoryAttentionVariant
+from tiny_mistral_mptt.variants.bank_add_hybrid import MemoryAttentionAddHybridVariant
 from tiny_mistral_mptt.variants.bank_recirculation_hybrid import (
-    BankRecirculationHybridVariant,
+    RecirculationStridedMemoryAttentionVariant,
 )
 
 
@@ -55,17 +55,13 @@ def main() -> None:
         raise SystemExit("--prefill-passes values must be positive")
 
     cfg = load_experiment_config(args.config)
-    if cfg.variant not in {
+    if canonical_variant_name(cfg.variant) not in {
         "memory_add",
         "recirculation",
         "bank",
         "bank_multiscale",
         "bank_add_hybrid",
         "bank_recirculation_hybrid",
-        "memory_attention",
-        "memory_attention_multiscale",
-        "memory_attention_add_hybrid",
-        "memory_attention_recirculation_hybrid",
     }:
         raise SystemExit("evaluate_recurrent_inference requires a cached recurrent variant")
     device = resolve_device(cfg.device)
@@ -75,9 +71,9 @@ def main() -> None:
         (
             MemoryAddVariant,
             RecirculationVariant,
-            BankVariant,
-            BankAddHybridVariant,
-            BankRecirculationHybridVariant,
+            MemoryAttentionVariant,
+            MemoryAttentionAddHybridVariant,
+            RecirculationStridedMemoryAttentionVariant,
         ),
     ):
         raise SystemExit("loaded variant does not implement recurrent memory inference")

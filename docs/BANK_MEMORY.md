@@ -3,24 +3,23 @@
 This file keeps its historical `BANK_MEMORY.md` filename because it is linked
 from existing papers, configs, and checkpoints. The active research term is
 **Memory Attention**: cross-pass attention over previous-pass memory records.
-Implementation identifiers such as `BankWriter`, `BankReader`, `BankState`,
-and `variant: bank` remain unchanged for compatibility and provenance.
+Implementation identifiers are `MemoryAttentionWriter`, `MemoryAttentionReader`,
+`MemoryAttentionState`, and `variant: memory_attention`.
 
 This is the authoritative implementation contract for the active
-`memory_attention`/`bank` and `memory_attention_multiscale`/`bank_multiscale`
-variants. See [MEMORY_ATTENTION.md](MEMORY_ATTENTION.md) for the conceptual
-vocabulary and [ARCHITECTURES.md](ARCHITECTURES.md) for the retired hybrid
-interface.
+`memory_attention` and `multiscale_memory_attention` variants. See
+[MEMORY_ATTENTION.md](MEMORY_ATTENTION.md) for the conceptual vocabulary and
+[ARCHITECTURES.md](ARCHITECTURES.md) for the retired hybrid interface.
 
 ## 1. Shared Memory Attention architecture
 
 All write policies use the same components:
 
-- one shared, identity-initialized, bias-free `BankWriter`.
-- one independent `BankReader` at each configured `memory_layers` index.
+- one shared, identity-initialized, bias-free `MemoryAttentionWriter`.
+- one independent `MemoryAttentionReader` at each configured `memory_layers` index.
 - one chronological memory state of previous-pass writer outputs during full-sequence
   execution.
-- a bounded chronological `BankState` during cached/recurrent execution.
+- a bounded chronological `MemoryAttentionState` during cached/recurrent execution.
 
 Every layer performs ordinary self-attention first, adds its residual, reads the
 memory records, adds the memory-attention residual, then performs the normalized MLP residual. The
@@ -34,7 +33,7 @@ cached reads project and rotate only the query. The raw-memory and projected
 cache paths are required to be numerically identical.
 
 Reader output projections are zero-initialized. Memory Attention starts as an
-exact no-op retrofit: pass 2 and deeper passes equal vanilla at construction.
+exact no-op retrofit: pass 2 and deeper passes equal the SWA Transformer at construction.
 The output projections learn on the first optimizer step; Q/K/V and writer
 gradients become active after those projections move away from zero.
 
@@ -44,7 +43,7 @@ A memory record is
 m_s = W_write h_s
 ```
 
-where `h_s` is a top-layer source-stream state. For `variant: bank`,
+where `h_s` is a top-layer source-stream state. For `variant: memory_attention`,
 `memory_window=W` is the maximum number of committed records presented to a
 query. It is not a token-distance window. Multiscale Memory Attention has capacity `D+S`.
 
@@ -62,15 +61,14 @@ reader parameters or projected memory K/V.
 Memory RoPE is anchored to the original linguistic sequence, never to compact
 memory-record order. A record written for linguistic position 511 remains position 511
 even if it is the third retained record. In memory-token mode a `<MEM>`
-slot inherits the preceding linguistic boundary. `BankBatch` and cached
-`BankState` carry these coordinates through compaction, bounded eviction, and
+slot inherits the preceding linguistic boundary. `MemoryAttentionBatch` and cached
+`MemoryAttentionState` carry these coordinates through compaction, bounded eviction, and
 incremental decoding.
 
 ## 3. Write policies
 
-The three policies below apply to `variant: bank` (public alias
-`memory_attention`). `bank_multiscale` (public alias
-`memory_attention_multiscale`) instead
+The three policies below apply to `variant: memory_attention`.
+`multiscale_memory_attention` instead
 uses a dense source stream and the retention policy in section 3.4.
 
 ### 3.1 Dense
@@ -84,11 +82,8 @@ strided policy.
 
 ### 3.2 Strided
 
-The public access-pattern name is **strided**. The implementation retains the
-historical `periodic` config value for checkpoint and experiment provenance.
-
 ```yaml
-memory_write_mode: periodic
+memory_write_mode: strided
 memory_write_stride: 8
 ```
 
@@ -111,7 +106,7 @@ write the memory state.
 ### 3.4 Multiscale dense-recent/sparse-old retention
 
 ```yaml
-variant: bank_multiscale
+variant: multiscale_memory_attention
 memory_dense_window: 32
 memory_sparse_stride: 32
 memory_sparse_window: 32
@@ -204,7 +199,7 @@ READ old memory -> COMPUTE current hidden -> optionally WRITE current hidden
 A current position never reads its own newly written record. In full-sequence
 multipass execution this is represented by `writes_before[b,t]`, the number of
 records committed strictly before physical position t. In cached execution the
-old bounded `BankState` is passed to the reader and the append happens only
+old bounded `MemoryAttentionState` is passed to the reader and the append happens only
 after the token hidden is complete.
 
 For memory-token input

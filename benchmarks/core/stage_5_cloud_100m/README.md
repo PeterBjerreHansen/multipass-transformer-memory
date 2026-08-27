@@ -6,7 +6,7 @@ qualification and pilot gates.
 - Every arm uses `batch_size=1` and `grad_accum_steps=1`, preserving the
   reference optimizer batch of 2,048 linguistic tokens.
 - The original non-vanilla arms and Multiscale Memory Attention initialize from their final
-  Stage-1 wiring checkpoints. Vanilla and Sparse SWA start from the canonical
+  Stage-1 wiring checkpoints. The SWA Transformer and Strided Attention start from the canonical
   TinyMistral checkpoint.
 - `data/dolmino/gpu_2048_staged` skips the 5,242,880-token wiring slice and
   materializes 100,007,936 new training tokens. The original `gpu_2048` recipe

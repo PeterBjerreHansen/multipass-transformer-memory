@@ -5,11 +5,11 @@ import torch
 from tiny_mistral.attention.multiresolution import retained_multiresolution_indices
 from tiny_mistral.modeling import MistralForCausalLM
 
-from ..feedback import BankState
-from .bank import BankBatch, BankReader, BankVariant
+from ..feedback import MemoryAttentionState
+from .bank import MemoryAttentionBatch, MemoryAttentionReader, MemoryAttentionVariant
 
 
-class MultiscaleBankVariant(BankVariant):
+class MultiscaleMemoryAttentionVariant(MemoryAttentionVariant):
     """Multiscale Memory Attention with dense-recent and sparse-old retention.
 
     Every previous-pass top state is written through the shared memory writer.
@@ -19,7 +19,7 @@ class MultiscaleBankVariant(BankVariant):
     to the union.
     """
 
-    variant_name = "bank_multiscale"
+    variant_name = "memory_attention_multiscale"
 
     def __init__(
         self,
@@ -36,9 +36,9 @@ class MultiscaleBankVariant(BankVariant):
         sparse_window = int(memory_sparse_window)
         sparse_stride = int(memory_sparse_stride)
         if dense_window < 0 or sparse_window < 0:
-            raise ValueError("multiscale Bank windows must be non-negative")
+            raise ValueError("Multiscale Memory Attention windows must be non-negative")
         if dense_window + sparse_window <= 0:
-            raise ValueError("multiscale Bank requires at least one non-zero window")
+            raise ValueError("Multiscale Memory Attention requires at least one non-zero window")
         if sparse_stride <= 0:
             raise ValueError("memory_sparse_stride must be positive")
 
@@ -58,9 +58,9 @@ class MultiscaleBankVariant(BankVariant):
 
     def _full_bank_memory_delta(
         self,
-        memory_reader: BankReader,
+        memory_reader: MemoryAttentionReader,
         hidden_states: torch.Tensor,
-        bank: BankBatch,
+        bank: MemoryAttentionBatch,
         *,
         query_position_ids: torch.Tensor,
     ) -> torch.Tensor:
@@ -98,7 +98,7 @@ class MultiscaleBankVariant(BankVariant):
             indices[:, :, None].expand(-1, -1, values.shape[-1]),
         )
 
-    def _state_from_bank_batch(self, bank: BankBatch) -> BankState:
+    def _state_from_bank_batch(self, bank: MemoryAttentionBatch) -> MemoryAttentionState:
         next_positions = bank.query_positions[:, -1] + 1
         selection, selected_valid = self._selection(
             bank.memory_positions,
@@ -116,17 +116,17 @@ class MultiscaleBankVariant(BankVariant):
 
     def _append_feedback_memory(
         self,
-        feedback_memory: BankState,
+        feedback_memory: MemoryAttentionState,
         new_hidden: torch.Tensor,
         *,
         token: torch.Tensor | None = None,
         position: int | None = None,
-    ) -> BankState:
+    ) -> MemoryAttentionState:
         del position
-        if not isinstance(feedback_memory, BankState):
-            raise TypeError("multiscale Bank feedback requires BankState")
+        if not isinstance(feedback_memory, MemoryAttentionState):
+            raise TypeError("multiscale Memory Attention feedback requires MemoryAttentionState")
         if token is None or token.shape != (feedback_memory.batch_size, 1):
-            raise ValueError("multiscale Bank update requires token [B,1]")
+            raise ValueError("multiscale Memory Attention update requires token [B,1]")
         self._validate_input_ids(token)
         if new_hidden.shape != (
             feedback_memory.batch_size,
@@ -171,7 +171,7 @@ class MultiscaleBankVariant(BankVariant):
 
         assert feedback_memory.projected_values is not None
         if len(feedback_memory.projected_keys) != len(self.memory_readers):
-            raise ValueError("BankState projected K/V does not match bank readers")
+            raise ValueError("MemoryAttentionState projected K/V does not match memory-attention readers")
         projected_keys: list[torch.Tensor] = []
         projected_values: list[torch.Tensor] = []
         for cache_index, reader in enumerate(self.memory_readers.values()):
@@ -195,7 +195,7 @@ class MultiscaleBankVariant(BankVariant):
                 torch.gather(candidate_value, 2, gather_index).detach()
             )
 
-        return BankState(
+        return MemoryAttentionState(
             memories=memories.detach(),
             valid=selected_valid.detach(),
             positions=positions.detach(),
@@ -205,4 +205,6 @@ class MultiscaleBankVariant(BankVariant):
         )
 
 
-__all__ = ["MultiscaleBankVariant"]
+MultiscaleBankVariant = MultiscaleMemoryAttentionVariant
+
+__all__ = ["MultiscaleMemoryAttentionVariant", "MultiscaleBankVariant"]
