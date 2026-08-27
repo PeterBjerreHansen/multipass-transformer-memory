@@ -16,8 +16,8 @@ Prepare and verify `data/dolmino/pilot_2048` on the execution host first. Its
 its 256-block validation split is document-disjoint from training. The recipe
 also skips the full 5M wiring slice before collecting pilot training data.
 
-The pilot benchmarks dense, periodic-C32, and write-only explicit-`<MEM>`-C32
-Memory Attention as separate arms, plus periodic Memory Attention paired with
+The pilot benchmarks dense, strided-C32, and write-only explicit-`<MEM>`-C32
+Memory Attention as separate arms, plus strided Memory Attention paired with
 adaptive Recirculation.
 FBT and MemoryAdd are not part of this experimental pipeline.
 

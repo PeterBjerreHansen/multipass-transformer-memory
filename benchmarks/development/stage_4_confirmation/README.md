@@ -9,7 +9,7 @@ uv run python scripts/run_study.py \
   --arm recirculation_adaptive_seed1337
 ```
 
-The command shows the active periodic Memory Attention and adaptive Recirculation arms as
+The command shows the active Strided Memory Attention and adaptive Recirculation arms as
 examples; replace the selected arm IDs with the Stage-3 gate decisions.
 
 Then materialize the two additional-seed study. Choose the fast baseline and
@@ -26,7 +26,8 @@ uv run python scripts/run_study.py \
 
 `--fast` accepts only `recirculation_adaptive`; `--memory-attention` (historical
 alias `--bank`) accepts `dense`,
-`periodic32`, or `memory_token32`; `--hybrid` accepts `recirculation` and
+`periodic32` (the historical CLI identifier for strided C32), or
+`memory_token32`; `--hybrid` accepts `recirculation` and
 defaults to `recirculation`. Preparation fails rather than overwriting an
 existing selection; pass `--force` only when deliberately replacing a study
 that has not begun execution.

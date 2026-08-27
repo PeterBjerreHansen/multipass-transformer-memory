@@ -10,7 +10,7 @@ class SparseSWAVariant(VanillaVariant):
 
     Selected decoder layers reuse their pretrained self-attention projections
     and apply one softmax over ordinary local SWA keys plus a bounded set of
-    older periodic keys. The variant adds no parameters and no cross-attention.
+    older strided keys. The variant adds no parameters and no cross-attention.
     """
 
     variant_name = "sparse_swa"

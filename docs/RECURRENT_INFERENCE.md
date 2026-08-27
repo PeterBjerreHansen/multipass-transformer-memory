@@ -44,13 +44,13 @@ read old memory -> compute token hidden -> optionally append writer(hidden)
 so the current position cannot read its own write. When the memory is full, a
 triggered append evicts the oldest record.
 
-Dense writes every ordinary position. Periodic writes use the absolute physical
+Dense writes every ordinary position. Strided writes use the absolute physical
 position and configured stride. Memory-token mode writes only when the observed
 input token is ID V.
 
 Multiscale Memory Attention also writes every ordinary position, but its bounded state is
 the chronological union of the last `D` positions and the last `S` older
-fixed-periodic positions. Every append recomputes retention relative to the
+fixed-stride positions. Every append recomputes retention relative to the
 next query coordinate while preserving cached per-reader projected K/V.
 
 ## Memory-token decode

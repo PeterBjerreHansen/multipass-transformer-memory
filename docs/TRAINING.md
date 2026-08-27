@@ -105,7 +105,7 @@ vocabulary and `BANK_MEMORY.md` for the full compatibility contract.
 
 ## Phase A and MEM
 
-Dense and periodic Memory Attention Phase A can discard the frozen pass-1 graph because no
+Dense and strided Memory Attention Phase A can discard the frozen pass-1 graph because no
 added parameter occurs in pass 1. Memory-token Phase A cannot: the added MEM
 embedding participates in pass 1 and must receive gradient through later
 recurrent/Memory Attention loss. The backbone remains frozen, but pass-1 autograd stays

@@ -55,7 +55,7 @@ def multiresolution_key_indices(
     pieces: list[torch.Tensor] = []
 
     if sparse_window:
-        # Sparse keys are fixed periodic positions (s+1) % C == 0 and are
+        # Sparse keys are fixed-stride positions (s+1) % C == 0 and are
         # strictly older than the recent region. ``limit`` is the newest
         # absolute position eligible for sparse retention.
         limit = query - recent_window - (0 if include_current else 1)
@@ -237,7 +237,7 @@ def fast_multiresolution_key_value_windows(
     This path targets packed full-sequence attention, where the dense source
     bank contains one record per query position. The recent region uses
     ``unfold`` and the sparse region uses ``index_select`` over the flattened
-    periodic indices. Both operations map well to CPU, MPS, and CUDA. The
+    strided indices. Both operations map well to CPU, MPS, and CUDA. The
     returned tensors have shape ``[B,Hkv,Q,W,D]`` and preserve the ordering
     from :func:`multiresolution_key_indices` (sparse records first, recent
     records second).

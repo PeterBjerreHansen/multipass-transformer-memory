@@ -15,13 +15,13 @@ One ordinary TinyMistral causal pass with no architecture-added parameters.
 `SparseSWAVariant` is a one-pass, parameter-free Transformer control. At the
 selected `sparse_attention_layers`, the existing Mistral self-attention uses
 one softmax over the union of its ordinary SWA keys and a bounded set of older
-fixed-periodic keys. It reuses the pretrained Q/K/V/O projections and does not
+fixed-stride keys. It reuses the pretrained Q/K/V/O projections and does not
 add a Memory Attention reader or any cross-attention parameters.
 
 For query `t`, SWA width `W`, sparse stride `C`, and sparse count `S`, the added
 keys are the last `S` positions satisfying `(s + 1) % C == 0` and `s < t-W+1`.
 The sparse region never duplicates a key in the local region. Cached decoding
-retains `W-1` recent K/V entries plus at most `S` older periodic entries with
+retains `W-1` recent K/V entries plus at most `S` older strided entries with
 their absolute RoPE positions.
 
 ```yaml
@@ -125,17 +125,18 @@ mode a control slot inherits the preceding linguistic boundary so inserting
 control computation does not inflate memory age. `memory_position_encoding:
 none` is retained only as an explicit ablation.
 
-The architecture has three write policies:
+The architecture has three write policies. The public name for the sparse
+policy is **strided**; its historical config value remains `periodic`:
 
 - `dense`: write every ordinary position;
-- `periodic`: write positions satisfying `(t + 1) % C == 0`;
+- `periodic` (strided): write positions satisfying `(t + 1) % C == 0`;
 - `memory_token`: write only explicit input-only `<MEM>` positions.
 
 `memory_window=W` counts committed memory records, not source-token distance.
 Every memory-attention read is strict-past: a record written at physical position `t` is
 first available to position `t+1`.
 
-Dense and periodic C=1 are the same implementation and are required to be
+Dense and strided C=1 are the same implementation and are required to be
 numerically identical with matching weights.
 
 ### Multiscale Memory Attention control
@@ -145,7 +146,7 @@ numerically identical with matching weights.
 short/long-range recurrent–Memory Attention hybrid. It writes the same dense
 previous-pass top-state stream as Dense Memory Attention, then presents each reader with a
 non-overlapping union of the preceding `D` records and the last `S` older
-fixed-periodic records. A single memory-attention reader and softmax cover both
+fixed-stride records. A single memory-attention reader and softmax cover both
 regions.
 The model does not add a second reader residual.
 

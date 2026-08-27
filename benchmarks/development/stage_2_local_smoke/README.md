@@ -8,7 +8,7 @@ uv run python scripts/run_study.py \
 ```
 
 These 1M-token runs are integration gates, not final comparisons. Dense,
-periodic-C32, and write-only explicit-`<MEM>`-C32 Memory Attention each have
+strided-C32, and write-only explicit-`<MEM>`-C32 Memory Attention each have
 their own arm. Adaptive Recirculation and the Recirculation–Memory Attention
 hybrid also have separate arms. Multiscale Memory Attention initializes from
 its Stage-1 wiring checkpoint. Sparse

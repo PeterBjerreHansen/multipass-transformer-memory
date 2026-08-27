@@ -10,7 +10,7 @@ The idea behind [multi-pass training](https://github.com/PeterBjerreHansen/multi
 | Sparse SWA control                            |                7.811 |                  0.121 (1.52%) |         248.024M |                 1.0004x |
 | 🔴 Full Bandwidth Transformer| - | - | - | - |
 | Adaptive Recirculation                        |                7.678 |                  0.110 (1.42%) |         253.275M |                 2.1267x |
-| Sparse Periodic Memory Attention              |                7.599 |                  0.113 (1.46%) |         254.320M |                 2.1222x |
+| Sparse Strided Memory Attention               |                7.599 |                  0.113 (1.46%) |         254.320M |                 2.1222x |
 | Dense Memory Attention                        |                7.534 |                  0.112 (1.46%) |         254.320M |                 2.1327x |
 | Adaptive Recirculation + Sparse Memory Attention |              7.519 |                  0.120 (1.57%) |         259.571M |                 2.1489x |
 | Multiscale Memory Attention control           |                7.504 |                  0.111 (1.46%) |         254.320M |                 2.1332x |
@@ -50,13 +50,13 @@ The Memory Attention variants differ primarily in their **memory access pattern*
 | Variant               | Accessible memories                      | Attention pattern |
 | --------------------- | ---------------------------------------- | ----------------- |
 | **Dense Memory Attention**        | recent previous-pass states              | local dense SWA   |
-| **Periodic Memory Attention**     | periodically spaced previous-pass states | long-range sparse |
+| **Strided Memory Attention**      | regularly strided previous-pass states   | long-range sparse |
 | **Memory-token Attention** | explicit `<MEM>` states                  | long-range sparse |
 | **Multiscale Memory Attention**   | dense recent + sparse older states       | multiscale        |
 
 These access patterns admit several equivalent conceptual realizations. For example, sparse Memory Attention can be understood either as retaining only the memory states that will be addressable, or as retaining a denser memory and masking the inaccessible states during attention. The implementation uses selective memory writes and bounded retained KV records for efficiency, but that is not essential to the Memory Attention abstraction itself.
 
-`memory_window: 32` therefore refers to the implementation's capacity of **32 retained addressable memory records**, not a 32-token receptive field. For a periodic Memory Attention model with stride 32, those 32 records can represent memories spread over roughly $32\times$ the sequence range of a dense model with the same retained capacity. The hybrid combines both routes: adaptive Recirculation provides a **fast**, local feedback channel, while sparse Memory Attention provides a **slow**, longer-range content-addressed memory. This is the motivation for viewing the two mechanisms as complementary rather than mutually exclusive. Multiscale Memory Attention is the attention-only control for the recurrent/Memory Attention hybrid. It gives each memory-attention reader access to both dense recent memories and sparse older memories in one softmax, but removes the recurrent channel. Sparse SWA is the vanilla Transformer control. At selected layers, it extends ordinary sliding-window self-attention with sparse attention to fixed past tokens. It is one-pass, reads current-pass token states rather than previous-pass memory records, and adds no parameters.
+`memory_window: 32` therefore refers to the implementation's capacity of **32 retained addressable memory records**, not a 32-token receptive field. For a Strided Memory Attention model with stride 32, those 32 records can represent memories spread over roughly $32\times$ the sequence range of a dense model with the same retained capacity. The hybrid combines both routes: adaptive Recirculation provides a **fast**, local feedback channel, while sparse Memory Attention provides a **slow**, longer-range content-addressed memory. This is the motivation for viewing the two mechanisms as complementary rather than mutually exclusive. Multiscale Memory Attention is the attention-only control for the recurrent/Memory Attention hybrid. It gives each memory-attention reader access to both dense recent memories and sparse older memories in one softmax, but removes the recurrent channel. Sparse SWA is the vanilla Transformer control. At selected layers, it extends ordinary sliding-window self-attention with sparse attention to fixed-stride past tokens. It is one-pass, reads current-pass token states rather than previous-pass memory records, and adds no parameters.
 
 The current implementation configures these access patterns through the memory-write policy:
 
@@ -65,14 +65,14 @@ variant: memory_attention
 
 memory_window: 32
 
-memory_write_mode: dense       # dense | periodic | memory_token
+memory_write_mode: dense       # dense | periodic | memory_token (historical config values)
 
 memory_layers: [3, 7]
 
 memory_position_encoding: rope
 ```
 
-Periodic and memory-token Memory Attention additionally set `memory_write_stride`. In memory-token mode, `<MEM>` is input-only: it is not part of the LM output vocabulary and receives no direct LM loss. In the `write_only` configuration used in the main comparison, later tokens can access its state only through Memory Attention.
+Strided and memory-token Memory Attention additionally set `memory_write_stride`. The Strided access pattern retains the historical `memory_write_mode: periodic` config value. In memory-token mode, `<MEM>` is input-only: it is not part of the LM output vocabulary and receives no direct LM loss. In the `write_only` configuration used in the main comparison, later tokens can access its state only through Memory Attention.
 
 See `docs/MEMORY_ATTENTION.md` for the conceptual vocabulary and `docs/BANK_MEMORY.md` for the exact implementation-level attention masks, retention/write timing, cached-inference behavior, and hybrid contracts. See `docs/ARCHITECTURES.md` for the two attention-control architectures.
 
@@ -122,13 +122,13 @@ Learning-rate schedules and run token budgets use linguistic tokens. Throughput 
 
 ## Current research status
 
-The locked eight-arm study compares vanilla, adaptive Recirculation, three Memory Attention access patterns, the Recirculation–Periodic Memory Attention hybrid, Multiscale Memory Attention, and Sparse SWA. Its configs remain under `benchmarks/core/stage_5_cloud_100m/`; all eight 100M-token runs are complete and their full artifacts are under `benchmarks/core/stage_5_cloud_100m/results/`. Multiscale Memory Attention used its verified frozen-backbone wiring checkpoint. Sparse SWA has no added parameters and started in Phase B. The runnable path is documented in `benchmarks/development/experimental_pipeline.md`.
+The locked eight-arm study compares vanilla, adaptive Recirculation, three Memory Attention access patterns, the Recirculation–Strided Memory Attention hybrid, Multiscale Memory Attention, and Sparse SWA. Its configs remain under `benchmarks/core/stage_5_cloud_100m/`; all eight 100M-token runs are complete and their full artifacts are under `benchmarks/core/stage_5_cloud_100m/results/`. Multiscale Memory Attention used its verified frozen-backbone wiring checkpoint. Sparse SWA has no added parameters and started in Phase B. The runnable path is documented in `benchmarks/development/experimental_pipeline.md`.
 
 FBT and MemoryAdd are retired controls. Their implementations and focused correctness tests remain only for historical checkpoint/provenance compatibility, like other archived research controls, but neither appears in the active studies, efficiency qualifications, or cloud campaign. BankAddHybrid, which uses the same MemoryAdd fast channel, is also retired from the active experiment surface.
 
 Historical benchmark results remain read-only evidence; they do not define the active architecture API.
 
-**Terminology note:** Existing `bank` identifiers remain in configs, checkpoints, result directories, and internal symbols for reproducibility. New research discussion and model aliases use **Memory Attention**; `bank*` names are compatibility aliases.
+**Terminology note:** Existing `bank` and `periodic` identifiers remain in configs, checkpoints, result directories, and internal symbols for reproducibility. New research discussion uses **Memory Attention** and **Strided**; the historical names remain compatibility identifiers.
 
 ## Validate
 

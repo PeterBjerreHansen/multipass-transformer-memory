@@ -409,9 +409,9 @@ class BankWriter(nn.Module):
 
 
 class BankVariant(MultiPassVariant):
-    """Memory Attention with dense, periodic, or explicit-memory-token writes.
+    """Memory Attention with dense, strided, or explicit-memory-token writes.
 
-    Dense mode writes every top state; periodic mode writes selected ordinary-token top states. Memory-token mode
+    Dense mode writes every top state; strided mode writes selected ordinary-token top states. Memory-token mode
     treats ID ``backbone.config.vocab_size`` as an input-only ``<MEM>`` control
     position with its own learned embedding; that ID is never an LM output
     class. A MEM state predicts nothing and writes exactly one memory record.
@@ -551,7 +551,7 @@ class BankVariant(MultiPassVariant):
             if bool((input_ids >= upper).any()):
                 raise ValueError("input ID lies outside this variant's input vocabulary")
             if not self.uses_memory_tokens and bool((input_ids >= self.base_vocab_size).any()):
-                raise ValueError("periodic bank variants accept only ordinary vocabulary IDs")
+                raise ValueError("strided Memory Attention accepts only ordinary vocabulary IDs")
 
     def input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         self._validate_input_ids(input_ids)
@@ -610,7 +610,7 @@ class BankVariant(MultiPassVariant):
     def sequence_positions(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Return cross-attention coordinates anchored to linguistic sequence positions.
 
-        Ordinary dense/periodic inputs use their physical token positions. In
+        Ordinary dense/strided inputs use their physical token positions. In
         memory-token mode, an inserted control position inherits the preceding
         linguistic boundary and therefore does not inflate memory age.
         """
@@ -1027,7 +1027,7 @@ class BankVariant(MultiPassVariant):
             return torch.ones((token.shape[0],), dtype=torch.bool, device=token.device)
         if self.memory_write_mode == "periodic":
             if position is None:
-                raise ValueError("periodic cached write requires absolute position")
+                raise ValueError("strided cached write requires absolute position")
             trigger = (int(position) + 1) % self.memory_write_stride == 0
             return torch.full((token.shape[0],), trigger, dtype=torch.bool, device=token.device)
         assert self.memory_token_id is not None

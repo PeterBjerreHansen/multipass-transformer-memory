@@ -2,7 +2,7 @@
 
 The completed eight-arm study is specified across stages 0 through 5. It compares
 vanilla TinyMistral, adaptive Recirculation, three Memory Attention write
-policies, the Recirculation–Periodic Memory Attention hybrid, Multiscale Memory
+policies, the Recirculation–Strided Memory Attention hybrid, Multiscale Memory
 Attention, and Sparse SWA:
 
 - Multiscale Memory Attention tests short- and long-range access to previous-pass states
@@ -17,7 +17,7 @@ broader attention, access to previous-pass representations, and recurrence.
 
 The original Memory Attention models use a 32-record capacity, readers after decoder layers
 3 and 7, sequence-anchored RoPE, an identity-initialized writer, and
-zero-initialized reader outputs. Their write policies are dense, periodic C32,
+zero-initialized reader outputs. Their write policies are dense, strided C32,
 and write-only memory-token C32. Adaptive Recirculation routes source layer 6
 to destination layer 3. The hybrid places readers after layers 4 and 7.
 

@@ -13,7 +13,7 @@ rate of `1e-4`.
 
 Use `--arm <id>` to run one arm. Generated checkpoints and metrics live below
 `results/<arm>/` and are ignored by Git. Memory Attention is wired separately for
-dense, periodic-C32, and write-only explicit-`<MEM>`-C32 writes. The periodic
+dense, strided-C32, and write-only explicit-`<MEM>`-C32 writes. The strided
 hybrid is wired with adaptive Recirculation. Multiscale Memory Attention has a separate
 wiring arm. Sparse SWA has no added parameters and does not use Phase A.
 

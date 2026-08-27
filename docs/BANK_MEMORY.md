@@ -80,9 +80,12 @@ memory_write_mode: dense
 ```
 
 Every ordinary physical position writes. This is also the C=1 endpoint of the
-periodic policy.
+strided policy.
 
-### 3.2 Periodic
+### 3.2 Strided
+
+The public access-pattern name is **strided**. The implementation retains the
+historical `periodic` config value for checkpoint and experiment provenance.
 
 ```yaml
 memory_write_mode: periodic
@@ -124,7 +127,7 @@ sparse region is a retention policy over the dense source stream, not a second
 writer or reader.
 
 `memory_dense_window + memory_sparse_window` is the cached Memory Attention capacity.
-During decode, an aging dense record survives only when it meets the periodic
+During decode, an aging dense record survives only when it meets the strided
 policy and remains among the last `S` sparse records. Raw memory and per-reader
 projected K/V stay aligned with their original linguistic positions.
 
@@ -246,7 +249,7 @@ physical positions = N + floor((N - 1) / C)
 
 For example, a 2048-linguistic-token block at C=8 becomes 2303 physical model
 positions. This deliberately keeps the linguistic data dose fixed and makes the
-extra MEM compute explicit; periodic and MEM-token experiments are not
+extra MEM compute explicit; strided and MEM-token experiments are not
 compute-identical.
 
 Training telemetry therefore separates:
@@ -262,7 +265,7 @@ both linguistic tokens/s and model positions/s.
 
 ## 10. Phase A wrinkle
 
-In dense/periodic Phase A, pass 1 contains no architecture-added parameter, so
+In dense/strided Phase A, pass 1 contains no architecture-added parameter, so
 it can run under `no_grad()` while the frozen backbone supplies the source state.
 
 In memory-token Phase A, the architecture-added MEM embedding participates in

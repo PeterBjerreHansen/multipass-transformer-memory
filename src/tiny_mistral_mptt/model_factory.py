@@ -122,7 +122,7 @@ def build_variant(
             visibility = "visible"
         elif memory_write_mode == "periodic":
             if memory_write_stride is None or int(memory_write_stride) <= 0:
-                raise ValueError("periodic Memory Attention requires positive memory_write_stride")
+                raise ValueError("strided Memory Attention requires positive memory_write_stride")
             if memory_token_visibility is not None:
                 raise ValueError("memory_token_visibility applies only to memory_token mode")
             stride = int(memory_write_stride)

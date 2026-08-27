@@ -284,7 +284,7 @@ def strict_past_multiscale_bank_attention(
     """One-softmax Memory Attention over dense-recent and sparse-old records.
 
     The multiscale Memory Attention path writes every previous-pass position. Query ``t`` reads
-    ``[t-D,t)`` densely and the last ``S`` periodic positions strictly older
+    ``[t-D,t)`` densely and the last ``S`` strided positions strictly older
     than that region. The two regions are gathered into one compact bank before
     the GQA score calculation.
     """

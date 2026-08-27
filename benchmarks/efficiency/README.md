@@ -173,7 +173,7 @@ Compact retained results live under `benchmarks/efficiency/results/`. See
 ## Memory Attention write-scaling suite
 
 `benchmarks/efficiency/suites/bank_write_scaling.yaml` compares dense Memory Attention and
-periodic C=1/4/8/16/32 at W=32.
+strided C=1/4/8/16/32 at W=32.
 These are engineering measurements only; they do not select the scientific
 write cadence.
 
@@ -181,12 +181,12 @@ write cadence.
 
 `benchmarks/efficiency/suites/attention_controls.yaml` remains a focused subset
 of the locked Stage-5 suite: one-pass `sparse_swa`, multipass
-`bank_multiscale`, the sparse Periodic Memory Attention endpoint, and the existing
-Recirculation–Periodic Memory Attention hybrid. The complete eight-arm suite is
+`bank_multiscale`, the sparse Strided Memory Attention endpoint, and the existing
+Recirculation–Strided Memory Attention hybrid. The complete eight-arm suite is
 `stage_5_architectures.yaml`. Run either with the shared efficiency runner or
 pass it to `scripts/estimate_training_flops.py` for dominant-matmul accounting.
 
-For ordinary/dense/periodic cases, `sequence_length` is both the linguistic and
+For ordinary/dense/strided cases, `sequence_length` is both the linguistic and
 physical length. If a future efficiency case uses `memory_token`, the runner
 interprets `sequence_length` as linguistic length, inserts deterministic MEM
 positions into the synthetic block, and reports the resulting

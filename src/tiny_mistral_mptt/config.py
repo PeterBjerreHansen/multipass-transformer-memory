@@ -328,7 +328,7 @@ class ExperimentConfig:
     memory_token_visibility: str | None = None
     memory_layers: str | list[int] | None = None
     memory_position_encoding: str | None = None
-    # Multiscale Memory Attention retains a dense recent region plus fixed-periodic old
+    # Multiscale Memory Attention retains a dense recent region plus fixed-stride old
     # records from the same dense previous-pass source stream.
     memory_dense_window: int | None = None
     memory_sparse_window: int | None = None
@@ -559,7 +559,7 @@ class ExperimentConfig:
                     raise ValueError("dense bank must not set memory_token_visibility")
             elif self.memory_write_mode == "periodic":
                 if self.memory_write_stride is None or self.memory_write_stride <= 0:
-                    raise ValueError("periodic bank requires positive memory_write_stride")
+                    raise ValueError("strided Memory Attention requires positive memory_write_stride")
                 if self.memory_token_visibility is not None:
                     raise ValueError("memory_token_visibility applies only to memory_token mode")
             else:

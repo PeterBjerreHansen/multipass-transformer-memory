@@ -14,11 +14,11 @@ models distinct. The research vocabulary is now:
 - **cross-pass attention** — the mechanism.
 - **memory records/states** — stored previous-pass representations.
 - **memory-attention reader** — the GQA cross-attention module.
-- **dense, periodic, memory-token, and multiscale** — access patterns.
+- **dense, strided, memory-token, and multiscale** — access patterns.
 
-The implementation retains historical `bank` identifiers in Python symbols,
-serialized fields, configuration filenames, checkpoints, and result paths.
-Those names are part of the reproducibility contract. New configs may use
+The implementation retains historical `bank` and `periodic` identifiers in
+Python symbols, serialized fields, configuration filenames, checkpoints, and
+result paths. Those names are part of the reproducibility contract. New configs may use
 `memory_attention`, `memory_attention_multiscale`,
 `memory_attention_add_hybrid`, and
 `memory_attention_recirculation_hybrid`; they are compatibility aliases for
@@ -29,7 +29,7 @@ the corresponding historical variants.
 | Public model name | Historical config alias | Access pattern |
 | --- | --- | --- |
 | Dense Memory Attention | `bank` | recent previous-pass states |
-| Sparse Periodic Memory Attention | `bank` + `memory_write_mode: periodic` | periodically retained states |
+| Sparse Strided Memory Attention | `bank` + `memory_write_mode: periodic` | states retained at a fixed stride |
 | Sparse Memory-token Attention | `bank` + `memory_write_mode: memory_token` | explicit `<MEM>` records |
 | Multiscale Memory Attention | `bank_multiscale` | dense recent + sparse older states |
 | Recirculation + Sparse Memory Attention | `bank_recirculation_hybrid` | fast recurrence + sparse records |

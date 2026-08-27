@@ -14,7 +14,7 @@ class MultiscaleBankVariant(BankVariant):
 
     Every previous-pass top state is written through the shared memory writer.
     Each query reads one concatenated union: the preceding ``D`` states and the
-    last ``S`` fixed-periodic states strictly older than that dense region. A
+    last ``S`` fixed-stride states strictly older than that dense region. A
     The memory-attention reader applies one Q/K/V projection set and one softmax
     to the union.
     """

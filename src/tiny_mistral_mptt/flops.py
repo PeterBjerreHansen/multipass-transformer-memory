@@ -92,7 +92,7 @@ def _multiresolution_pairs(
     sparse_window: int,
     include_current: bool,
 ) -> int:
-    """Count pairs in the dense-recent/fixed-periodic-old union."""
+    """Count pairs in the dense-recent/fixed-stride-old union."""
     recent_window = int(recent_window)
     sparse_window = int(sparse_window)
     sparse_stride = _validate_positive("sparse_stride", sparse_stride)
@@ -162,7 +162,7 @@ def bank_write_positions(
         writes = tuple(range(linguistic_length))
     else:
         if memory_write_stride is None:
-            raise ValueError("periodic mode requires memory_write_stride")
+            raise ValueError("strided mode requires memory_write_stride")
         stride = _validate_positive("memory_write_stride", memory_write_stride)
         writes = tuple(
             position

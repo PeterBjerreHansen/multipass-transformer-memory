@@ -29,13 +29,13 @@ The suite must enforce:
 - adaptive recirculation starts at the configured fixed mixture;
 - adaptive recirculation Phase A freezes the TinyMistral backbone and trains
   only its coefficient controller;
-- dense Memory Attention and periodic C1 are identical with matching weights;
-- multiscale Memory Attention reduces to Dense Memory Attention when `S=0` and Periodic Memory Attention when
+- dense Memory Attention and strided C1 are identical with matching weights;
+- multiscale Memory Attention reduces to Dense Memory Attention when `S=0` and Strided Memory Attention when
   `D=0`, and uses one softmax over a non-overlapping union otherwise;
 - zero-initialized Memory Attention is an exact vanilla fixed point at all pass depths;
 - Memory Attention reader allocation and projected caches match `memory_layers`;
 - memory RoPE retains original linguistic write/query positions through cached eviction;
-- periodic and MEM writes are strict-past;
+- strided and MEM writes are strict-past;
 - memory window counts records and empty/invalid records return finite exact-zero
   attention contributions;
 - Phase A freezes pretrained parameters and trains only added parameters;
