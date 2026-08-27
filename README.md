@@ -8,7 +8,7 @@ The idea behind [multi-pass training](https://github.com/PeterBjerreHansen/multi
 | --------------------------------------------- | -------------------: | -----------------------------: | ---------------: | ----------------------: |
 | Transformer baseline                          |                7.778 |                  0.110 (1.40%) |         248.024M |                 1.0000x |
 | Sparse SWA control                            |                7.811 |                  0.121 (1.52%) |         248.024M |                 1.0004x |
-| <span style="color:#b00020">Full Bandwidth Transformer (exploratory; not ranked)</span> | <span style="color:#b00020">7.831</span> | <span style="color:#b00020">0.124 (1.56%)</span> | <span style="color:#b00020">250.122M</span> | <span style="color:#b00020">-</span> |
+| 🔴 **Full Bandwidth Transformer (exploratory; not ranked)** | **7.831** | **0.124 (1.56%)** | **250.122M** | **-** |
 | Adaptive Recirculation                        |                7.678 |                  0.110 (1.42%) |         253.275M |                 2.1267x |
 | Sparse Periodic Memory Attention              |                7.599 |                  0.113 (1.46%) |         254.320M |                 2.1222x |
 | Dense Memory Attention                        |                7.534 |                  0.112 (1.46%) |         254.320M |                 2.1327x |
@@ -25,7 +25,9 @@ I think there are three notable patterns in these results:
 
 The experiment is riddled with confounders such as differing compute budgets, parameter count, and starting-point inequality (some mechanisms are more easily slotted into a pretrained model, and the vanilla backbone had no pre-run adaptation). Moreover, I simply do not have the computational resources to provide the exhaustive sweeps and ablations one needs to make convincing optimality arguments. However, I do think the results point towards potential improvements to the existing architectures.
 
-<span style="color:#b00020">FBT is omitted from the common-protocol comparison for now since it requires some architecture-specific initialization and pretraining adjustments. It performs poorly when wired and/or trained with the common protocol, but it might do better in a comparison with architecture-specific optimisation.</span>
+> [!CAUTION]
+> 🔴 **FBT is omitted from the common-protocol comparison for now since it requires some architecture-specific initialization and pretraining adjustments. It performs poorly when wired and/or trained with the common protocol, but it might do better in a comparison with architecture-specific optimisation.**
+
 ### The Memory Attention models
 
 In recurrent patterns, like those of FBT and adaptive Recirculation, token $t$ on pass $k$ receives essentially one predetermined shifted state, $m_{t-1}^{k-1}$:
