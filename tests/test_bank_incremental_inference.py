@@ -92,7 +92,9 @@ def test_recurrent_first_transition_matches_exact(hybrid, mode, visibility, pass
     token = ids[:, 5:6]
     with torch.no_grad():
         exact = prefill_exact(model, prompt, passes=passes)
-        recurrent = prefill_recurrent(model, prompt, passes=passes)
+        recurrent = prefill_recurrent(
+            model, prompt, passes=passes, decode_mode="feedback"
+        )
         exact_after = exact_decode_step(model, exact, token)
         recurrent_after = recurrent_decode_step(model, recurrent, token)
     torch.testing.assert_close(recurrent_after.next_token_logits, exact_after.next_token_logits, atol=8e-5, rtol=8e-5)
@@ -103,7 +105,9 @@ def test_periodic_bank_state_is_bounded_and_only_commits_on_trigger():
     model = make_model(mode="periodic")
     ids = sequence(model, "periodic")
     with torch.no_grad():
-        state = prefill_recurrent(model, ids[:, :5], passes=2)
+        state = prefill_recurrent(
+            model, ids[:, :5], passes=2, decode_mode="feedback"
+        )
         assert isinstance(state.feedback_memory, BankState)
         assert state.feedback_memory.capacity == model.memory_window
         before = state.feedback_memory
@@ -120,7 +124,9 @@ def test_memory_token_hybrid_state_preserves_fast_hidden_across_mem_decode():
     prompt = ids[:, :2]
     mem = ids[:, 2:3]
     with torch.no_grad():
-        state = prefill_recurrent(model, prompt, passes=2)
+        state = prefill_recurrent(
+            model, prompt, passes=2, decode_mode="feedback"
+        )
         assert isinstance(state.feedback_memory, HybridFeedbackState)
         old_fast = state.feedback_memory.fast_hidden.clone()
         state = recurrent_decode_step(model, state, mem)

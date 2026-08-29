@@ -22,15 +22,19 @@ The implementation is tested against full-prefix `compute_passes(...,
 passes=K)` recomputation for multiple K values and all Memory Attention write/visibility
 modes.
 
-## Collapsed recurrent K
+## Prompt prefill and continuation decode
 
-`recurrent` performs the same exact K-pass prompt prefill, then retains only the
-final-pass self-attention cache and, for K>1, the feedback state from pass K-1.
-The first processed continuation position therefore sees exactly the same
-feedback and final-stream history as exact K-pass inference. After that position,
-the live final stream writes its own new feedback and closes the recurrent loop.
+Prompt pass depth and continuation mechanism are independent axes.
+`prefill_passes=K` always describes how many complete prompt passes construct
+the initial state. `decode_mode="standard"` then advances an ordinary cached
+stream. `decode_mode="feedback"` advances the live final stream once per
+observed or generated token and feeds each new state back into the next step.
 
-K=1 is the SWA Transformer cached boundary: recurrent feedback is disabled.
+For K>1 feedback decoding pairs the final-pass cache with feedback from pass
+K-1. The first continuation transition therefore agrees with exact K-pass
+inference. For K=1, feedback decoding still constructs and uses the
+architecture-specific prompt feedback memory; it is not silently disabled.
+Vanilla models reject feedback mode.
 
 ## Memory Attention state
 
@@ -83,7 +87,10 @@ from tiny_mistral_mptt.inference import prefill, decode_step
 state = prefill(model, input_ids, passes=K, mode="exact_incremental")
 state = decode_step(model, state, observed_token)
 
-state = prefill(model, input_ids, passes=K, mode="recurrent")
+state = prefill(
+    model, input_ids, passes=K,
+    mode="recurrent", decode_mode="feedback",
+)
 state = decode_step(model, state, observed_token)
 ```
 
@@ -96,7 +103,9 @@ decode returns a new state.
 Before interpreting recurrent quality:
 
 - exact cached K-pass must match full-prefix recomputation;
-- K=1 must reduce to ordinary cached TinyMistral;
+- exact K=1 and K=1 standard decode must reduce to cached TinyMistral;
+- K=1 feedback decode must retain a real feedback state and remain distinct
+  from standard decode;
 - the first collapsed recurrent transition must match exact K-pass;
 - Memory Attention state must remain bounded and strict-past;
 - multiscale Memory Attention state must retain the exact sparse-old/dense-recent union;

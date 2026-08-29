@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 
 import torch
 import torch.nn.functional as F
 
-from ..inference import prefill_recurrent, recurrent_decode_step
+from ..inference import DecodeMode, prefill_recurrent, recurrent_decode_step
 from ..variants.multipass import MultiPassVariant
 
 
@@ -110,6 +109,7 @@ def score_token_continuation_recurrent(
     device: str | torch.device,
     max_length: int,
     prefill_passes: int,
+    decode_mode: DecodeMode,
     context_enc: list[int],
     continuation_enc: list[int],
 ) -> tuple[float, bool]:
@@ -132,7 +132,12 @@ def score_token_continuation_recurrent(
         return 0.0, True
 
     prompt_ids = torch.tensor([prompt], dtype=torch.long, device=device)
-    state = prefill_recurrent(model, prompt_ids, passes=prefill_passes)
+    state = prefill_recurrent(
+        model,
+        prompt_ids,
+        passes=prefill_passes,
+        decode_mode=decode_mode,
+    )
     total = 0.0
     greedy = True
     for index, target_id in enumerate(targets):
@@ -157,6 +162,7 @@ def generate_recurrent(
     max_new_tokens: int,
     *,
     prefill_passes: int,
+    decode_mode: DecodeMode,
     temperature: float = 0.0,
     top_k: int | None = None,
     eos_token_id: int | None = None,
@@ -173,7 +179,12 @@ def generate_recurrent(
     if max_new_tokens == 0:
         return input_ids
 
-    state = prefill_recurrent(model, input_ids, passes=prefill_passes)
+    state = prefill_recurrent(
+        model,
+        input_ids,
+        passes=prefill_passes,
+        decode_mode=decode_mode,
+    )
     eos = model.config.eos_token_id if eos_token_id is None else eos_token_id
     result = input_ids
     for step in range(max_new_tokens):
@@ -203,6 +214,12 @@ class _TokenizerFacade:
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise RuntimeError("evaluation requires: uv sync --extra eval") from exc
         self.inner = Tokenizer.from_file(str(path))
+        # The published tokenizer.json carries fixed-length padding and
+        # truncation for its original training pipeline. lm-eval requires raw,
+        # variable-length encodings so it can identify the exact continuation
+        # boundary itself.
+        self.inner.no_padding()
+        self.inner.no_truncation()
 
     def encode(self, text: str) -> list[int]:
         return self.inner.encode(text, add_special_tokens=False).ids
@@ -227,19 +244,24 @@ def _build_lm_eval_class():
             tokenizer_path: str | Path,
             device: str | torch.device,
             max_gen_toks: int = 128,
-            inference_mode: Literal["forward", "recurrent"] = "recurrent",
-            prefill_passes: int = 2,
+            decode_mode: DecodeMode,
+            prefill_passes: int,
         ):
             super().__init__()
-            if inference_mode not in {"forward", "recurrent"}:
-                raise ValueError("inference_mode must be 'forward' or 'recurrent'")
+            if decode_mode not in {"standard", "feedback"}:
+                raise ValueError("decode_mode must be 'standard' or 'feedback'")
             if prefill_passes < 1:
                 raise ValueError("prefill_passes must be positive")
+            if not isinstance(model, MultiPassVariant):
+                if prefill_passes != 1:
+                    raise ValueError("vanilla models require prefill_passes=1")
+                if decode_mode == "feedback":
+                    raise ValueError("vanilla models do not implement feedback decoding")
             self.model = model
             self._device = torch.device(device)
             self._tokenizer_facade = _TokenizerFacade(tokenizer_path)
             self._max_gen_toks = int(max_gen_toks)
-            self._inference_mode = inference_mode
+            self._decode_mode = decode_mode
             self._prefill_passes = int(prefill_passes)
             self.batch_size = 1
             self.model.eval()
@@ -265,8 +287,8 @@ def _build_lm_eval_class():
             return "TinyMistral-248M-v3-tokenizer"
 
         @property
-        def inference_mode(self) -> str:
-            return self._inference_mode
+        def decode_mode(self) -> str:
+            return self._decode_mode
 
         @property
         def prefill_passes(self) -> int:
@@ -284,14 +306,13 @@ def _build_lm_eval_class():
         def _loglikelihood_tokens(self, requests, disable_tqdm: bool = False, **kwargs):
             results: list[tuple[float, bool]] = []
             for cache_key, context_enc, continuation_enc in requests:
-                if self._inference_mode == "recurrent" and isinstance(
-                    self.model, MultiPassVariant
-                ):
+                if isinstance(self.model, MultiPassVariant):
                     answer = score_token_continuation_recurrent(
                         self.model,
                         device=self._device,
                         max_length=self.max_length,
                         prefill_passes=self._prefill_passes,
+                        decode_mode=self._decode_mode,
                         context_enc=list(context_enc),
                         continuation_enc=list(continuation_enc),
                     )
@@ -352,14 +373,13 @@ def _build_lm_eval_class():
                 max_prompt = max(1, self.max_length - max_new)
                 context_ids = context_ids[-max_prompt:]
                 prompt = torch.tensor([context_ids], dtype=torch.long, device=self._device)
-                if self._inference_mode == "recurrent" and isinstance(
-                    self.model, MultiPassVariant
-                ):
+                if isinstance(self.model, MultiPassVariant):
                     generated = generate_recurrent(
                         self.model,
                         prompt,
                         max_new,
                         prefill_passes=self._prefill_passes,
+                        decode_mode=self._decode_mode,
                         temperature=temperature,
                         top_k=None if top_k is None else int(top_k),
                     )
@@ -394,8 +414,8 @@ def make_lm_eval_adapter(
     tokenizer_path: str | Path,
     device: str | torch.device,
     max_gen_toks: int = 128,
-    inference_mode: Literal["forward", "recurrent"] = "recurrent",
-    prefill_passes: int = 2,
+    decode_mode: DecodeMode,
+    prefill_passes: int,
 ):
     if TinyMistralHarnessLM is None:
         raise RuntimeError("lm-evaluation-harness is not installed; run: uv sync --extra eval")
@@ -404,6 +424,6 @@ def make_lm_eval_adapter(
         tokenizer_path=tokenizer_path,
         device=device,
         max_gen_toks=max_gen_toks,
-        inference_mode=inference_mode,
+        decode_mode=decode_mode,
         prefill_passes=prefill_passes,
     )

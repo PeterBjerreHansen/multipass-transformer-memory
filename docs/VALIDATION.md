@@ -66,7 +66,9 @@ For `A <MEM> B`:
 - the first recurrent continuation transition equals exact K-pass;
 - Memory Attention state remains chronological and bounded;
 - write-only cache validity persists across decode;
-- K=1 remains the SWA Transformer cached boundary;
+- exact K=1 and K=1 standard decode remain the SWA Transformer cached boundary;
+- K=1 feedback retains real architecture state and does not collapse to
+  standard decode;
 - Strided Attention adds no parameters, changes only selected self-attention masks,
   and cached decoding equals full-sequence execution.
 

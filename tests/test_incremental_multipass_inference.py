@@ -103,7 +103,9 @@ def test_recurrent_handoff_is_exact_for_first_processed_token(
 
     with torch.no_grad():
         exact = prefill_exact(model, prompt, passes=passes)
-        recurrent = prefill_recurrent(model, prompt, passes=passes)
+        recurrent = prefill_recurrent(
+            model, prompt, passes=passes, decode_mode="feedback"
+        )
 
         torch.testing.assert_close(
             recurrent.feedback_memory,
@@ -136,7 +138,7 @@ def test_recurrent_handoff_is_exact_for_first_processed_token(
 
 
 @pytest.mark.parametrize("variant_name", ["memory_add", "fbt"])
-def test_k1_recurrent_and_exact_are_vanilla_cached_inference(variant_name):
+def test_k1_standard_decode_and_exact_are_vanilla_cached_inference(variant_name):
     model = make_variant(variant_name)
     ids = sample_ids()
     prompt = ids[:, :5]
@@ -149,7 +151,9 @@ def test_k1_recurrent_and_exact_are_vanilla_cached_inference(variant_name):
         ).float()[:, -1, :]
 
         exact = prefill_exact(model, prompt, passes=1)
-        recurrent = prefill_recurrent(model, prompt, passes=1)
+        recurrent = prefill_recurrent(
+            model, prompt, passes=1, decode_mode="standard"
+        )
         assert recurrent.feedback_memory is None
         torch.testing.assert_close(
             exact.next_token_logits, vanilla_logits, atol=0, rtol=0
@@ -180,11 +184,41 @@ def test_k1_recurrent_and_exact_are_vanilla_cached_inference(variant_name):
             )
 
 
+@pytest.mark.parametrize("variant_name", ["memory_add", "fbt"])
+def test_k1_feedback_decode_is_independent_of_prefill_depth(variant_name):
+    model = make_variant(variant_name)
+    ids = sample_ids()
+    prompt = ids[:, :5]
+
+    with torch.no_grad():
+        standard = prefill_recurrent(
+            model, prompt, passes=1, decode_mode="standard"
+        )
+        feedback = prefill_recurrent(
+            model, prompt, passes=1, decode_mode="feedback"
+        )
+        assert standard.feedback_memory is None
+        assert feedback.feedback_memory is not None
+        torch.testing.assert_close(
+            standard.next_token_logits, feedback.next_token_logits, atol=0, rtol=0
+        )
+
+        token = ids[:, 5:6]
+        standard = recurrent_decode_step(model, standard, token)
+        feedback = recurrent_decode_step(model, feedback, token)
+        assert standard.decode_mode == "standard"
+        assert feedback.decode_mode == "feedback"
+        assert feedback.feedback_memory is not None
+        assert not torch.equal(standard.last_hidden, feedback.last_hidden)
+
+
 def test_memory_add_recurrent_state_keeps_exactly_one_feedback_vector():
     model = make_variant("memory_add")
     ids = sample_ids()
     with torch.no_grad():
-        state = prefill_recurrent(model, ids[:, :6], passes=4)
+        state = prefill_recurrent(
+            model, ids[:, :6], passes=4, decode_mode="feedback"
+        )
         assert state.feedback_memory is not None
         assert state.feedback_memory.shape[1] == 1
         for position in range(6, 10):

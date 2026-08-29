@@ -7,9 +7,10 @@ from .multipass import (
     recurrent_decode_step,
     recurrent_from_exact,
 )
-from .state import ExactIncrementalState, PassStreamState, RecurrentState
+from .state import DecodeMode, ExactIncrementalState, PassStreamState, RecurrentState
 
 __all__ = [
+    "DecodeMode",
     "ExactIncrementalState",
     "PassStreamState",
     "RecurrentState",

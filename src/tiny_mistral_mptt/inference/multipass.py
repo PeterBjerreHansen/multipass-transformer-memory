@@ -5,7 +5,7 @@ from typing import Literal
 import torch
 
 from ..variants.multipass import MultiPassVariant
-from .state import ExactIncrementalState, PassStreamState, RecurrentState
+from .state import DecodeMode, ExactIncrementalState, PassStreamState, RecurrentState
 
 InferenceMode = Literal["exact_incremental", "recurrent"]
 
@@ -62,10 +62,10 @@ def prefill_exact(
             runs.append(run)
             previous = run.feedback_source
 
-    if passes == 1:
-        # K=1 is the SWA Transformer cached boundary and must not require a variant to
-        # implement any feedback-state protocol. The placeholder memory is not
-        # consumed while feedback is disabled.
+    if passes == 1 and not model.supports_cached_feedback:
+        # Exact K=1 decoding remains available to variants without a feedback
+        # protocol. This placeholder is never exposed to feedback decoding,
+        # which prefill_recurrent rejects for such models.
         streams = (
             PassStreamState(
                 past_key_values=first_run.past_key_values,
@@ -95,16 +95,26 @@ def prefill_exact(
     )
 
 
-def recurrent_from_exact(state: ExactIncrementalState) -> RecurrentState:
-    """Collapse an already-prefilled exact K-pass state without recomputation."""
+def recurrent_from_exact(
+    state: ExactIncrementalState,
+    *,
+    decode_mode: DecodeMode,
+) -> RecurrentState:
+    """Collapse an exact prompt state into the requested decode mechanism."""
     final_stream = state.streams[-1]
-    feedback_memory = (
-        None
-        if state.prefill_passes == 1
-        else state.streams[-2].feedback_memory
-    )
+    if decode_mode == "standard":
+        feedback_memory = None
+    elif decode_mode == "feedback":
+        feedback_memory = (
+            state.streams[0].feedback_memory
+            if state.prefill_passes == 1
+            else state.streams[-2].feedback_memory
+        )
+    else:
+        raise ValueError(f"unknown decode mode {decode_mode!r}")
     return RecurrentState(
         prefill_passes=state.prefill_passes,
+        decode_mode=decode_mode,
         past_key_values=final_stream.past_key_values,
         feedback_memory=feedback_memory,
         last_hidden=final_stream.last_hidden,
@@ -118,18 +128,25 @@ def prefill_recurrent(
     input_ids: torch.Tensor,
     *,
     passes: int,
+    decode_mode: DecodeMode,
 ) -> RecurrentState:
-    """Prefill K passes, then collapse to one continuing recurrent stream.
+    """Prefill K prompt passes, then collapse to one decode stream.
 
-    For K>1 the final-pass KV cache is paired with feedback memory from pass
-    K-1.  Consequently the first appended-token processing step is exactly the
-    same as exact K-pass inference.  Only after that step does the model close
-    the loop by feeding its newly produced final-pass state back to itself.
+    In feedback mode, K>1 pairs the final-pass KV cache with memory from pass
+    K-1, so the first appended-token step agrees with exact K-pass inference.
+    Later tokens close the loop over the generated/observed continuation. K=1
+    still enables that loop; K never selects the decode mechanism.
 
-    K=1 is a deliberate boundary case: feedback remains disabled and the state
-    is ordinary SWA Transformer cached TinyMistral inference.
+    Standard mode uses the same K-pass prompt state but ordinary cached decoding.
     """
-    return recurrent_from_exact(prefill_exact(model, input_ids, passes=passes))
+    if decode_mode == "feedback" and not model.supports_cached_feedback:
+        raise ValueError(
+            f"{model.variant_name} does not implement feedback decoding"
+        )
+    return recurrent_from_exact(
+        prefill_exact(model, input_ids, passes=passes),
+        decode_mode=decode_mode,
+    )
 
 
 @torch.no_grad()
@@ -238,6 +255,7 @@ def recurrent_decode_step(
     logits = torch.where(control[:, None], state.next_token_logits, candidate_logits)
     return RecurrentState(
         prefill_passes=state.prefill_passes,
+        decode_mode=state.decode_mode,
         past_key_values=run.past_key_values,
         feedback_memory=feedback_memory,
         last_hidden=run.hidden_states[:, -1:, :].detach(),
@@ -252,11 +270,21 @@ def prefill(
     *,
     passes: int,
     mode: InferenceMode,
+    decode_mode: DecodeMode | None = None,
 ) -> ExactIncrementalState | RecurrentState:
     if mode == "exact_incremental":
+        if decode_mode is not None:
+            raise ValueError("decode_mode applies only to a collapsed decode stream")
         return prefill_exact(model, input_ids, passes=passes)
     if mode == "recurrent":
-        return prefill_recurrent(model, input_ids, passes=passes)
+        if decode_mode is None:
+            raise ValueError("recurrent prefill requires an explicit decode_mode")
+        return prefill_recurrent(
+            model,
+            input_ids,
+            passes=passes,
+            decode_mode=decode_mode,
+        )
     raise ValueError(f"unknown inference mode {mode!r}")
 
 

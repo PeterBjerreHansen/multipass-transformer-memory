@@ -57,7 +57,7 @@ def make_memory_attention_model():
     return model
 
 
-def test_recurrent_eval_k1_is_identical_to_vanilla_at_every_offset():
+def test_recurrent_eval_k1_uses_feedback_after_the_shared_prompt_prediction():
     result = evaluate_recurrent_continuation(
         make_model(),
         TinyDataset(),
@@ -69,11 +69,14 @@ def test_recurrent_eval_k1_is_identical_to_vanilla_at_every_offset():
     )
     assert result.prefill_passes == 1
     assert result.predicted_tokens_per_mode == 12
-    torch.testing.assert_close(
-        torch.tensor(result.exact_nll_by_offset),
-        torch.tensor(result.recurrent_nll_by_offset),
-        atol=0,
-        rtol=0,
+    assert result.exact_nll_by_offset[0] == result.recurrent_nll_by_offset[0]
+    assert any(
+        exact != recurrent
+        for exact, recurrent in zip(
+            result.exact_nll_by_offset[1:],
+            result.recurrent_nll_by_offset[1:],
+            strict=True,
+        )
     )
     torch.testing.assert_close(
         torch.tensor(result.exact_nll_by_offset),
@@ -81,8 +84,7 @@ def test_recurrent_eval_k1_is_identical_to_vanilla_at_every_offset():
         atol=0,
         rtol=0,
     )
-    assert result.hidden_delta_rms_by_step == (0.0,) * 6
-    assert all(abs(value - 1.0) < 1e-7 for value in result.hidden_cosine_by_step)
+    assert max(result.hidden_delta_rms_by_step) > 1e-5
 
 
 def test_recurrent_eval_k2_has_exact_initial_handoff_then_measures_drift():

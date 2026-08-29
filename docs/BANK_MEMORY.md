@@ -221,10 +221,11 @@ Exact incremental K-pass inference keeps K self-attention streams and updates
 feedback only after all streams process the current physical position. It is
 tested against full-prefix recomputation.
 
-Collapsed recurrent inference starts from the exact K-pass prefill. Its first
+Feedback decoding starts from the exact K-pass prompt prefill. For K>1 its first
 continuation transition therefore matches exact K-pass inference; after that,
-the final live stream feeds its own newly produced states into the recurrent
-feedback machinery.
+the final live stream feeds its own newly produced states into the feedback
+machinery. K=1 feedback is also supported and uses a real prompt memory. Prompt
+K is independent of the `standard` versus `feedback` continuation mode.
 
 If a cached decode step consumes `<MEM>`, `next_token_logits` remain the logits
 from the preceding ordinary position because MEM itself predicts nothing.

@@ -1,12 +1,15 @@
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from conftest import micro_config
 from tiny_mistral.modeling import MistralForCausalLM
 from tiny_mistral_mptt.evaluation.lm_eval_adapter import score_token_continuation
 from tiny_mistral_mptt.evaluation.lm_eval_adapter import (
+    _TokenizerFacade,
     generate_recurrent,
+    make_lm_eval_adapter,
     score_token_continuation_recurrent,
 )
 from tiny_mistral_mptt.inference import prefill_recurrent, recurrent_decode_step
@@ -61,6 +64,35 @@ def test_token_continuation_left_truncation_keeps_requested_targets():
     assert score > -1e-5
 
 
+def test_harness_rejects_feedback_for_a_vanilla_model_before_tokenizer_loading():
+    with pytest.raises(ValueError, match="vanilla models do not implement feedback"):
+        make_lm_eval_adapter(
+            NextIdModel(),
+            tokenizer_path="does-not-exist.json",
+            device="cpu",
+            prefill_passes=1,
+            decode_mode="feedback",
+        )
+
+
+def test_harness_tokenizer_disables_training_padding_and_truncation(tmp_path):
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import Whitespace
+
+    tokenizer = Tokenizer(
+        WordLevel({"[UNK]": 0, "[PAD]": 1, "hello": 2}, unk_token="[UNK]")
+    )
+    tokenizer.pre_tokenizer = Whitespace()
+    tokenizer.enable_padding(length=8, pad_id=1, pad_token="[PAD]")
+    tokenizer.enable_truncation(max_length=1)
+    path = tmp_path / "tokenizer.json"
+    tokenizer.save(str(path))
+
+    facade = _TokenizerFacade(path)
+    assert facade.encode("hello hello") == [2, 2]
+
+
 def _make_memory_model():
     torch.manual_seed(444)
     backbone = MistralForCausalLM(
@@ -84,6 +116,7 @@ def test_recurrent_task_scoring_uses_one_collapsed_stream(monkeypatch):
         device="cpu",
         max_length=16,
         prefill_passes=2,
+        decode_mode="feedback",
         context_enc=[1, 7, 3, 14],
         continuation_enc=[22, 9, 31],
     )
@@ -92,6 +125,7 @@ def test_recurrent_task_scoring_uses_one_collapsed_stream(monkeypatch):
         model,
         torch.tensor([[1, 7, 3, 14]], dtype=torch.long),
         passes=2,
+        decode_mode="feedback",
     )
     expected_score = 0.0
     expected_greedy = True
@@ -126,10 +160,13 @@ def test_recurrent_task_generation_matches_incremental_greedy_decode(monkeypatch
         prompt,
         3,
         prefill_passes=2,
+        decode_mode="feedback",
         temperature=0.0,
     )
 
-    state = prefill_recurrent(model, prompt, passes=2)
+    state = prefill_recurrent(
+        model, prompt, passes=2, decode_mode="feedback"
+    )
     expected = prompt.clone()
     for step in range(3):
         token = torch.argmax(state.next_token_logits, dim=-1, keepdim=True)

@@ -69,7 +69,7 @@ def test_incremental_memory_inference_on_mps(variant_name, passes):
     ids = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]], device="mps")
 
     exact = prefill_exact(model, ids[:, :5], passes=passes)
-    recurrent = recurrent_from_exact(exact)
+    recurrent = recurrent_from_exact(exact, decode_mode="feedback")
     for position in (5, 6):
         token = ids[:, position : position + 1]
         exact = exact_decode_step(model, exact, token)

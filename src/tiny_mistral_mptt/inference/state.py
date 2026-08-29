@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import torch
 
@@ -10,6 +11,7 @@ from ..feedback import FeedbackMemory, feedback_shape
 
 
 KVCache = tuple[LayerKVCache, ...]
+DecodeMode = Literal["standard", "feedback"]
 
 
 def cache_next_position(past_key_values: KVCache) -> int:
@@ -74,9 +76,15 @@ class ExactIncrementalState:
 
 @dataclass(frozen=True)
 class RecurrentState:
-    """Collapsed one-stream state after a K-pass prompt prefill."""
+    """Collapsed one-stream state after a K-pass prompt prefill.
+
+    ``prefill_passes`` describes only how the prompt state was constructed.
+    ``decode_mode`` independently selects ordinary cached decoding or the
+    one-step feedback recurrence used for long continuations.
+    """
 
     prefill_passes: int
+    decode_mode: DecodeMode
     past_key_values: KVCache
     feedback_memory: FeedbackMemory | None
     last_hidden: torch.Tensor
@@ -85,6 +93,8 @@ class RecurrentState:
     def __post_init__(self) -> None:
         if self.prefill_passes < 1:
             raise ValueError("prefill_passes must be positive")
+        if self.decode_mode not in ("standard", "feedback"):
+            raise ValueError(f"unknown decode mode {self.decode_mode!r}")
         if self.last_hidden.ndim != 3 or self.last_hidden.shape[1] != 1:
             raise ValueError("last_hidden must be [B,1,D]")
         if self.next_token_logits.ndim != 2:
@@ -92,12 +102,12 @@ class RecurrentState:
         if self.last_hidden.shape[0] != self.next_token_logits.shape[0]:
             raise ValueError("hidden and logits batch sizes differ")
         cache_next_position(self.past_key_values)
-        if self.prefill_passes == 1:
+        if self.decode_mode == "standard":
             if self.feedback_memory is not None:
-                raise ValueError("K=1 recurrent state must not enable feedback")
+                raise ValueError("standard decoding must not carry feedback memory")
         else:
             if self.feedback_memory is None:
-                raise ValueError("K>1 recurrent state requires feedback memory")
+                raise ValueError("feedback decoding requires feedback memory")
             batch_size, hidden_size = feedback_shape(self.feedback_memory)
             if batch_size != self.last_hidden.shape[0]:
                 raise ValueError("feedback memory and hidden batch sizes differ")
@@ -106,7 +116,7 @@ class RecurrentState:
 
     @property
     def feedback_enabled(self) -> bool:
-        return self.prefill_passes > 1
+        return self.decode_mode == "feedback"
 
     @property
     def next_position(self) -> int:

@@ -136,7 +136,7 @@ def evaluate_recurrent_continuation(
             ]
 
             exact = prefill_exact(model, prompt, passes=prefill_passes)
-            recurrent = recurrent_from_exact(exact)
+            recurrent = recurrent_from_exact(exact, decode_mode="feedback")
             vanilla = prefill_exact(model, prompt, passes=1)
 
             for offset in range(continuation_tokens):
