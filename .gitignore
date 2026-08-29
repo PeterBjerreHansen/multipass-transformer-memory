@@ -30,6 +30,9 @@ data/dolmino/gpu_2048/*
 !data/dolmino/gpu_2048_staged/
 data/dolmino/gpu_2048_staged/*
 !data/dolmino/gpu_2048_staged/config.yaml
+!data/dolmino/gpu_2048_long_2p5b/
+data/dolmino/gpu_2048_long_2p5b/*
+!data/dolmino/gpu_2048_long_2p5b/config.yaml
 
 # Training outputs remain colocated with their study/control but are not source.
 # Keep the results README files visible, while ignoring every run directory or

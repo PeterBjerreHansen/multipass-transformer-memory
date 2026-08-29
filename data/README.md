@@ -12,5 +12,9 @@ materialized dataset files are ignored.
   training may repeat it when a declared campaign budget exceeds one epoch.
 - `dolmino/gpu_2048_staged/config.yaml`: shared validation plus non-overlapping
   wiring and Phase-B slices for initialized serious-run controls.
+- `dolmino/gpu_2048_long_2p5b/config.yaml`: the pinned 2.5B-token continuation
+  recipe for the Stage-6 long plastic study; it preserves the 5M wiring offset
+  and the shared validation construction while extending the training stream
+  beyond the Stage-5 100M artifact.
 Use `scripts/prepare_data.py` and `scripts/verify_data.py` rather than editing a
 generated artifact in place.

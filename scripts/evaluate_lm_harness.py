@@ -15,7 +15,10 @@ from tiny_mistral_mptt.config import load_experiment_config
 from tiny_mistral_mptt.evaluation.lm_eval_adapter import make_lm_eval_adapter
 from tiny_mistral_mptt.model_factory import load_variant_from_config
 from tiny_mistral_mptt.data.manifest import file_sha256
-from tiny_mistral_mptt.training.checkpoint import load_checkpoint_for_evaluation
+from tiny_mistral_mptt.training.checkpoint import (
+    load_checkpoint_for_evaluation,
+    load_model_weights,
+)
 
 
 def main() -> None:
@@ -27,6 +30,12 @@ def main() -> None:
     parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--limit", type=float, default=None)
     parser.add_argument("--output", default=None)
+    parser.add_argument(
+        "--device",
+        choices=("cpu", "mps", "cuda", "auto"),
+        default=None,
+        help="override the device declared by the experiment config",
+    )
     parser.add_argument(
         "--inference-mode",
         choices=("recurrent", "forward"),
@@ -48,16 +57,23 @@ def main() -> None:
         ) from exc
 
     cfg = load_experiment_config(args.config)
-    device = resolve_device(cfg.device)
+    device = resolve_device(cfg.device if args.device is None else args.device)
     model = load_variant_from_config(cfg, device=device)
     if args.checkpoint:
-        expected = file_sha256(f"{cfg.data_dir}/manifest.json")
-        load_checkpoint_for_evaluation(
-            args.checkpoint,
-            model=model,
-            expected_manifest_sha256=expected,
-            expected_experiment_config=cfg.to_dict(),
-        )
+        if Path(args.checkpoint).suffix == ".safetensors":
+            load_model_weights(
+                args.checkpoint,
+                model=model,
+                expected_experiment_config=cfg.to_dict(),
+            )
+        else:
+            expected = file_sha256(f"{cfg.data_dir}/manifest.json")
+            load_checkpoint_for_evaluation(
+                args.checkpoint,
+                model=model,
+                expected_manifest_sha256=expected,
+                expected_experiment_config=cfg.to_dict(),
+            )
     adapter = make_lm_eval_adapter(
         model,
         tokenizer_path=Path(cfg.model_dir) / "tokenizer.json",

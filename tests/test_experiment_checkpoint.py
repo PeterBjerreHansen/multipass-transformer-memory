@@ -186,6 +186,30 @@ def test_evaluation_checkpoint_loads_strictly_after_manifest_and_config_checks(t
         torch.testing.assert_close(tensor, model.state_dict()[name], atol=0, rtol=0)
 
 
+def test_evaluation_checkpoint_accepts_public_variant_alias(tmp_path):
+    model, optimizer = _objects()
+    sampler = StatefulBlockSampler(5, seed=3)
+    path = save_checkpoint(
+        tmp_path / "memory-attention.pt",
+        model=model,
+        optimizer=optimizer,
+        sampler_state=sampler.state_dict(),
+        train_state=TrainState(),
+        experiment_config={"variant": "bank", "memory_write_mode": "dense"},
+        data_manifest_sha256="same",
+    )
+    replacement, _ = _objects()
+    load_checkpoint_for_evaluation(
+        path,
+        model=replacement,
+        expected_manifest_sha256="same",
+        expected_experiment_config={
+            "variant": "memory_attention",
+            "memory_write_mode": "dense",
+        },
+    )
+
+
 def test_constant_lr_resume_may_extend_stopping_budget(tmp_path):
     model, optimizer = _objects()
     sampler = StatefulBlockSampler(5, seed=3)

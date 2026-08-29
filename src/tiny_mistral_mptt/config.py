@@ -323,6 +323,10 @@ class ExperimentConfig:
     eval_every_tokens: int = 32_768
     eval_batches: int = 16
     eval_passes: int = 1
+    # Zero preserves the historical per-update training journal. Long runs
+    # should set this to a larger token interval; validation and checkpoint
+    # events remain independently recorded at their own cadences.
+    train_log_every_tokens: int = 0
     early_stop: dict[str, Any] | None = None
     checkpoint_every_tokens: int = 65_536
     checkpoint_every_seconds: float = 0.0
@@ -488,6 +492,8 @@ class ExperimentConfig:
             raise ValueError("weight_decay must be non-negative and grad_clip positive")
         if self.eval_every_tokens < 0 or self.eval_batches < 0:
             raise ValueError("evaluation cadence/count must be non-negative")
+        if self.train_log_every_tokens < 0:
+            raise ValueError("train_log_every_tokens must be non-negative")
         if self.eval_passes < 1:
             raise ValueError("eval_passes must be positive")
         self.early_stop = _coerce_early_stop(self.early_stop)

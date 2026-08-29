@@ -671,6 +671,14 @@ class Trainer:
             ((self.state.unique_tokens_seen // cfg.eval_every_tokens) + 1) * cfg.eval_every_tokens
             if cfg.eval_every_tokens else None
         )
+        next_train_log = (
+            ((self.state.unique_tokens_seen // cfg.train_log_every_tokens) + 1)
+            * cfg.train_log_every_tokens
+            if cfg.train_log_every_tokens else None
+        )
+        log_window_start = self.state.unique_tokens_seen
+        log_window_updates = 0
+        log_window_sums: dict[str, float] = defaultdict(float)
         if self._pending_validation_recovery:
             validation = self._evaluate()
             self._pending_validation_recovery = False
@@ -755,7 +763,37 @@ class Trainer:
             record.update(
                 {key: value / accumulation_steps for key, value in sorted(update_metrics.items())}
             )
-            append_jsonl(self.metrics_path, record)
+            log_window_updates += 1
+            for key in (
+                "loss",
+                "grad_norm",
+                "tokens_per_second",
+                "model_positions_per_second",
+                "mean_passes",
+            ):
+                log_window_sums[key] += float(record[key])
+            for key, value in record.items():
+                if key.endswith("_loss") and isinstance(value, (int, float)):
+                    log_window_sums[key] += float(value)
+
+            log_due = next_train_log is not None and self.state.unique_tokens_seen >= next_train_log
+            final_update = self.state.unique_tokens_seen >= target_tokens
+            if cfg.train_log_every_tokens == 0 or log_due or final_update:
+                if cfg.train_log_every_tokens:
+                    logged = dict(record)
+                    logged["log_interval_start_tokens"] = log_window_start
+                    logged["log_interval_tokens"] = self.state.unique_tokens_seen - log_window_start
+                    logged["log_interval_updates"] = log_window_updates
+                    for key, value in log_window_sums.items():
+                        logged[key] = value / log_window_updates
+                    record = logged
+                append_jsonl(self.metrics_path, record)
+                log_window_start = self.state.unique_tokens_seen
+                log_window_updates = 0
+                log_window_sums.clear()
+                if next_train_log is not None:
+                    while next_train_log <= self.state.unique_tokens_seen:
+                        next_train_log += cfg.train_log_every_tokens
             self._snapshot_crossed(previous_tokens)
 
             eval_due = next_eval is not None and self.state.unique_tokens_seen >= next_eval

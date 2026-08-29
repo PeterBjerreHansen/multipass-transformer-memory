@@ -11,7 +11,11 @@ from typing import Any
 import torch
 from safetensors.torch import load_file as load_safetensors
 
-from ..config import ExperimentConfig, canonical_memory_write_mode
+from ..config import (
+    ExperimentConfig,
+    canonical_memory_write_mode,
+    canonical_variant_name,
+)
 
 
 FORMAT_VERSION = 3
@@ -381,6 +385,12 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
         for key, value in canonical.items()
         if key in ExperimentConfig.__dataclass_fields__
     }
+    if isinstance(canonical.get("variant"), str):
+        # Public Memory Attention/SWA names and historical checkpoint names
+        # describe the same implementation and must compare semantically.
+        canonical["variant"] = _HISTORICAL_VARIANT_NAMES.get(
+            canonical["variant"], canonical_variant_name(canonical["variant"])
+        )
     canonical["memory_write_mode"] = canonical_memory_write_mode(
         canonical.get("memory_write_mode")
     )
@@ -393,6 +403,7 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
         "eval_every_tokens",
         "eval_batches",
         "eval_passes",
+        "train_log_every_tokens",
         "early_stop",
         "checkpoint_every_tokens",
         "checkpoint_every_seconds",

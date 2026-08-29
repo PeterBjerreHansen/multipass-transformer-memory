@@ -1,0 +1,55 @@
+variant: memory_attention
+phase: B
+
+memory_window: 32
+memory_write_mode: dense
+memory_write_stride: null
+memory_token_visibility: null
+memory_layers: [3, 7]
+memory_position_encoding: rope
+
+model_dir: checkpoints/TinyMistral-248M-v3
+data_dir: data/dolmino/gpu_2048_long_2p5b
+output_dir: benchmarks/core/stage_6_long_continuation/results/dense_swa_memory_attention_plastic_2p5b
+
+device: cuda
+dtype: float32
+autocast_dtype: bfloat16
+attention_backend: auto
+
+seed: 1337
+architecture_seed: 4242
+batch_size: 1
+grad_accum_steps: 1
+max_unique_tokens: 2499999744
+
+learning_rate: 1.0e-5
+pretrained_learning_rate: 1.0e-5
+added_learning_rate: 3.0e-5
+lr_schedule: {type: cosine, warmup_tokens: 5242880, min_multiplier: 0.1}
+weight_decay: 0.01
+grad_clip: 1.0
+
+pass_schedule:
+  - probabilities: {2: 0.90, 3: 0.10}
+
+ntp_pass_loss_weights_by_k:
+  2: [0.10, 0.90]
+  3: [0.10, 0.00, 0.90]
+
+# Keep the long-run journal and source-PPL checks coarse enough that monitoring
+# does not compete with optimization. Capability evaluations remain external
+# at the milestone snapshots documented in README.md.
+train_log_every_tokens: 4194304
+eval_every_tokens: 8388608
+eval_passes: 4
+eval_batches: 64
+
+# Checkpoint at most every 16M tokens, or every 15 minutes if the run is slower.
+checkpoint_every_tokens: 16777216
+checkpoint_every_seconds: 900.0
+checkpoint_keep_last: 2
+snapshot_at_tokens: [100007936, 500000768, 1000001536, 2000001024, 2499999744]
+
+resume_from: null
+init_from: benchmarks/development/stage_1_wiring/results/bank_dense_wiring_5m/checkpoints/checkpoint_000005242880.pt

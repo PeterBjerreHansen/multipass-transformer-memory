@@ -110,6 +110,45 @@ def test_phase_b_has_independent_pretrained_and_added_learning_rates(tmp_path):
     assert groups == {"pretrained": 1e-6, "added": 1e-4}
 
 
+def test_training_journal_can_aggregate_over_token_intervals(tmp_path):
+    data_dir = tmp_path / "data-log-cadence"
+    make_artifact(data_dir)
+    train = PackedTokenDataset(data_dir, "train")
+    val = PackedTokenDataset(data_dir, "validation")
+    cfg = ExperimentConfig(
+        variant="fbt",
+        phase="B",
+        model_dir="unused",
+        data_dir=str(data_dir),
+        output_dir=str(tmp_path / "run-log-cadence"),
+        device="cpu",
+        attention_backend="reference",
+        max_unique_tokens=64,
+        pass_schedule=[{"probabilities": {2: 1.0}}],
+        train_log_every_tokens=16,
+        eval_every_tokens=0,
+        eval_batches=0,
+        checkpoint_every_tokens=0,
+    )
+    Trainer(
+        model=make_fbt(),
+        config=cfg,
+        train_data=train,
+        validation_data=val,
+        device=torch.device("cpu"),
+    ).train()
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "run-log-cadence" / "metrics.jsonl").read_text().splitlines()
+    ]
+    train_records = [record for record in records if record["event"] == "train"]
+    assert len(train_records) == 4
+    assert [record["log_interval_tokens"] for record in train_records] == [16, 16, 16, 16]
+    assert [record["log_interval_updates"] for record in train_records] == [2, 2, 2, 2]
+    assert all(record["unique_tokens_seen"] == (index + 1) * 16 for index, record in enumerate(train_records))
+
+
 def test_init_from_loads_model_only_into_fresh_phase_b_run(tmp_path):
     data_dir = tmp_path / "data-init"
     make_artifact(data_dir)
