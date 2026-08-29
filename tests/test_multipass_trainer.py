@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 import torch
 
 from conftest import micro_config
@@ -147,6 +148,109 @@ def test_training_journal_can_aggregate_over_token_intervals(tmp_path):
     assert [record["log_interval_tokens"] for record in train_records] == [16, 16, 16, 16]
     assert [record["log_interval_updates"] for record in train_records] == [2, 2, 2, 2]
     assert all(record["unique_tokens_seen"] == (index + 1) * 16 for index, record in enumerate(train_records))
+
+
+def test_mixed_k_telemetry_uses_conditional_metric_counts_and_total_throughput(
+    tmp_path, monkeypatch
+):
+    data_dir = tmp_path / "data-mixed-telemetry"
+    make_artifact(data_dir)
+    train = PackedTokenDataset(data_dir, "train")
+    val = PackedTokenDataset(data_dir, "validation")
+    model = make_fbt(seed=81)
+    observed: dict[str, list[float]] = {}
+    original_compute_loss = model.compute_loss
+
+    def traced_compute_loss(input_ids, **kwargs):
+        output = original_compute_loss(input_ids, **kwargs)
+        for key, value in output.metrics.items():
+            observed.setdefault(key, []).append(float(value))
+        return output
+
+    monkeypatch.setattr(model, "compute_loss", traced_compute_loss)
+    cfg = ExperimentConfig(
+        variant="fbt",
+        phase="B",
+        model_dir="unused",
+        data_dir=str(data_dir),
+        output_dir=str(tmp_path / "mixed-telemetry"),
+        device="cpu",
+        attention_backend="reference",
+        seed=15,
+        max_unique_tokens=64,
+        pass_schedule=[{"probabilities": {2: 0.5, 3: 0.5}}],
+        train_log_every_tokens=64,
+        eval_every_tokens=0,
+        eval_batches=0,
+        checkpoint_every_tokens=0,
+    )
+    Trainer(
+        model=model,
+        config=cfg,
+        train_data=train,
+        validation_data=val,
+        device=torch.device("cpu"),
+    ).train()
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "mixed-telemetry" / "metrics.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    record = next(item for item in records if item["event"] == "train")
+    assert "pass_3_loss" in observed
+    assert record["metric_observation_counts"]["pass_3_loss"] == len(
+        observed["pass_3_loss"]
+    )
+    assert record["pass_3_loss"] == pytest.approx(
+        sum(observed["pass_3_loss"]) / len(observed["pass_3_loss"])
+    )
+    assert record["tokens_per_second"] == pytest.approx(
+        record["log_interval_tokens"] / record["log_interval_elapsed_seconds"]
+    )
+    assert sum(record["pass_histogram_interval"].values()) == 8
+
+
+def test_signal_flushes_partial_training_log_window(tmp_path):
+    data_dir = tmp_path / "data-partial-log"
+    make_artifact(data_dir)
+    train = PackedTokenDataset(data_dir, "train")
+    val = PackedTokenDataset(data_dir, "validation")
+    cfg = ExperimentConfig(
+        variant="fbt",
+        phase="B",
+        model_dir="unused",
+        data_dir=str(data_dir),
+        output_dir=str(tmp_path / "partial-log"),
+        device="cpu",
+        attention_backend="reference",
+        max_unique_tokens=64,
+        pass_schedule=[{"probabilities": {2: 1.0}}],
+        train_log_every_tokens=64,
+        eval_every_tokens=0,
+        eval_batches=0,
+        checkpoint_every_tokens=0,
+    )
+    Trainer(
+        model=make_fbt(),
+        config=cfg,
+        train_data=train,
+        validation_data=val,
+        device=torch.device("cpu"),
+        stop_requested=lambda: True,
+    ).train()
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "partial-log" / "metrics.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    record = next(item for item in records if item["event"] == "train")
+    assert record["log_interval_partial"] is True
+    assert record["log_interval_tokens"] == 8
+    assert record["log_interval_updates"] == 1
 
 
 def test_init_from_loads_model_only_into_fresh_phase_b_run(tmp_path):

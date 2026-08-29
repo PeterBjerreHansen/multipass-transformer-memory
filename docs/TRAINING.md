@@ -89,6 +89,13 @@ token_equivalent_compute += physical positions * effective passes
 Training metrics additionally report linguistic tokens/s and model positions/s.
 This keeps data dose comparable while making the extra MEM computation visible.
 
+When `train_log_every_tokens` aggregates multiple optimizer updates, throughput
+is total interval tokens divided by total measured optimizer-update time. Pass
+losses use per-key observation counts, so a K=3-only metric is not diluted by
+K=2 updates. Each record includes those counts, an interval pass histogram, and
+the interval duration. A graceful signal flushes the unfinished interval with
+`log_interval_partial: true` before checkpointing.
+
 ## Memory-token loss
 
 MEM uses input ID V, where V is the base vocabulary size, but the LM head remains

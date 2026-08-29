@@ -679,6 +679,56 @@ class Trainer:
         log_window_start = self.state.unique_tokens_seen
         log_window_updates = 0
         log_window_sums: dict[str, float] = defaultdict(float)
+        log_window_counts: dict[str, int] = defaultdict(int)
+        log_window_elapsed_seconds = 0.0
+        log_window_tokens = 0
+        log_window_positions = 0
+        log_window_histogram_start = dict(self.pass_scheduler.histogram)
+
+        def flush_train_log(last_record: dict, *, partial: bool) -> None:
+            nonlocal log_window_start
+            nonlocal log_window_updates
+            nonlocal log_window_elapsed_seconds
+            nonlocal log_window_tokens
+            nonlocal log_window_positions
+            nonlocal log_window_histogram_start
+            if log_window_updates == 0:
+                return
+            logged = dict(last_record)
+            logged["log_interval_start_tokens"] = log_window_start
+            logged["log_interval_tokens"] = (
+                self.state.unique_tokens_seen - log_window_start
+            )
+            logged["log_interval_updates"] = log_window_updates
+            logged["log_interval_elapsed_seconds"] = log_window_elapsed_seconds
+            logged["log_interval_partial"] = partial
+            for key, value in log_window_sums.items():
+                logged[key] = value / log_window_counts[key]
+            logged["metric_observation_counts"] = dict(
+                sorted(log_window_counts.items())
+            )
+            logged["tokens_per_second"] = (
+                log_window_tokens / log_window_elapsed_seconds
+            )
+            logged["model_positions_per_second"] = (
+                log_window_positions / log_window_elapsed_seconds
+            )
+            interval_histogram = {
+                str(passes): count - log_window_histogram_start.get(passes, 0)
+                for passes, count in sorted(self.pass_scheduler.histogram.items())
+                if count - log_window_histogram_start.get(passes, 0)
+            }
+            logged["pass_histogram_interval"] = interval_histogram
+            logged["pass_samples_interval"] = sum(interval_histogram.values())
+            append_jsonl(self.metrics_path, logged)
+            log_window_start = self.state.unique_tokens_seen
+            log_window_updates = 0
+            log_window_sums.clear()
+            log_window_counts.clear()
+            log_window_elapsed_seconds = 0.0
+            log_window_tokens = 0
+            log_window_positions = 0
+            log_window_histogram_start = dict(self.pass_scheduler.histogram)
         if self._pending_validation_recovery:
             validation = self._evaluate()
             self._pending_validation_recovery = False
@@ -697,6 +747,7 @@ class Trainer:
             update_loss = 0.0
             update_passes = 0
             update_metrics: dict[str, float] = defaultdict(float)
+            update_metric_counts: dict[str, int] = defaultdict(int)
             remaining_micro = (target_tokens - self.state.unique_tokens_seen) // tokens_per_micro
             accumulation_steps = min(cfg.grad_accum_steps, remaining_micro)
             if accumulation_steps <= 0:
@@ -722,6 +773,7 @@ class Trainer:
                 update_passes += output.effective_passes
                 for key, value in output.metrics.items():
                     update_metrics[key] += float(value)
+                    update_metric_counts[key] += 1
                 self.state.micro_steps += 1
                 self.state.unique_tokens_seen += tokens_per_micro
                 self.state.model_positions_seen += positions_per_micro
@@ -761,36 +813,35 @@ class Trainer:
                 **lr_record,
             }
             record.update(
-                {key: value / accumulation_steps for key, value in sorted(update_metrics.items())}
+                {
+                    key: value / update_metric_counts[key]
+                    for key, value in sorted(update_metrics.items())
+                }
             )
-            log_window_updates += 1
-            for key in (
-                "loss",
-                "grad_norm",
-                "tokens_per_second",
-                "model_positions_per_second",
-                "mean_passes",
-            ):
-                log_window_sums[key] += float(record[key])
-            for key, value in record.items():
-                if key.endswith("_loss") and isinstance(value, (int, float)):
-                    log_window_sums[key] += float(value)
+            record["metric_observation_counts"] = dict(
+                sorted(update_metric_counts.items())
+            )
+            if cfg.train_log_every_tokens:
+                log_window_updates += 1
+                for key in ("loss", "grad_norm", "mean_passes"):
+                    log_window_sums[key] += float(record[key])
+                    log_window_counts[key] += 1
+                for key, count in update_metric_counts.items():
+                    log_window_sums[key] += float(record[key]) * count
+                    log_window_counts[key] += count
+                log_window_elapsed_seconds += elapsed
+                log_window_tokens += int(record["optimizer_batch_tokens"])
+                log_window_positions += int(
+                    record["optimizer_batch_model_positions"]
+                )
 
             log_due = next_train_log is not None and self.state.unique_tokens_seen >= next_train_log
             final_update = self.state.unique_tokens_seen >= target_tokens
             if cfg.train_log_every_tokens == 0 or log_due or final_update:
                 if cfg.train_log_every_tokens:
-                    logged = dict(record)
-                    logged["log_interval_start_tokens"] = log_window_start
-                    logged["log_interval_tokens"] = self.state.unique_tokens_seen - log_window_start
-                    logged["log_interval_updates"] = log_window_updates
-                    for key, value in log_window_sums.items():
-                        logged[key] = value / log_window_updates
-                    record = logged
-                append_jsonl(self.metrics_path, record)
-                log_window_start = self.state.unique_tokens_seen
-                log_window_updates = 0
-                log_window_sums.clear()
+                    flush_train_log(record, partial=False)
+                else:
+                    append_jsonl(self.metrics_path, record)
                 if next_train_log is not None:
                     while next_train_log <= self.state.unique_tokens_seen:
                         next_train_log += cfg.train_log_every_tokens
@@ -812,11 +863,15 @@ class Trainer:
                     validation.get("early_stop", {}).get("all_passed", False)
                 )
                 if self._early_stop_satisfied:
+                    if cfg.train_log_every_tokens:
+                        flush_train_log(record, partial=True)
                     self._end_segment("validation_gates")
                     return self.state
                 self.model.train()
 
             if self.stop_requested():
+                if cfg.train_log_every_tokens:
+                    flush_train_log(record, partial=True)
                 if self.state.unique_tokens_seen > self._last_checkpoint_tokens:
                     self._checkpoint()
                 self._end_segment("signal")
