@@ -1,10 +1,10 @@
 # Attention vs. Recurrence in Multi-Pass Transformers
 
-**tl;dr:** Recent work such as the [full bandwidth transformer](https://arxiv.org/abs/2608.08888) and [recirculation](https://arxiv.org/abs/2608.17981) suggests that recurrently feeding intermediate representations back through a transformer gives you performance gains almost for free. In my experiment I found that replacing the recurrent mechanisms with attention over previous-pass states (I call these memories) performs better, also when that attention is sparse (and thus not always attending to recent hidden states).
+**tl;dr:** Recent work such as the [full bandwidth transformer](https://arxiv.org/abs/2608.08888) and [recirculation](https://arxiv.org/abs/2608.17981) suggests that recurrently feeding intermediate representations back through a transformer can improve performance. In this exploratory, equal-token experiment, attention over previous-pass states produced lower same-stream validation NLL than the recurrent controls. The result is not an equal-compute comparison and does not yet establish downstream capability gains.
 
 The idea behind [multi-pass training](https://github.com/PeterBjerreHansen/multi-pass-transformer-training) goes something like this: Pass 1 is an ordinary transformer pass. Pass 2 runs the same transformer again, but can use additional hidden states produced on pass 1. The question is if that information should arrive through a recurrent connection or through cross-pass attention over previous-pass states. To test this I first retrofitted [a TinyMistral model](https://huggingface.co/M4-ai/TinyMistral-248M-v3) into doing feedback inference by training it with multi-pass Jacobi-style updates. The new parameters were first wired into the frozen backbone for 5 million tokens, then the whole models were trained on 100M tokens from the [OLMo2 annealing mixture](https://huggingface.co/datasets/allenai/dolmino-mix-1124).
 
-| Model / method                                | Final validation PPL | Late PPL reduction, 50M → 100M | Total parameters | Relative training FLOPs |
+| Model / method                                | Final monitoring PPL | Late PPL reduction, 50M → 100M | Total parameters | Relative training FLOPs |
 | --------------------------------------------- | -------------------: | -----------------------------: | ---------------: | ----------------------: |
 | SWA Transformer baseline                          |                7.778 |                  0.110 (1.40%) |         248.024M |                 1.0000x |
 | Strided Attention control                            |                7.811 |                  0.121 (1.52%) |         248.024M |                 1.0004x |
@@ -17,13 +17,13 @@ The idea behind [multi-pass training](https://github.com/PeterBjerreHansen/multi
 
 I think there are three notable patterns in these results:
 
-1. The attention-based mechanisms outperform the recurrent mechanisms almost uniformly. Since replacing recurrent connections with attention has a solid track record, I'd wager this trick would work at scale as well.
+1. Within this protocol, the attention-based mechanisms have lower monitoring PPL than the recurrent mechanisms almost uniformly. Whether that transfers to other scales or downstream generation remains an open question.
 
 2. The sparse attention to far-away memories outperformed models with only the recurrent connections to memories. To me this result slightly favours the notion that the performance gains reported in the FBT and recirculation papers stem from **mere greater effective depth** rather than **unlocking recurrent computation patterns**.
 
 3. The recurrent/attention hybrid performs on par with the short-range dense attention only model, and so Strided Memory Attention could provide a valuable "slow" (long-range) memory for multi-pass models with only the "fast" (short-term) recurrent pattern. However, supplying the short-range dense attention only model with strided long-range attention improves performance even further at a smaller compute budget, and so the attention only variant looks superior.
 
-The experiment is riddled with confounders such as differing compute budgets, parameter count, and starting-point inequality (some mechanisms are more easily slotted into a pretrained model, and the SWA Transformer backbone had no pre-run adaptation). Moreover, I simply do not have the computational resources to provide the exhaustive sweeps and ablations one needs to make convincing optimality arguments. However, I do think the results point towards potential improvements to the existing architectures.
+The experiment has important confounders: differing compute budgets, parameter counts, and starting points (some mechanisms are more easily slotted into a pretrained model, and the SWA Transformer backbone had no pre-run adaptation). The staged validation artifact also overlaps earlier wiring training data, so its PPL is a convergence and same-stream diagnostic rather than independent held-out evidence. Exhaustive sweeps and ablations would be required for optimality claims. The present results should therefore be read as architecture-screening evidence and hypotheses for independently evaluated follow-up work.
 
 > 🔴 **FBT is omitted from the common-protocol comparison for now since it requires some architecture-specific initialization and pretraining adjustments. It performs poorly when wired and/or trained with the common protocol, but it might do better in a comparison with architecture-specific optimisation.**
 

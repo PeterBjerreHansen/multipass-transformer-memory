@@ -1,6 +1,20 @@
 name: stage_6_long_continuation
 status: locked
-question: Does a long high-plasticity continuation of the canonical 21B-token TinyMistral-v3 Dense SWA Memory Attention wiring checkpoint improve capability on held-out DOLMino data without harming general performance?
+question: Does a long high-plasticity continuation improve independently evaluated capability relative to a token-matched vanilla continuation without unacceptable forgetting?
 arms:
   - {id: dense_swa_memory_attention_plastic_2p5b, config: dense_swa_memory_attention_plastic_2p5b.yaml}
-comparisons: []
+  - {id: vanilla_2p5b, config: vanilla_2p5b.yaml}
+comparisons:
+  - name: dense_memory_attention_vs_vanilla
+    arms: [dense_swa_memory_attention_plastic_2p5b, vanilla_2p5b]
+    experimental_axes:
+      - variant
+      - memory_write_mode
+      - memory_layers
+      - memory_position_encoding
+      - pass_schedule
+      - ntp_pass_loss_weights_by_k
+    allowed_differences:
+      - added_learning_rate
+      - eval_passes
+      - init_from

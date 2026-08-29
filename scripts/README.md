@@ -14,6 +14,7 @@ compare_to_hf_layers.py
 compare_to_hf_inputs_embeds.py
 prepare_data.py
 verify_data.py
+verify_data_disjointness.py
 verify_study.py
 smoke_mps.py
 ```
@@ -46,6 +47,7 @@ evaluate_lm_harness.py
 evaluate_pass_depth.py
 evaluate_memory_interventions.py
 evaluate_recurrent_inference.py
+evaluate_parameter_drift.py
 generate.py
 ```
 
@@ -79,9 +81,20 @@ Training/evaluation loaders automatically wrap ordinary packed artifacts with
 data remain ordinary linguistic IDs; the view inserts input-only control ID V at
 load time.
 
-`evaluate_nll.py` reports pass-1 NLL by default; use `--passes K` to make the
-pass depth explicit for a multipass model. Pass-depth, memory interventions,
-and recurrent-inference scripts are reusable checkpoint diagnostics.
+Evaluation commands require either `--checkpoint` or the explicit
+`--initialized-baseline` time-zero mode. `evaluate_nll.py` requires one pass
+depth. `evaluate_pass_depth.py` reports exact full-sequence K=1 through K=8 by
+default. Both accept an independent `--evaluation-data-dir`.
+
+`evaluate_lm_harness.py` requires prompt `--prefill-passes K` and an independent
+`--decode-mode standard|feedback`. Candidate suites retain answer scores and
+margins; generation suites retain generated samples. `evaluate_parameter_drift.py`
+separates backbone and added-module movement from an architecture-compatible
+reference. `verify_data_disjointness.py` rejects shared complete tokenized
+documents between the evaluation split and each training/wiring artifact.
+
+Pass-depth, memory interventions, and exact-vs-feedback continuation scripts
+are reusable checkpoint diagnostics.
 `evaluate_memory_interventions.py` measures one feedback transition and can
 independently intervene on the active Recirculation–Memory Attention hybrid's
 recurrent source and slow memory source. It requires at least two validation blocks for a

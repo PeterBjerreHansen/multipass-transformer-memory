@@ -10,4 +10,38 @@ arms:
   - {id: hybrid_recirculation_100m, config: hybrid_recirculation_100m.yaml}
   - {id: bank_multiscale_100m, config: bank_multiscale_100m.yaml}
   - {id: sparse_swa_100m, config: sparse_swa_100m.yaml}
-comparisons: []
+comparisons:
+  - name: eight_architecture_common_protocol
+    arms:
+      - vanilla_100m
+      - recirculation_adaptive_100m
+      - bank_dense_100m
+      - bank_periodic32_100m
+      - bank_memory_token32_100m
+      - hybrid_recirculation_100m
+      - bank_multiscale_100m
+      - sparse_swa_100m
+    experimental_axes:
+      - variant
+      - memory_window
+      - memory_write_mode
+      - memory_write_stride
+      - memory_token_visibility
+      - memory_layers
+      - memory_position_encoding
+      - memory_dense_window
+      - memory_sparse_window
+      - memory_sparse_stride
+      - sparse_attention_stride
+      - sparse_attention_window
+      - sparse_attention_layers
+      - recirculation_source_layer
+      - recirculation_destination_layer
+      - recirculation_mode
+      - pass_schedule
+      - ntp_pass_loss_weights_by_k
+    allowed_differences:
+      - added_learning_rate
+      - eval_passes
+      - init_from
+      - weight_decay

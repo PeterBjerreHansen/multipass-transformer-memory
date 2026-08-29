@@ -4,6 +4,10 @@ This study tests whether a substantially more plastic backbone update can
 produce capability movement when the Dense SWA Memory Attention model is given
 billions, rather than millions, of continuation tokens.
 
+The post-launch corrections and the final interpretation boundary are recorded
+in `PROTOCOL_AMENDMENT_2026-08-30.md`. In particular, the training artifact's
+validation split is a monitoring stream, not independently held-out evidence.
+
 The base model remains the pinned final `M4-ai/TinyMistral-248M-v3` checkpoint
 (about 21B upstream training tokens). The earlier ~17B upstream checkpoint was
 screened as a possible higher-headroom start, but is intentionally not part of
@@ -19,8 +23,8 @@ this study so that the existing 100M comparison remains interpretable.
   scheduler trajectory.
 - **Data:** `data/dolmino/gpu_2048_long_2p5b`, prepared from the pinned DOLMino
   revision with the same 5,242,880-token wiring offset. The artifact contains
-  2,499,999,744 continuation tokens and the shared 2,000,896-token validation
-  split. Materialize it before launching the arm:
+  2,499,999,744 continuation tokens and a 2,000,896-token monitoring split.
+  Materialize it before launching the arms:
 
   ```bash
   uv run python scripts/prepare_data.py \
@@ -42,10 +46,9 @@ this study so that the existing 100M comparison remains interpretable.
   warmup, and a final multiplier of `0.1`. There is no scientific early-stop
   gate; monitoring is observational, with only numerical failure treated as a
   reason to interrupt the run.
-  The backbone rate is the selected Dense rate from the completed local LR
-  sweep; that sweep held the added-module rate at `3e-5`, which remains fixed
-  here so the long run changes only the continuation horizon and backbone
-  plasticity.
+  The backbone rate is a heuristic selected by the completed local diagnostic
+  sweep; that sweep held the added-module rate at `3e-5`. It does not establish
+  an architecture-wide optimal LR.
 - **Paired vanilla control:** `vanilla_2p5b.yaml` uses the same data artifact,
   seeds, 2.5B-token cosine horizon, warmup, and backbone LR, but removes the
   memory module and uses one pass. It has its own output directory and volume
@@ -102,6 +105,9 @@ uv run python scripts/cloud_preflight.py \
 uv run python scripts/run_study.py \
   --study-dir benchmarks/core/stage_6_long_continuation \
   --arm dense_swa_memory_attention_plastic_2p5b
+uv run python scripts/run_study.py \
+  --study-dir benchmarks/core/stage_6_long_continuation \
+  --arm vanilla_2p5b
 ```
 
 `cloud_preflight.py` deliberately refuses a dirty checkout unless
@@ -113,7 +119,7 @@ the first launch: the wiring check is part of the startup contract.
 ## Monitoring and evaluation
 
 The trainer records an aggregated training journal every 4,194,304 tokens and
-four-pass source validation every 8,388,608 tokens. It keeps two durable
+four-pass source monitoring NLL every 8,388,608 tokens. It keeps two durable
 checkpoint generations, saving at most every 16,777,216 tokens or 15 minutes.
 The explicit milestone snapshots are:
 
@@ -125,10 +131,33 @@ The explicit milestone snapshots are:
 | 2,000,001,024 | Late-run capability trajectory |
 | 2,499,999,744 | Final endpoint |
 
-At each milestone, evaluate the same validation artifact and run the complete
-five-shot suite in `evaluation/suites/full.yaml`. Use both ordinary task scores
-and paired answer log-likelihood margins. Also record source-stratified NLL,
-pass-1 versus later-pass NLL, and parameter drift from the wiring checkpoint.
+At each milestone, run exact full-sequence NLL at K=1 through K=8 on a separate
+evaluation artifact that has passed the disjointness check. Then run the
+candidate-ranking suite in `evaluation/suites/full.yaml` and the free-generation
+suite in `evaluation/suites/generation_math.yaml`. Retain candidate margins and
+sample-level records. Also record parameter drift from the wiring checkpoint.
+
+K describes prompt prefill only in continuation evaluations. For the memory
+model, generated or observed continuation tokens advance the live feedback
+mechanism once per token. Standard decoding is a separate ablation. The vanilla
+arm uses K=1 and standard decoding.
+
+Materialize and gate the Stage-6 evaluation artifact before retaining results:
+
+```bash
+uv run python scripts/prepare_data.py \
+  --config data/dolmino/stage_6_evaluation_2048/config.yaml
+uv run python scripts/verify_data_disjointness.py \
+  --reference data/dolmino/stage_6_evaluation_2048:validation \
+  --against data/dolmino/wiring_2048:train \
+  --against data/dolmino/gpu_2048_long_2p5b:train \
+  --output <evaluation-dir>/disjointness.json
+```
+
+Before the first milestone, run the same suites with
+`--initialized-baseline` instead of `--checkpoint` for both arms. This is the
+explicit time-zero reference; an omitted checkpoint is never interpreted
+implicitly.
 
 For a safetensors milestone snapshot, the full-suite command is:
 
@@ -137,9 +166,38 @@ uv run python scripts/evaluate_lm_harness.py \
   --config benchmarks/core/stage_6_long_continuation/dense_swa_memory_attention_plastic_2p5b.yaml \
   --checkpoint <milestone>.safetensors \
   --suite evaluation/suites/full.yaml \
+  --prefill-passes 2 \
+  --decode-mode feedback \
   --device cuda \
   --output <milestone>-full.json
+
+uv run python scripts/evaluate_lm_harness.py \
+  --config benchmarks/core/stage_6_long_continuation/dense_swa_memory_attention_plastic_2p5b.yaml \
+  --checkpoint <milestone>.safetensors \
+  --suite evaluation/suites/generation_math.yaml \
+  --prefill-passes 2 \
+  --decode-mode feedback \
+  --device cuda \
+  --output <milestone>-generation-math.json
+
+uv run python scripts/evaluate_pass_depth.py \
+  --config benchmarks/core/stage_6_long_continuation/dense_swa_memory_attention_plastic_2p5b.yaml \
+  --checkpoint <milestone>.safetensors \
+  --evaluation-data-dir data/dolmino/stage_6_evaluation_2048 \
+  --passes 8 \
+  --output <milestone>-pass-depth.json
+
+uv run python scripts/evaluate_parameter_drift.py \
+  --config benchmarks/core/stage_6_long_continuation/dense_swa_memory_attention_plastic_2p5b.yaml \
+  --reference benchmarks/development/stage_1_wiring/results/bank_dense_wiring_5m/checkpoints/checkpoint_000005242880.pt \
+  --checkpoint <milestone>.safetensors \
+  --output <milestone>-parameter-drift.json
 ```
+
+Run the paired vanilla snapshots with the same suites and seeds, changing the
+config/checkpoint and using `--prefill-passes 1 --decode-mode standard`. Its
+independent validation command is `evaluate_nll.py --passes 1`; pass-depth
+convergence beyond K=1 is not defined for vanilla.
 
 The fixed Stage-5 references are:
 
@@ -148,10 +206,14 @@ The fixed Stage-5 references are:
 - SWA Transformer 100M:
   `benchmarks/core/stage_5_cloud_100m/results/vanilla_100m/snapshots/model_000100007936.safetensors`
 
-The 100M comparison answers whether the aggressive LR changes the short-run
-trajectory. The later milestones answer the substantive question: whether a
-long fresh-data continuation produces capability gains, a plateau, or
+The earlier Stage-5 task JSON files predate the evidence-preserving evaluator
+and are historical only; rerun the referenced snapshots before comparing
+capability. The 100M rerun asks whether the aggressive LR changes the short-run
+trajectory. Later milestones test for capability gains, a plateau, or
 distribution adaptation accompanied by forgetting.
+
+The arms match linguistic-token dose, not compute. Report measured FLOPs or
+wall-clock/throughput alongside all cross-arm results.
 
 If a later conservative branch is required, it must initialize from the same
 5M wiring checkpoint and use the same data artifact, milestones, and schedule,

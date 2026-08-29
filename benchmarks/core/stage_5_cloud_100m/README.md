@@ -23,3 +23,10 @@ All eight arms are complete. The two attention-control arms used the same
 staged Phase-B slice and optimizer batch as the original six arms. Their full
 artifacts were transferred and checksum-verified into `results/<arm>/` before
 the cloud compute instance was shut down and deleted.
+
+`STUDY.yaml` now activates the comparison verifier. Architecture, memory route,
+and pass schedule are declared experimental axes. Architecture-specific wiring
+paths, added-module LR applicability, validation depth, and the inherited
+adaptive-Recirculation weight-decay setting are explicit allowed differences.
+The last item means this was not a perfectly common optimization protocol and
+must remain visible in interpretation.
