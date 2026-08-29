@@ -2,45 +2,52 @@
 from __future__ import annotations
 
 import argparse
-import json
+from dataclasses import asdict
 
 from tiny_mistral.device import resolve_device
 from tiny_mistral_mptt.config import load_experiment_config
-from tiny_mistral_mptt.data.manifest import file_sha256
 from tiny_mistral_mptt.data.packed_dataset import load_packed_dataset_for_experiment
 from tiny_mistral_mptt.evaluation.nll import evaluate_nll
+from tiny_mistral_mptt.evaluation.provenance import (
+    add_checkpoint_arguments,
+    evaluation_provenance,
+    load_evaluation_weights,
+    render_or_write_json,
+    seed_evaluation,
+)
 from tiny_mistral_mptt.model_factory import load_variant_from_config
-from tiny_mistral_mptt.training.checkpoint import load_checkpoint_for_evaluation
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Evaluate exact full-sequence validation NLL at one pass depth."
+    )
     parser.add_argument("--config", required=True)
-    parser.add_argument(
-        "--checkpoint",
-        default=None,
-        help="experiment checkpoint generation; omit to evaluate initialized weights",
-    )
-    parser.add_argument(
-        "--passes",
-        type=int,
-        default=1,
-        help="pass depth for multipass NLL; defaults to the explicit pass-1 metric",
-    )
+    add_checkpoint_arguments(parser)
+    parser.add_argument("--evaluation-data-dir", default=None)
+    parser.add_argument("--passes", type=int, required=True)
     parser.add_argument("--max-blocks", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=1234)
+    parser.add_argument("--output", default=None)
     args = parser.parse_args()
+
+    seed_evaluation(args.seed)
     cfg = load_experiment_config(args.config)
     device = resolve_device(cfg.device)
     model = load_variant_from_config(cfg, device=device)
-    if args.checkpoint:
-        expected = file_sha256(f"{cfg.data_dir}/manifest.json")
-        load_checkpoint_for_evaluation(
-            args.checkpoint,
-            model=model,
-            expected_manifest_sha256=expected,
-            expected_experiment_config=cfg.to_dict(),
-        )
-    dataset = load_packed_dataset_for_experiment(cfg.data_dir, "validation", memory_write_mode=cfg.memory_write_mode, memory_write_stride=cfg.memory_write_stride)
+    weights = load_evaluation_weights(
+        model=model,
+        config=cfg,
+        checkpoint=args.checkpoint,
+        initialized_baseline=args.initialized_baseline,
+    )
+    evaluation_data_dir = args.evaluation_data_dir or cfg.data_dir
+    dataset = load_packed_dataset_for_experiment(
+        evaluation_data_dir,
+        "validation",
+        memory_write_mode=cfg.memory_write_mode,
+        memory_write_stride=cfg.memory_write_stride,
+    )
     result = evaluate_nll(
         model,
         dataset,
@@ -48,7 +55,24 @@ def main() -> None:
         passes=args.passes,
         max_blocks=args.max_blocks,
     )
-    print(json.dumps(result.__dict__, indent=2, sort_keys=True))
+    document = {
+        "evaluation_kind": "full_sequence_validation_nll",
+        "semantics": {
+            "passes": args.passes,
+            "teacher_forced": True,
+            "generation": False,
+        },
+        "provenance": evaluation_provenance(
+            config_path=args.config,
+            config=cfg,
+            weight_identity=weights,
+            device=device,
+            seeds={"torch": args.seed},
+            evaluation_data_dir=evaluation_data_dir,
+        ),
+        "result": asdict(result),
+    }
+    print(render_or_write_json(document, args.output))
 
 
 if __name__ == "__main__":

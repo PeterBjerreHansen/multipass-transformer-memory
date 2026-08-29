@@ -2,17 +2,21 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 
 import torch
 
 from tiny_mistral.device import resolve_device
 from tiny_mistral_mptt.config import canonical_variant_name, load_experiment_config
-from tiny_mistral_mptt.data.manifest import file_sha256
 from tiny_mistral_mptt.data.packed_dataset import load_packed_dataset_for_experiment
+from tiny_mistral_mptt.evaluation.provenance import (
+    add_checkpoint_arguments,
+    evaluation_provenance,
+    load_evaluation_weights,
+    render_or_write_json,
+    seed_evaluation,
+)
 from tiny_mistral_mptt.model_factory import load_variant_from_config
-from tiny_mistral_mptt.training.checkpoint import load_checkpoint_for_evaluation
 from tiny_mistral_mptt.feedback import HybridPassSource
 from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
 from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
@@ -111,10 +115,14 @@ def main() -> None:
         )
     )
     parser.add_argument("--config", required=True)
-    parser.add_argument("--checkpoint", required=True)
+    add_checkpoint_arguments(parser)
+    parser.add_argument("--evaluation-data-dir", default=None)
     parser.add_argument("--max-blocks", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=1234)
+    parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
+    seed_evaluation(args.seed)
     cfg = load_experiment_config(args.config)
     if canonical_variant_name(cfg.variant) not in SUPPORTED:
         raise SystemExit(
@@ -134,16 +142,21 @@ def main() -> None:
     ):
         raise SystemExit("loaded model does not support memory interventions")
 
-    expected = file_sha256(f"{cfg.data_dir}/manifest.json")
-    load_checkpoint_for_evaluation(
-        args.checkpoint,
+    weights = load_evaluation_weights(
         model=model,
-        expected_manifest_sha256=expected,
-        expected_experiment_config=cfg.to_dict(),
+        config=cfg,
+        checkpoint=args.checkpoint,
+        initialized_baseline=args.initialized_baseline,
     )
     model.eval()
 
-    dataset = load_packed_dataset_for_experiment(cfg.data_dir, "validation", memory_write_mode=cfg.memory_write_mode, memory_write_stride=cfg.memory_write_stride)
+    evaluation_data_dir = args.evaluation_data_dir or cfg.data_dir
+    dataset = load_packed_dataset_for_experiment(
+        evaluation_data_dir,
+        "validation",
+        memory_write_mode=cfg.memory_write_mode,
+        memory_write_stride=cfg.memory_write_stride,
+    )
     blocks = len(dataset) if args.max_blocks is None else min(len(dataset), args.max_blocks)
     if blocks <= 0:
         raise SystemExit("no validation blocks selected")
@@ -227,7 +240,19 @@ def main() -> None:
             ),
         }
 
-    print(json.dumps(result, indent=2, sort_keys=True))
+    document = {
+        "evaluation_kind": "single_feedback_transition_interventions",
+        "provenance": evaluation_provenance(
+            config_path=args.config,
+            config=cfg,
+            weight_identity=weights,
+            device=device,
+            seeds={"torch": args.seed},
+            evaluation_data_dir=evaluation_data_dir,
+        ),
+        "result": result,
+    }
+    print(render_or_write_json(document, args.output))
 
 
 if __name__ == "__main__":

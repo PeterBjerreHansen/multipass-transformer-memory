@@ -48,12 +48,14 @@ verify-data:
 
 evaluate-nll:
 	uv run python scripts/evaluate_nll.py \
-		--config benchmarks/controls/substrate/mac.yaml
+		--config benchmarks/controls/substrate/mac.yaml \
+		--initialized-baseline --passes 1
 
 evaluate-quick:
 	uv run python scripts/evaluate_lm_harness.py \
 		--config benchmarks/controls/substrate/mac.yaml \
-		--suite evaluation/suites/quick.yaml --limit 100
+		--suite evaluation/suites/quick.yaml --limit 100 \
+		--initialized-baseline --prefill-passes 1 --decode-mode standard
 
 substrate-gates: check verify hf-check hf-layers hf-embeds mps-smoke
 

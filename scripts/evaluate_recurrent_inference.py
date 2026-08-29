@@ -3,34 +3,32 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
-import json
-from pathlib import Path
 
 from tiny_mistral.device import resolve_device
-from tiny_mistral_mptt.config import canonical_variant_name, load_experiment_config
-from tiny_mistral_mptt.data.manifest import file_sha256
+from tiny_mistral_mptt.config import load_experiment_config
 from tiny_mistral_mptt.data.packed_dataset import load_packed_dataset_for_experiment
+from tiny_mistral_mptt.evaluation.provenance import (
+    add_checkpoint_arguments,
+    evaluation_provenance,
+    load_evaluation_weights,
+    render_or_write_json,
+    seed_evaluation,
+)
 from tiny_mistral_mptt.evaluation.recurrent import evaluate_recurrent_continuation
 from tiny_mistral_mptt.model_factory import load_variant_from_config
-from tiny_mistral_mptt.training.checkpoint import load_checkpoint_for_evaluation
-from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
-from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
-from tiny_mistral_mptt.variants.bank import MemoryAttentionVariant
-from tiny_mistral_mptt.variants.bank_add_hybrid import MemoryAttentionAddHybridVariant
-from tiny_mistral_mptt.variants.bank_recirculation_hybrid import (
-    RecirculationStridedMemoryAttentionVariant,
-)
+from tiny_mistral_mptt.variants.multipass import MultiPassVariant
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Teacher-force held-out continuations and compare exact cached "
+            "Teacher-force evaluation continuations and compare exact cached "
             "K-pass inference against collapsed one-stream recurrence."
         )
     )
     parser.add_argument("--config", required=True)
-    parser.add_argument("--checkpoint", required=True)
+    add_checkpoint_arguments(parser)
+    parser.add_argument("--evaluation-data-dir", default=None)
     parser.add_argument(
         "--prefill-passes",
         type=int,
@@ -49,45 +47,34 @@ def main() -> None:
         help="optional cumulative continuation horizons; default powers of two",
     )
     parser.add_argument("--output", default=None, help="optional JSON output path")
+    parser.add_argument("--seed", type=int, default=1234)
     args = parser.parse_args()
 
     if any(passes < 1 for passes in args.prefill_passes):
         raise SystemExit("--prefill-passes values must be positive")
 
+    seed_evaluation(args.seed)
     cfg = load_experiment_config(args.config)
-    if canonical_variant_name(cfg.variant) not in {
-        "memory_add",
-        "recirculation",
-        "bank",
-        "bank_multiscale",
-        "bank_add_hybrid",
-        "bank_recirculation_hybrid",
-    }:
-        raise SystemExit("evaluate_recurrent_inference requires a cached recurrent variant")
     device = resolve_device(cfg.device)
     model = load_variant_from_config(cfg, device=device)
-    if not isinstance(
-        model,
-        (
-            MemoryAddVariant,
-            RecirculationVariant,
-            MemoryAttentionVariant,
-            MemoryAttentionAddHybridVariant,
-            RecirculationStridedMemoryAttentionVariant,
-        ),
-    ):
+    if not isinstance(model, MultiPassVariant) or not model.supports_cached_feedback:
         raise SystemExit("loaded variant does not implement recurrent memory inference")
 
-    expected = file_sha256(f"{cfg.data_dir}/manifest.json")
-    load_checkpoint_for_evaluation(
-        args.checkpoint,
+    weights = load_evaluation_weights(
         model=model,
-        expected_manifest_sha256=expected,
-        expected_experiment_config=cfg.to_dict(),
+        config=cfg,
+        checkpoint=args.checkpoint,
+        initialized_baseline=args.initialized_baseline,
     )
     model.eval()
 
-    dataset = load_packed_dataset_for_experiment(cfg.data_dir, "validation", memory_write_mode=cfg.memory_write_mode, memory_write_stride=cfg.memory_write_stride)
+    evaluation_data_dir = args.evaluation_data_dir or cfg.data_dir
+    dataset = load_packed_dataset_for_experiment(
+        evaluation_data_dir,
+        "validation",
+        memory_write_mode=cfg.memory_write_mode,
+        memory_write_stride=cfg.memory_write_stride,
+    )
     results = []
     for passes in args.prefill_passes:
         result = evaluate_recurrent_continuation(
@@ -103,16 +90,20 @@ def main() -> None:
         results.append(asdict(result))
 
     document = {
+        "evaluation_kind": "exact_vs_feedback_continuation_diagnostic",
         "variant": cfg.variant,
-        "checkpoint": str(args.checkpoint),
         "prefill_passes": list(args.prefill_passes),
+        "provenance": evaluation_provenance(
+            config_path=args.config,
+            config=cfg,
+            weight_identity=weights,
+            device=device,
+            seeds={"torch": args.seed},
+            evaluation_data_dir=evaluation_data_dir,
+        ),
         "results": results,
     }
-    rendered = json.dumps(document, indent=2, sort_keys=True)
-    if args.output:
-        path = Path(args.output)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(rendered + "\n", encoding="utf-8")
+    rendered = render_or_write_json(document, args.output)
     print(rendered)
 
 

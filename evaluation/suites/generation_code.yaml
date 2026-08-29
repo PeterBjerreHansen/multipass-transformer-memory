@@ -1,0 +1,6 @@
+# Generated programs may be executed by lm-eval. Run only in an isolated
+# environment and pass --confirm-run-unsafe-code deliberately.
+kind: generation
+tasks:
+  - {name: humaneval, num_fewshot: 0}
+  - {name: mbpp, num_fewshot: 3}

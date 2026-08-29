@@ -1,4 +1,5 @@
-# Mirrors the main 5-shot base-model task set reported by Full-Bandwidth Transformer.
+# Candidate answers are ranked by conditional log-likelihood. This is not free generation.
+kind: candidate_loglikelihood
 tasks:
   - {name: rte, num_fewshot: 5}
   - {name: truthfulqa_mc2, num_fewshot: 5}
