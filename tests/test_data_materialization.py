@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 
 from tiny_mistral_mptt.data.manifest import DataManifest
+from tiny_mistral_mptt.data.disjointness import compare_document_disjointness
 from tiny_mistral_mptt.data.packed_dataset import PackedTokenDataset
 from tiny_mistral_mptt.data.prepare import PreparationRequest, materialize_from_document_iterators
 from tiny_mistral_mptt.data.recipes import DOLMINO_50B_SOURCES, allocate_blocks
@@ -18,7 +19,12 @@ def fake_tokenize(text: str) -> list[int]:
     return [3 + (ord(char) % 60) for char in text]
 
 
-def materialize(root: Path, *, train_skip_tokens: int = 0):
+def materialize(
+    root: Path,
+    *,
+    train_skip_tokens: int = 0,
+    validation_skip_tokens: int = 0,
+):
     request = PreparationRequest(
         output_dir=root,
         sequence_length=16,
@@ -33,6 +39,7 @@ def materialize(root: Path, *, train_skip_tokens: int = 0):
         vocab_size=97,
         bos_token_id=1,
         train_skip_tokens=train_skip_tokens,
+        validation_skip_tokens=validation_skip_tokens,
     )
     return materialize_from_document_iterators(
         request,
@@ -74,6 +81,41 @@ def test_training_skip_preserves_validation_and_advances_training_stream(tmp_pat
     assert skipped.train.data_sha256 != base.train.data_sha256
 
 
+def test_validation_skip_advances_the_evaluation_stream(tmp_path):
+    base = materialize(tmp_path / "base-validation")
+    skipped = materialize(
+        tmp_path / "skipped-validation",
+        validation_skip_tokens=16 * 60,
+    )
+
+    assert skipped.validation_skip_tokens == 16 * 60
+    assert skipped.validation.data_sha256 != base.validation.data_sha256
+
+
+def test_document_disjointness_detects_shared_validation_and_clean_train(tmp_path):
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    materialize(first_root)
+    materialize(second_root)
+
+    shared = compare_document_disjointness(
+        reference_dir=first_root,
+        reference_split="validation",
+        against_dir=second_root,
+        against_split="validation",
+    )
+    assert shared["disjoint"] is False
+    assert shared["shared_unique_document_hashes"] > 0
+
+    clean = compare_document_disjointness(
+        reference_dir=first_root,
+        reference_split="validation",
+        against_dir=first_root,
+        against_split="train",
+    )
+    assert clean["disjoint"] is True
+
+
 def test_verify_artifact_detects_mutation(tmp_path):
     from tiny_mistral_mptt.data.manifest import verify_artifact
     import pytest
@@ -100,5 +142,5 @@ def test_verify_artifact_rejects_invalid_training_offset(tmp_path):
     raw["train_skip_tokens"] = 1
     manifest_path.write_text(json.dumps(raw), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="training-stream offset"):
+    with pytest.raises(ValueError, match="split-stream offset"):
         verify_artifact(root)

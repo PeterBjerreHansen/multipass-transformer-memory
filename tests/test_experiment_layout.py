@@ -263,6 +263,24 @@ def test_gpu_substrate_preserves_validated_2048_token_optimizer_batch():
     assert data.train_skip_tokens == 0
 
 
+def test_stage6_evaluation_stream_starts_after_the_long_training_range():
+    long_run = load_data_config(
+        ROOT / "data" / "dolmino" / "gpu_2048_long_2p5b" / "config.yaml"
+    )
+    evaluation = load_data_config(
+        ROOT / "data" / "dolmino" / "stage_6_evaluation_2048" / "config.yaml"
+    )
+    assert evaluation.validation_skip_tokens == (
+        long_run.validation_tokens
+        + long_run.train_skip_tokens
+        + long_run.train_tokens
+    )
+    assert evaluation.seed == long_run.seed
+    assert evaluation.dataset_repo == long_run.dataset_repo
+    assert evaluation.revision == long_run.revision
+    assert evaluation.shuffle_buffer == long_run.shuffle_buffer
+
+
 def test_ci_runs_canonical_check_gate():
     workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
     assert "- run: make check" in workflow

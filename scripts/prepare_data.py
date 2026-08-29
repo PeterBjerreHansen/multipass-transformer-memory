@@ -23,6 +23,7 @@ def main() -> None:
         sequence_length=cfg.sequence_length,
         train_tokens=cfg.train_tokens,
         validation_tokens=cfg.validation_tokens,
+        validation_skip_tokens=cfg.validation_skip_tokens,
         train_skip_tokens=cfg.train_skip_tokens,
         seed=cfg.seed,
         dataset_repo=cfg.dataset_repo,

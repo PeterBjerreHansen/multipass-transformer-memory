@@ -15,6 +15,7 @@ class DataPreparationConfig:
     sequence_length: int = 2048
     train_tokens: int = 5_242_880
     validation_tokens: int = 524_288
+    validation_skip_tokens: int = 0
     train_skip_tokens: int = 0
     seed: int = 1337
     dataset_repo: str = DOLMINO_REPO_ID
@@ -26,11 +27,12 @@ class DataPreparationConfig:
             raise ValueError("sequence_length must be at least 2")
         if self.train_tokens <= 0 or self.validation_tokens <= 0:
             raise ValueError("token budgets must be positive")
-        if self.train_skip_tokens < 0:
-            raise ValueError("train_skip_tokens must be non-negative")
+        if self.validation_skip_tokens < 0 or self.train_skip_tokens < 0:
+            raise ValueError("split skip tokens must be non-negative")
         if (
             self.train_tokens % self.sequence_length
             or self.validation_tokens % self.sequence_length
+            or self.validation_skip_tokens % self.sequence_length
             or self.train_skip_tokens % self.sequence_length
         ):
             raise ValueError("token budgets must be exact multiples of sequence_length")

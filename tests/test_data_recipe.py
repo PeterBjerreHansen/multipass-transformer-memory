@@ -42,6 +42,7 @@ def test_default_preparation_config_uses_active_2048_context():
     assert cfg.sequence_length == 2048
     assert cfg.train_tokens == 5_242_880
     assert cfg.validation_tokens == 524_288
+    assert cfg.validation_skip_tokens == 0
     assert cfg.train_skip_tokens == 0
     assert cfg.shuffle_buffer == 25_000
     cfg.validate()

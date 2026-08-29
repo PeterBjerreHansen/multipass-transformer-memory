@@ -12,6 +12,8 @@ data/dolmino/wiring_2048/config.yaml
 data/dolmino/pilot_2048/config.yaml
 data/dolmino/gpu_2048/config.yaml
 data/dolmino/gpu_2048_staged/config.yaml
+data/dolmino/gpu_2048_long_2p5b/config.yaml
+data/dolmino/stage_6_evaluation_2048/config.yaml
 ```
 
 Generated binaries and manifests remain local/ignored.
@@ -23,9 +25,14 @@ shuffled streaming iterator; the final partially used validation document is
 discarded. Training then continues from the next document. Thus train and
 validation are source-document-disjoint **within one materialized artifact**.
 An optional `train_skip_tokens` consumes and discards complete source-balanced
-blocks after validation and before the stored training split. This makes
-purpose-specific artifacts non-overlapping while keeping their shared
-validation bytes identical.
+blocks after validation and before the stored training split. When related
+recipes use identical validation budgets, this can place purpose-specific
+training artifacts on successive source ranges while preserving shared
+validation bytes.
+
+An optional `validation_skip_tokens` advances each source before constructing
+validation. The Stage-6 evaluation recipe uses it to move evaluation beyond the
+complete long-run source range without writing discarded skip blocks to disk.
 
 Documents are tokenized with the pinned TinyMistral tokenizer, with BOS used as
 an explicit document separator. Packed blocks are fixed-length and unpadded.
@@ -43,8 +50,7 @@ artifact/
 
 The binary token IDs are ordinary vocabulary IDs only. The manifest records the
 vocabulary size, source allocation, tokenizer hash, requested/resolved dataset
-revision, recipe, shuffle settings, seed, training-stream offset, and file
-hashes.
+revision, recipe, shuffle settings, seed, split-stream offsets, and file hashes.
 
 ## Memory-token data view
 
@@ -81,5 +87,11 @@ share the same held-out validation split; the pilot recipe skips the complete
 `gpu_2048` artifact supports ordinary serious runs. The `gpu_2048_staged`
 recipe stores non-overlapping wiring and Phase-B slices with a shared validation
 set for initialized controls. A run may reshuffle and repeat its assigned slice
-when its budget exceeds the stored token count. Evaluation remains
-source-document-disjoint from training in every artifact.
+when its budget exceeds the stored token count.
+
+That within-artifact property does not prove disjointness across separately
+materialized artifacts: changing the validation budget changes every later
+source offset. Final evaluation artifacts must be checked against all relevant
+wiring and training artifacts with `scripts/verify_data_disjointness.py`. The
+Stage-5 and Stage-6 training validation streams overlap earlier wiring training
+and are monitoring-only.

@@ -1,0 +1,13 @@
+output_dir: data/dolmino/stage_6_evaluation_2048
+model_dir: checkpoints/TinyMistral-248M-v3
+sequence_length: 2048
+train_tokens: 524288
+validation_tokens: 2000896
+# Skip the long artifact's validation, wiring offset, and entire 2.5B train
+# range before taking the independent validation stream.
+validation_skip_tokens: 2507243520
+train_skip_tokens: 0
+seed: 1337
+dataset_repo: allenai/dolmino-mix-1124
+revision: 1c2f43706986135c6799d9917e0d06ecef7fb1bb
+shuffle_buffer: 25000

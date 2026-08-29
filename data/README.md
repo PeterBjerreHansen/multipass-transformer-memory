@@ -16,5 +16,8 @@ materialized dataset files are ignored.
   recipe for the Stage-6 long plastic study; it preserves the 5M wiring offset
   and the shared validation construction while extending the training stream
   beyond the Stage-5 100M artifact.
+- `dolmino/stage_6_evaluation_2048/config.yaml`: an independent Stage-6
+  evaluation stream placed after the complete long-run source range. Its
+  materialized validation split must still pass the document-disjointness gate.
 Use `scripts/prepare_data.py` and `scripts/verify_data.py` rather than editing a
 generated artifact in place.

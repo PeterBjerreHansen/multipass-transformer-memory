@@ -32,6 +32,7 @@ class PreparationRequest:
     recipe_name: str = "dolmino_50b"
     shuffle_buffer: int | None = None
     train_skip_tokens: int = 0
+    validation_skip_tokens: int = 0
 
     def validate(self) -> None:
         if self.sequence_length < 2:
@@ -40,9 +41,14 @@ class PreparationRequest:
             raise ValueError("each split must request at least one complete block")
         if self.train_tokens % self.sequence_length or self.validation_tokens % self.sequence_length:
             raise ValueError("split token budgets must be exact multiples of sequence_length")
-        if self.train_skip_tokens < 0 or self.train_skip_tokens % self.sequence_length:
+        if (
+            self.train_skip_tokens < 0
+            or self.train_skip_tokens % self.sequence_length
+            or self.validation_skip_tokens < 0
+            or self.validation_skip_tokens % self.sequence_length
+        ):
             raise ValueError(
-                "train_skip_tokens must be non-negative and divisible by sequence_length"
+                "split skip tokens must be non-negative and divisible by sequence_length"
             )
         if self.vocab_size > np.iinfo(np.uint16).max + 1:
             raise ValueError("vocab_size does not fit uint16 artifact format")
@@ -53,23 +59,25 @@ class PreparationRequest:
 def _write_source_blocks(
     documents: Iterator[str],
     *,
-    output_path: Path,
+    output_path: Path | None,
     blocks: int,
     sequence_length: int,
     bos_token_id: int,
     tokenize: TokenizerFn,
     vocab_size: int,
-) -> Path:
-    """Write one source quota incrementally without holding the quota in RAM."""
+) -> Path | None:
+    """Consume one source quota, optionally writing its packed blocks."""
     if blocks <= 0:
         raise ValueError("every published source must receive at least one block")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    target = np.memmap(
-        output_path,
-        mode="w+",
-        dtype=np.uint16,
-        shape=(blocks, sequence_length),
-    )
+    target = None
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        target = np.memmap(
+            output_path,
+            mode="w+",
+            dtype=np.uint16,
+            shape=(blocks, sequence_length),
+        )
     row = 0
     buffer: list[int] = []
     cursor = 0
@@ -91,7 +99,8 @@ def _write_source_blocks(
         buffer.append(bos_token_id)
         buffer.extend(ids)
         while len(buffer) - cursor >= sequence_length and row < blocks:
-            target[row] = buffer[cursor : cursor + sequence_length]
+            if target is not None:
+                target[row] = buffer[cursor : cursor + sequence_length]
             cursor += sequence_length
             row += 1
         # Keep only an incomplete tail between documents. This caps the buffer
@@ -99,8 +108,9 @@ def _write_source_blocks(
         if cursor:
             buffer = buffer[cursor:]
             cursor = 0
-    target.flush()
-    del target
+    if target is not None:
+        target.flush()
+        del target
     return output_path
 
 
@@ -162,6 +172,9 @@ def materialize_from_document_iterators(
     train_blocks_total = request.train_tokens // request.sequence_length
     val_blocks_total = request.validation_tokens // request.sequence_length
     skip_blocks_total = request.train_skip_tokens // request.sequence_length
+    validation_skip_blocks_total = (
+        request.validation_skip_tokens // request.sequence_length
+    )
     if train_blocks_total < len(source_names) or val_blocks_total < len(source_names):
         raise ValueError(
             "requested splits are too small to represent every Dolmino source; "
@@ -171,9 +184,18 @@ def materialize_from_document_iterators(
         raise ValueError(
             "a non-zero training skip must cover at least one block per Dolmino source"
         )
+    if 0 < validation_skip_blocks_total < len(source_names):
+        raise ValueError(
+            "a non-zero validation skip must cover at least one block per Dolmino source"
+        )
     train_alloc = allocate_blocks(train_blocks_total)
     val_alloc = allocate_blocks(val_blocks_total)
     skip_alloc = allocate_blocks(skip_blocks_total) if skip_blocks_total else None
+    validation_skip_alloc = (
+        allocate_blocks(validation_skip_blocks_total)
+        if validation_skip_blocks_total
+        else None
+    )
     source_ids = {name: index for index, name in enumerate(source_names)}
 
     output_dir = request.output_dir
@@ -186,8 +208,18 @@ def materialize_from_document_iterators(
         val_files: dict[str, Path] = {}
         train_files: dict[str, Path] = {}
         for name in source_names:
+            if validation_skip_alloc is not None:
+                _write_source_blocks(
+                    iterators[name],
+                    output_path=None,
+                    blocks=validation_skip_alloc[name],
+                    sequence_length=request.sequence_length,
+                    bos_token_id=request.bos_token_id,
+                    tokenize=tokenize,
+                    vocab_size=request.vocab_size,
+                )
             # Consume validation first from each persistent shuffled iterator.
-            val_files[name] = _write_source_blocks(
+            validation_path = _write_source_blocks(
                 iterators[name],
                 output_path=temporary_dir / f"validation.{name}.bin",
                 blocks=val_alloc[name],
@@ -196,17 +228,19 @@ def materialize_from_document_iterators(
                 tokenize=tokenize,
                 vocab_size=request.vocab_size,
             )
+            assert validation_path is not None
+            val_files[name] = validation_path
             if skip_alloc is not None:
                 _write_source_blocks(
                     iterators[name],
-                    output_path=temporary_dir / f"skip.{name}.bin",
+                    output_path=None,
                     blocks=skip_alloc[name],
                     sequence_length=request.sequence_length,
                     bos_token_id=request.bos_token_id,
                     tokenize=tokenize,
                     vocab_size=request.vocab_size,
                 )
-            train_files[name] = _write_source_blocks(
+            train_path = _write_source_blocks(
                 iterators[name],
                 output_path=temporary_dir / f"train.{name}.bin",
                 blocks=train_alloc[name],
@@ -215,6 +249,8 @@ def materialize_from_document_iterators(
                 tokenize=tokenize,
                 vocab_size=request.vocab_size,
             )
+            assert train_path is not None
+            train_files[name] = train_path
 
         validation = _write_split(
             output_dir, "validation", val_files, val_alloc,
@@ -246,6 +282,7 @@ def materialize_from_document_iterators(
         recipe_name=request.recipe_name,
         shuffle_buffer=request.shuffle_buffer,
         train_skip_tokens=request.train_skip_tokens,
+        validation_skip_tokens=request.validation_skip_tokens,
         source_ids=source_ids,
         mixture_weights={source.name: weight for source, weight in zip(DOLMINO_50B_SOURCES, weights)},
         train=train,

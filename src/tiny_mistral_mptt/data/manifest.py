@@ -37,6 +37,7 @@ class DataManifest:
     train: PackedSplitInfo
     validation: PackedSplitInfo
     train_skip_tokens: int = 0
+    validation_skip_tokens: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -68,10 +69,12 @@ def verify_artifact(artifact_dir: str | Path) -> DataManifest:
     if manifest.format_version != 1:
         raise ValueError("unsupported data artifact format")
     if (
-        manifest.train_skip_tokens < 0
+        manifest.validation_skip_tokens < 0
+        or manifest.validation_skip_tokens % manifest.sequence_length
+        or manifest.train_skip_tokens < 0
         or manifest.train_skip_tokens % manifest.sequence_length
     ):
-        raise ValueError("invalid training-stream offset in data manifest")
+        raise ValueError("invalid split-stream offset in data manifest")
     for split_name in ("train", "validation"):
         info = getattr(manifest, split_name)
         data_path = artifact_dir / info.data_file
