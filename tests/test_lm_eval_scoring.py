@@ -12,8 +12,14 @@ from tiny_mistral_mptt.evaluation.lm_eval_adapter import (
     make_lm_eval_adapter,
     score_token_continuation_recurrent,
 )
-from tiny_mistral_mptt.inference import prefill_recurrent, recurrent_decode_step
+from tiny_mistral_mptt.inference import (
+    paper_recirculation_decode_step,
+    prefill_paper_recirculation,
+    prefill_recurrent,
+    recurrent_decode_step,
+)
 from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
+from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
 
 
 class NextIdModel(torch.nn.Module):
@@ -104,6 +110,18 @@ def _make_memory_model():
     return model
 
 
+def _make_recirculation_model():
+    torch.manual_seed(445)
+    return RecirculationVariant(
+        MistralForCausalLM(
+            micro_config(sliding_window=4), attention_backend="reference"
+        ),
+        source_layer=1,
+        destination_layer=0,
+        mode="adaptive",
+    ).eval()
+
+
 def test_recurrent_task_scoring_uses_one_collapsed_stream(monkeypatch):
     model = _make_memory_model()
 
@@ -175,3 +193,35 @@ def test_recurrent_task_generation_matches_incremental_greedy_decode(monkeypatch
             state = recurrent_decode_step(model, state, token)
 
     torch.testing.assert_close(generated, expected)
+
+
+def test_paper_recirculation_generation_uses_replayed_cache() -> None:
+    model = _make_recirculation_model()
+    prompt = torch.tensor([[1, 7, 3, 14]], dtype=torch.long)
+
+    generated = generate_recurrent(
+        model,
+        prompt,
+        3,
+        prefill_passes=1,
+        decode_mode="paper_recirculation",
+        temperature=0.0,
+    )
+
+    state = prefill_paper_recirculation(model, prompt)
+    expected = prompt.clone()
+    for step in range(3):
+        token = torch.argmax(state.next_token_logits, dim=-1, keepdim=True)
+        expected = torch.cat((expected, token), dim=1)
+        if step < 2:
+            state = paper_recirculation_decode_step(model, state, token)
+
+    torch.testing.assert_close(generated, expected)
+    with pytest.raises(ValueError, match="no prompt K axis"):
+        generate_recurrent(
+            model,
+            prompt,
+            1,
+            prefill_passes=2,
+            decode_mode="paper_recirculation",
+        )

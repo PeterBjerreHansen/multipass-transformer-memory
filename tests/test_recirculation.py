@@ -1,8 +1,14 @@
 import pytest
 import torch
+from torch.nn import functional as F
 
 from tiny_mistral import MistralConfig, MistralForCausalLM
-from tiny_mistral_mptt.inference import exact_decode_step, prefill_exact
+from tiny_mistral_mptt.inference import (
+    exact_decode_step,
+    paper_recirculation_decode_step,
+    prefill_exact,
+    prefill_paper_recirculation,
+)
 from tiny_mistral_mptt.training.phases import configure_phase
 from tiny_mistral_mptt.variants import RecirculationVariant
 
@@ -202,6 +208,145 @@ def test_gradients_flow_across_feedback_passes() -> None:
 
     gradients = [parameter.grad for parameter in model.backbone.parameters() if parameter.grad is not None]
     assert gradients and any(float(gradient.abs().sum()) > 0 for gradient in gradients)
+
+
+def test_paper_recirculation_optimized_upper_replay_matches_oracle() -> None:
+    model = make_model(mode="adaptive").eval()
+    ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
+
+    with torch.no_grad():
+        optimized = model.compute_recirculation_logits(ids)
+        full_replay = model.compute_recirculation_logits(ids, full_replay=True)
+
+    torch.testing.assert_close(optimized, full_replay, atol=2e-6, rtol=2e-6)
+
+
+def test_paper_recirculation_alpha_zero_is_vanilla_teacher_forcing() -> None:
+    model = make_model(alpha=0.0).eval()
+    ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
+
+    with torch.no_grad():
+        actual = model.compute_recirculation_logits(ids)
+        expected = model.backbone(ids).logits
+
+    torch.testing.assert_close(actual, expected, atol=2e-6, rtol=2e-6)
+
+
+def test_paper_recirculation_is_strict_past() -> None:
+    model = make_model(mode="adaptive").eval()
+    original = torch.tensor([[1, 2, 3, 4, 5, 6]])
+    changed = original.clone()
+    changed[:, 4:] = torch.tensor([[17, 18]])
+
+    with torch.no_grad():
+        original_logits = model.compute_recirculation_logits(original)
+        changed_logits = model.compute_recirculation_logits(changed)
+
+    torch.testing.assert_close(
+        original_logits[:, :4], changed_logits[:, :4], atol=0, rtol=0
+    )
+
+
+def test_paper_teacher_forcing_matches_incremental_inference() -> None:
+    model = make_model(mode="adaptive").eval()
+    ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
+
+    with torch.no_grad():
+        expected = model.compute_recirculation_logits(ids)
+        state = prefill_paper_recirculation(model, ids[:, :1])
+        observed = [state.next_token_logits]
+        for position in range(1, ids.shape[1]):
+            state = paper_recirculation_decode_step(
+                model, state, ids[:, position : position + 1]
+            )
+            observed.append(state.next_token_logits)
+
+    torch.testing.assert_close(
+        torch.stack(observed, dim=1), expected, atol=0, rtol=0
+    )
+
+
+@pytest.mark.parametrize("activation_checkpointing", [False, True])
+def test_paper_bptt_later_loss_trains_controller_through_earlier_cache(
+    activation_checkpointing: bool,
+) -> None:
+    model = make_model(mode="adaptive")
+    configure_phase(model, "A")
+    ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
+
+    logits = model.compute_recirculation_logits(
+        ids,
+        activation_checkpointing=activation_checkpointing,
+    )
+    loss = F.cross_entropy(logits[:, -2, :], ids[:, -1])
+    loss.backward()
+
+    gradients = [parameter.grad for parameter in model.added_parameters()]
+    assert gradients and all(gradient is not None for gradient in gradients)
+    assert any(float(gradient.abs().sum()) > 0 for gradient in gradients)
+    assert all(parameter.grad is None for parameter in model.backbone.parameters())
+
+
+def test_paper_bptt_checkpointing_preserves_logits_and_gradients() -> None:
+    plain = make_model(mode="adaptive")
+    checkpointed = make_model(mode="adaptive")
+    configure_phase(plain, "A")
+    configure_phase(checkpointed, "A")
+    ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
+
+    plain_output = plain.compute_recirculation_bptt_loss(ids)
+    checkpointed_output = checkpointed.compute_recirculation_bptt_loss(
+        ids, activation_checkpointing=True
+    )
+    plain_output.loss.backward()
+    checkpointed_output.loss.backward()
+
+    torch.testing.assert_close(plain_output.loss, checkpointed_output.loss)
+    for plain_parameter, checkpointed_parameter in zip(
+        plain.added_parameters(), checkpointed.added_parameters(), strict=True
+    ):
+        torch.testing.assert_close(
+            plain_parameter.grad,
+            checkpointed_parameter.grad,
+            atol=2e-6,
+            rtol=2e-6,
+        )
+
+
+def test_tbptt_preserves_forward_loss_and_cuts_cross_boundary_gradient() -> None:
+    full = make_model(mode="adaptive")
+    truncated = make_model(mode="adaptive")
+    configure_phase(full, "A")
+    configure_phase(truncated, "A")
+    ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
+
+    full_loss = full.compute_recirculation_bptt_loss(ids).loss
+    observed_loss = 0.0
+    predicted_tokens = ids.numel() - ids.shape[0]
+    for chunk_loss, predicted in truncated.iter_recirculation_tbptt_losses(
+        ids, truncate_tokens=2
+    ):
+        weight = predicted / predicted_tokens
+        observed_loss += float(chunk_loss.detach()) * weight
+        if chunk_loss.requires_grad:
+            (chunk_loss * weight).backward()
+    full_loss.backward()
+
+    torch.testing.assert_close(
+        torch.tensor(observed_loss), full_loss.detach(), atol=2e-6, rtol=2e-6
+    )
+    full_gradients = [parameter.grad for parameter in full.added_parameters()]
+    truncated_gradients = [
+        parameter.grad for parameter in truncated.added_parameters()
+    ]
+    assert all(gradient is not None for gradient in full_gradients)
+    assert all(gradient is not None for gradient in truncated_gradients)
+    assert any(
+        not torch.allclose(full_gradient, truncated_gradient)
+        for full_gradient, truncated_gradient in zip(
+            full_gradients, truncated_gradients, strict=True
+        )
+    )
 
 
 @pytest.mark.parametrize(

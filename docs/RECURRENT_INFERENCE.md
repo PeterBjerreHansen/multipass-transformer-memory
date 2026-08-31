@@ -5,6 +5,11 @@ This document defines cached inference for the active `recirculation`,
 refinement depth K is an inference-time
 parameter and need not equal the training depth.
 
+There are two distinct recirculation semantics in the repository. Whole-block
+multipass refinement has a prompt-depth K. Paper recirculation instead performs
+one ordinary readout followed by one same-token replay at every position; it has
+no K axis.
+
 ## Exact incremental K
 
 `exact_incremental` keeps K independent TinyMistral self-attention KV streams.
@@ -35,6 +40,18 @@ K-1. The first continuation transition therefore agrees with exact K-pass
 inference. For K=1, feedback decoding still constructs and uses the
 architecture-specific prompt feedback memory; it is not silently disabled.
 Vanilla models reject feedback mode.
+
+For long-form generation experiments, K applies only to prompt prefill. The
+continuation must use `decode_mode="feedback"`; it must not keep rerunning K
+complete streams for every generated token, and it must not silently fall back
+to standard decoding. Candidate-loglikelihood tasks consume each observed
+candidate token through the same live feedback state.
+
+`decode_mode="paper_recirculation"` is the corresponding end-to-end mode for a
+Recirculation model trained with token-diagonal BPTT. Prompt tokens and generated
+tokens both use the paper's readout-then-replay update, so
+`prefill_passes` must be 1. The value is retained only for CLI/schema
+compatibility and does not introduce a prompt K.
 
 ## Memory Attention state
 
@@ -92,6 +109,16 @@ state = prefill(
     mode="recurrent", decode_mode="feedback",
 )
 state = decode_step(model, state, observed_token)
+
+from tiny_mistral_mptt.inference import (
+    paper_recirculation_decode_step,
+    prefill_paper_recirculation,
+)
+
+paper_state = prefill_paper_recirculation(recirculation_model, input_ids)
+paper_state = paper_recirculation_decode_step(
+    recirculation_model, paper_state, observed_token
+)
 ```
 
 Dedicated `prefill_exact`, `prefill_recurrent`, `exact_decode_step`, and
@@ -113,3 +140,9 @@ Before interpreting recurrent quality:
   positions;
 - cached absolute positions must remain correct beyond the self-attention
   sliding window.
+
+Held-out training-distribution NLL and downstream generation answer different
+questions. Whole-block NLL at K=1 through K=8 is a convergence diagnostic for
+the parallel forward. Recurrent teacher-forced NLL measures the paper forward
+and has no K. Downstream generation uses the selected prompt prefill followed
+by the live feedback mechanism for the continuation.

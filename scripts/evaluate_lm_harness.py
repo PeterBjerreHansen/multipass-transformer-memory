@@ -104,7 +104,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--decode-mode",
-        choices=("standard", "feedback"),
+        choices=("standard", "feedback", "paper_recirculation"),
         required=True,
         help="continuation mechanism; independent of prompt prefill depth K",
     )
@@ -127,6 +127,10 @@ def main() -> None:
     args = parser.parse_args()
     if args.prefill_passes < 1:
         raise SystemExit("--prefill-passes must be positive")
+    if args.decode_mode == "paper_recirculation" and args.prefill_passes != 1:
+        raise SystemExit(
+            "paper_recirculation has no prompt K axis; use --prefill-passes 1"
+        )
 
     try:
         import lm_eval
@@ -206,9 +210,10 @@ def main() -> None:
             "prefill_passes": args.prefill_passes,
             "decode_mode": args.decode_mode,
             "candidate_scoring": (
-                "teacher_forced_observed_tokens_with_live_feedback"
+                "teacher_forced_observed_tokens_with_live_"
+                + args.decode_mode
                 if suite_kind == "candidate_loglikelihood"
-                and args.decode_mode == "feedback"
+                and args.decode_mode != "standard"
                 else None
             ),
         },

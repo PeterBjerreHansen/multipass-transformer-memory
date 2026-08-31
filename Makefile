@@ -4,7 +4,8 @@
   efficiency-mps-context efficiency-mps-batch efficiency-cuda-training \
   efficiency-cuda-precision efficiency-cuda-context efficiency-cuda-batch \
   efficiency-cuda-stage5 \
-  estimate-flops-stage5 \
+  efficiency-cuda-forward-modes \
+  estimate-flops-stage5 estimate-flops-forward-modes \
   efficiency-cuda-batch-qualification efficiency-bank-write \
   select-cuda-batch cloud-preflight
 
@@ -109,11 +110,23 @@ efficiency-cuda-stage5:
 		--suite benchmarks/efficiency/suites/stage_5_architectures.yaml \
 		--output benchmarks/efficiency/results/stage_5_architectures.json
 
+efficiency-cuda-forward-modes:
+	uv run python scripts/benchmark_training_efficiency.py \
+		--suite benchmarks/efficiency/suites/forward_modes.yaml \
+		--output benchmarks/efficiency/results/cuda_forward_modes.json
+
 estimate-flops-stage5:
 	uv run python scripts/estimate_training_flops.py \
 		--suite benchmarks/efficiency/suites/stage_5_architectures.yaml \
 		--model-config checkpoints/TinyMistral-248M-v3/config.json \
 		--output benchmarks/efficiency/results/stage_5_training_flops.json
+
+estimate-flops-forward-modes:
+	uv run python scripts/estimate_training_flops.py \
+		--suite benchmarks/efficiency/suites/forward_modes.yaml \
+		--schedule 2:1 \
+		--model-config checkpoints/TinyMistral-248M-v3/config.json \
+		--output benchmarks/efficiency/results/forward_mode_training_flops.json
 
 
 # Engineering-only bank write-cadence scaling. This does not select C.

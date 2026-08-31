@@ -1,15 +1,35 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 import math
 
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.utils.checkpoint import checkpoint
 
 from tiny_mistral.modeling import LayerKVCache, MistralForCausalLM
 
+from .base import TrainOutput
 from .multipass import HiddenRun, MultiPassVariant, shift_previous_hidden
+
+
+@dataclass(frozen=True)
+class _RecirculationRun:
+    """One token/pass run plus the residuals needed by Eq. 1."""
+
+    hidden_states: torch.Tensor
+    source_state: torch.Tensor
+    destination_state: torch.Tensor
+    past_key_values: tuple[LayerKVCache, ...] | None
+
+    def hidden_run(self) -> HiddenRun:
+        return HiddenRun(
+            hidden_states=self.hidden_states,
+            feedback_source=self.source_state,
+            past_key_values=self.past_key_values,
+        )
 
 
 class _AdaptiveRecirculationController(nn.Module):
@@ -163,21 +183,27 @@ class RecirculationVariant(MultiPassVariant):
             raise ValueError("layer caches disagree on next position")
         return next(iter(positions))
 
-    def _core(
+    def _run_core(
         self,
         embeddings: torch.Tensor,
         *,
         recurrent_source: torch.Tensor | None,
+        destination_override: torch.Tensor | None = None,
         past_key_values: tuple[LayerKVCache, ...] | None,
         use_cache: bool,
+        detach_cache: bool = True,
         full_sequence_feedback: bool = False,
-    ) -> HiddenRun:
+    ) -> _RecirculationRun:
         if embeddings.ndim != 3:
             raise ValueError("embeddings must be [B,T,D]")
         if past_key_values is not None and len(past_key_values) != len(self.backbone.model.layers):
             raise ValueError("past_key_values must contain one cache per decoder layer")
         if recurrent_source is not None and recurrent_source.shape != embeddings.shape:
             raise ValueError("recirculation source and embeddings shapes differ")
+        if destination_override is not None and destination_override.shape != embeddings.shape:
+            raise ValueError("recirculation destination override and embeddings shapes differ")
+        if recurrent_source is not None and destination_override is not None:
+            raise ValueError("provide recurrent_source or destination_override, not both")
 
         batch_size, seq_len, _ = embeddings.shape
         start = self._cache_next_position(past_key_values)
@@ -197,6 +223,7 @@ class RecirculationVariant(MultiPassVariant):
         hidden_states = embeddings
         caches: list[LayerKVCache] | None = [] if use_cache else None
         source_capture: torch.Tensor | None = None
+        destination_capture: torch.Tensor | None = None
         for layer_index, layer in enumerate(self.backbone.model.layers):
             past = None if past_key_values is None else past_key_values[layer_index]
             hidden_states, cache = layer(
@@ -205,28 +232,326 @@ class RecirculationVariant(MultiPassVariant):
                 position_ids=position_ids,
                 past_key_value=past,
                 use_cache=use_cache,
+                detach_cache=detach_cache,
                 fast_attention_compatible=past_key_values is None,
             )
             if caches is not None:
                 if cache is None:
                     raise RuntimeError("recirculation layer did not return KV state")
                 caches.append(cache)
-            if layer_index == self.destination_layer and recurrent_source is not None:
-                hidden_states = self._mix(
-                    recurrent_source,
-                    hidden_states,
-                    valid_feedback=valid_feedback,
-                )
+            if layer_index == self.destination_layer:
+                destination_capture = hidden_states
+                if recurrent_source is not None:
+                    hidden_states = self._mix(
+                        recurrent_source,
+                        hidden_states,
+                        valid_feedback=valid_feedback,
+                    )
+                elif destination_override is not None:
+                    hidden_states = destination_override
             if layer_index == self.source_layer:
                 source_capture = hidden_states
 
-        if source_capture is None:
-            raise RuntimeError("recirculation source layer was not reached")
+        if source_capture is None or destination_capture is None:
+            raise RuntimeError("recirculation source/destination layer was not reached")
         hidden_states = self.backbone.model.norm(hidden_states)
-        return HiddenRun(
+        return _RecirculationRun(
             hidden_states=hidden_states,
-            feedback_source=source_capture,
+            source_state=source_capture,
+            destination_state=destination_capture,
             past_key_values=tuple(caches) if caches is not None else None,
+        )
+
+    def _core(
+        self,
+        embeddings: torch.Tensor,
+        *,
+        recurrent_source: torch.Tensor | None,
+        past_key_values: tuple[LayerKVCache, ...] | None,
+        use_cache: bool,
+        full_sequence_feedback: bool = False,
+    ) -> HiddenRun:
+        """Compatibility wrapper for the parallel-multipass implementation."""
+        return self._run_core(
+            embeddings,
+            recurrent_source=recurrent_source,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            full_sequence_feedback=full_sequence_feedback,
+        ).hidden_run()
+
+    def _replay_upper_stack(
+        self,
+        mixed_destination: torch.Tensor,
+        *,
+        ordinary_caches: tuple[LayerKVCache, ...],
+        previous_caches: tuple[LayerKVCache, ...] | None,
+        detach_cache: bool,
+    ) -> tuple[LayerKVCache, ...]:
+        """Replay the current token above the destination and replace upper K/V.
+
+        Layers through ``destination_layer`` are identical to the first
+        iteration and keep its cache entries. Layers above the destination are
+        recomputed from the Eq. 1 mixture against the strict-past cache.
+        """
+        if len(ordinary_caches) != len(self.backbone.model.layers):
+            raise ValueError("ordinary_caches must contain one cache per decoder layer")
+        if previous_caches is not None and len(previous_caches) != len(ordinary_caches):
+            raise ValueError("previous_caches must contain one cache per decoder layer")
+
+        batch_size, seq_len, _ = mixed_destination.shape
+        if seq_len != 1:
+            raise ValueError("paper recirculation replay requires one token")
+        position = ordinary_caches[0].next_position - 1
+        position_ids = torch.full(
+            (batch_size, 1), position, dtype=torch.long, device=mixed_destination.device
+        )
+        caches = list(ordinary_caches[: self.destination_layer + 1])
+        hidden_states = mixed_destination
+        for layer_index in range(self.destination_layer + 1, len(self.backbone.model.layers)):
+            layer = self.backbone.model.layers[layer_index]
+            past = None if previous_caches is None else previous_caches[layer_index]
+            hidden_states, cache = layer(
+                hidden_states,
+                attention_mask=None,
+                position_ids=position_ids,
+                past_key_value=past,
+                use_cache=True,
+                detach_cache=detach_cache,
+                fast_attention_compatible=False,
+            )
+            if cache is None:
+                raise RuntimeError("recirculation replay did not return KV state")
+            caches.append(cache)
+        return tuple(caches)
+
+    def _recirculate_token(
+        self,
+        token: torch.Tensor,
+        previous_caches: tuple[LayerKVCache, ...] | None,
+        *,
+        detach_cache: bool,
+        full_replay: bool,
+    ) -> tuple[torch.Tensor, tuple[LayerKVCache, ...]]:
+        """Read out one token, then replay it into the cache per Eq. 1."""
+        ordinary = self._run_core(
+            self.input_embeddings(token),
+            recurrent_source=None,
+            past_key_values=previous_caches,
+            use_cache=True,
+            detach_cache=detach_cache,
+        )
+        if ordinary.past_key_values is None:
+            raise RuntimeError("paper recirculation first iteration returned no cache")
+        mixed_destination = self._mix(
+            ordinary.source_state,
+            ordinary.destination_state,
+        )
+        if full_replay:
+            replay = self._run_core(
+                self.input_embeddings(token),
+                recurrent_source=None,
+                destination_override=mixed_destination,
+                past_key_values=previous_caches,
+                use_cache=True,
+                detach_cache=detach_cache,
+            )
+            if replay.past_key_values is None:
+                raise RuntimeError("paper recirculation replay returned no cache")
+            replay_caches = replay.past_key_values
+        else:
+            replay_caches = self._replay_upper_stack(
+                mixed_destination,
+                ordinary_caches=ordinary.past_key_values,
+                previous_caches=previous_caches,
+                detach_cache=detach_cache,
+            )
+        logits = self.backbone.lm_head(ordinary.hidden_states).float()
+        return logits, replay_caches
+
+    def _training_recirculation_token(
+        self,
+        token: torch.Tensor,
+        caches: tuple[LayerKVCache, ...] | None,
+        *,
+        activation_checkpointing: bool,
+        full_replay: bool = False,
+    ) -> tuple[torch.Tensor, tuple[LayerKVCache, ...]]:
+        """Run one differentiable token step with optional recomputation."""
+        if activation_checkpointing and torch.is_grad_enabled():
+            previous_caches = caches
+
+            def token_step(
+                current_token: torch.Tensor,
+                previous_caches=previous_caches,
+            ):
+                return self._recirculate_token(
+                    current_token,
+                    previous_caches,
+                    detach_cache=False,
+                    full_replay=full_replay,
+                )
+
+            return checkpoint(token_step, token, use_reentrant=False)
+        return self._recirculate_token(
+            token,
+            caches,
+            detach_cache=not torch.is_grad_enabled(),
+            full_replay=full_replay,
+        )
+
+    def compute_recirculation_logits(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        activation_checkpointing: bool = False,
+        full_replay: bool = False,
+    ) -> torch.Tensor:
+        """Teacher-force the paper's token-diagonal recirculation forward.
+
+        Each position is read out after its ordinary first iteration. The same
+        token is then replayed from the source/destination mixture, replacing
+        its upper-layer K/V entries before the next token is processed. With
+        autograd enabled, caches remain attached so loss gradients propagate
+        through the complete token chain (BPTT).
+        """
+        if input_ids.ndim != 2 or input_ids.shape[1] < 2:
+            raise ValueError("input_ids must be [B,T] with at least two tokens")
+        caches: tuple[LayerKVCache, ...] | None = None
+        logits_by_token: list[torch.Tensor] = []
+        for position in range(input_ids.shape[1]):
+            token = input_ids[:, position : position + 1]
+            logits, caches = self._training_recirculation_token(
+                token,
+                caches,
+                activation_checkpointing=activation_checkpointing,
+                full_replay=full_replay,
+            )
+            logits_by_token.append(logits)
+        return torch.cat(logits_by_token, dim=1)
+
+    def compute_recirculation_bptt_loss(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        activation_checkpointing: bool = False,
+    ) -> TrainOutput:
+        """Next-token loss through the complete paper-recirculation chain."""
+        logits = self.compute_recirculation_logits(
+            input_ids,
+            activation_checkpointing=activation_checkpointing,
+        )
+        loss = self.lm_loss(logits, input_ids)
+        metrics = self.recirculation_compute_metrics()
+        metrics["recirculation_bptt_loss"] = float(loss.detach().cpu())
+        return TrainOutput(
+            loss=loss,
+            pass_losses=(loss,),
+            effective_passes=2,
+            metrics=metrics,
+        )
+
+    def recirculation_compute_metrics(self) -> dict[str, float]:
+        """Describe the partial replay behind the two-iteration accounting."""
+        total_layers = len(self.backbone.model.layers)
+        replayed_layers = total_layers - self.destination_layer - 1
+        return {
+            "recirculation_stack_iterations": 2.0,
+            "recirculation_replayed_layers": float(replayed_layers),
+            "recirculation_total_layers": float(total_layers),
+            "recirculation_replay_layer_fraction": replayed_layers / total_layers,
+        }
+
+    @staticmethod
+    def _detach_recirculation_caches(
+        caches: tuple[LayerKVCache, ...],
+    ) -> tuple[LayerKVCache, ...]:
+        """Preserve recurrent values while cutting gradients at a TBPTT boundary."""
+        return tuple(
+            LayerKVCache(
+                key=cache.key.detach(),
+                value=cache.value.detach(),
+                start_pos=cache.start_pos,
+                key_valid=cache.key_valid,
+                positions=cache.positions,
+                next_pos=cache.next_pos,
+            )
+            for cache in caches
+        )
+
+    def iter_recirculation_tbptt_losses(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        truncate_tokens: int,
+        activation_checkpointing: bool = False,
+    ) -> Iterable[tuple[torch.Tensor, int]]:
+        """Yield token-weighted loss chunks with detached recurrent boundaries.
+
+        The forward recurrence and KV values continue across the whole packed
+        sequence. Only the gradient path is cut every ``truncate_tokens`` input
+        positions. The caller must backpropagate each yielded loss before
+        requesting the next chunk; this is what releases the completed graph
+        instead of retaining every chunk until a final backward call.
+        """
+        if input_ids.ndim != 2 or input_ids.shape[1] < 2:
+            raise ValueError("input_ids must be [B,T] with at least two tokens")
+        if truncate_tokens < 2:
+            raise ValueError("truncate_tokens must be at least 2")
+
+        caches: tuple[LayerKVCache, ...] | None = None
+        sequence_length = int(input_ids.shape[1])
+        for start in range(0, sequence_length, int(truncate_tokens)):
+            stop = min(start + int(truncate_tokens), sequence_length)
+            logits_by_token: list[torch.Tensor] = []
+            for position in range(start, stop):
+                token = input_ids[:, position : position + 1]
+                logits, caches = self._training_recirculation_token(
+                    token,
+                    caches,
+                    activation_checkpointing=activation_checkpointing,
+                )
+                logits_by_token.append(logits)
+
+            prediction_positions = min(stop, sequence_length - 1) - start
+            if prediction_positions:
+                logits = torch.cat(logits_by_token[:prediction_positions], dim=1)
+                targets = input_ids[:, start + 1 : start + 1 + prediction_positions]
+                loss = F.cross_entropy(
+                    logits.reshape(-1, logits.shape[-1]),
+                    targets.reshape(-1),
+                )
+                yield loss, int(targets.numel())
+            if caches is None:
+                raise RuntimeError("recirculation TBPTT chunk returned no cache")
+            caches = self._detach_recirculation_caches(caches)
+
+    def compute_training_loss(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        training_forward: str,
+        phase: str,
+        passes: int,
+        loss_weights: Sequence[float] | None,
+        activation_checkpointing: bool = False,
+    ) -> TrainOutput:
+        if training_forward == "recirculation_bptt":
+            if passes != 1 or loss_weights is not None:
+                raise ValueError(
+                    "recirculation_bptt uses one diagonal recurrence policy, not K/pass weights"
+                )
+            return self.compute_recirculation_bptt_loss(
+                input_ids,
+                activation_checkpointing=activation_checkpointing,
+            )
+        return super().compute_training_loss(
+            input_ids,
+            training_forward=training_forward,
+            phase=phase,
+            passes=passes,
+            loss_weights=loss_weights,
+            activation_checkpointing=activation_checkpointing,
         )
 
     def _run_first_state(self, input_ids: torch.Tensor) -> HiddenRun:

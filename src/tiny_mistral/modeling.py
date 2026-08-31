@@ -259,6 +259,7 @@ class MistralAttention(nn.Module):
         position_ids: torch.Tensor,
         past_key_value: LayerKVCache | None = None,
         use_cache: bool = False,
+        detach_cache: bool = True,
         fast_attention_compatible: bool | None = None,
     ) -> tuple[torch.Tensor, LayerKVCache | None]:
         bsz, q_len, _ = hidden_states.size()
@@ -391,11 +392,14 @@ class MistralAttention(nn.Module):
                 gather_key = selection[:, None, :, None].expand(
                     -1, self.num_key_value_heads, -1, self.head_dim
                 )
-                cache_key = torch.gather(all_key_states, 2, gather_key).detach()
-                cache_value = torch.gather(all_value_states, 2, gather_key).detach()
+                cache_key = torch.gather(all_key_states, 2, gather_key)
+                cache_value = torch.gather(all_value_states, 2, gather_key)
                 cache_positions = torch.gather(key_positions, 1, selection).detach()
                 gathered_valid = torch.gather(key_padding_mask, 1, selection)
                 cache_valid = (selection_valid & gathered_valid).detach()
+                if detach_cache:
+                    cache_key = cache_key.detach()
+                    cache_value = cache_value.detach()
                 if bool(selection_valid[0].any()):
                     first = int(selection_valid[0].long().argmax().item())
                     start_pos = int(cache_positions[0, first].item())
@@ -417,13 +421,16 @@ class MistralAttention(nn.Module):
                     # needs at most W-1 cached previous keys.
                     keep = min(keep, max(self.config.sliding_window - 1, 0))
                 if keep:
-                    cache_key = all_key_states[:, :, -keep:, :].detach()
-                    cache_value = all_value_states[:, :, -keep:, :].detach()
+                    cache_key = all_key_states[:, :, -keep:, :]
+                    cache_value = all_value_states[:, :, -keep:, :]
                     start_pos = int(key_positions[0, -keep].item())
                 else:
-                    cache_key = all_key_states[:, :, :0, :].detach()
-                    cache_value = all_value_states[:, :, :0, :].detach()
+                    cache_key = all_key_states[:, :, :0, :]
+                    cache_value = all_value_states[:, :, :0, :]
                     start_pos = next_position
+                if detach_cache:
+                    cache_key = cache_key.detach()
+                    cache_value = cache_value.detach()
                 cache_valid = key_padding_mask[:, -keep:].detach() if keep else key_padding_mask[:, :0].detach()
                 new_cache = LayerKVCache(cache_key, cache_value, start_pos, cache_valid)
 
@@ -460,6 +467,7 @@ class MistralDecoderLayer(nn.Module):
         position_ids: torch.Tensor,
         past_key_value: LayerKVCache | None = None,
         use_cache: bool = False,
+        detach_cache: bool = True,
         fast_attention_compatible: bool | None = None,
     ) -> tuple[torch.Tensor, LayerKVCache | None]:
         residual = hidden_states
@@ -470,6 +478,7 @@ class MistralDecoderLayer(nn.Module):
             position_ids=position_ids,
             past_key_value=past_key_value,
             use_cache=use_cache,
+            detach_cache=detach_cache,
             fast_attention_compatible=fast_attention_compatible,
         )
         hidden_states = residual + x

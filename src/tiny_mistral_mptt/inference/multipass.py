@@ -5,7 +5,14 @@ from typing import Literal
 import torch
 
 from ..variants.multipass import MultiPassVariant
-from .state import DecodeMode, ExactIncrementalState, PassStreamState, RecurrentState
+from ..variants.recirculation import RecirculationVariant
+from .state import (
+    DecodeMode,
+    ExactIncrementalState,
+    PaperRecirculationState,
+    PassStreamState,
+    RecurrentState,
+)
 
 InferenceMode = Literal["exact_incremental", "recurrent"]
 
@@ -260,6 +267,50 @@ def recurrent_decode_step(
         feedback_memory=feedback_memory,
         last_hidden=run.hidden_states[:, -1:, :].detach(),
         next_token_logits=logits,
+    )
+
+
+@torch.no_grad()
+def prefill_paper_recirculation(
+    model: RecirculationVariant,
+    input_ids: torch.Tensor,
+) -> PaperRecirculationState:
+    """Sequentially prefill the paper's readout-then-replay recurrence."""
+    _validate_prompt(input_ids, 1)
+    caches = None
+    logits = None
+    for position in range(input_ids.shape[1]):
+        logits, caches = model._recirculate_token(
+            input_ids[:, position : position + 1],
+            caches,
+            detach_cache=True,
+            full_replay=False,
+        )
+    if logits is None or caches is None:
+        raise RuntimeError("paper recirculation prefill produced no state")
+    return PaperRecirculationState(
+        past_key_values=caches,
+        next_token_logits=logits[:, -1, :],
+    )
+
+
+@torch.no_grad()
+def paper_recirculation_decode_step(
+    model: RecirculationVariant,
+    state: PaperRecirculationState,
+    token: torch.Tensor,
+) -> PaperRecirculationState:
+    """Consume one token and replace its upper K/V with the replayed state."""
+    _validate_token(token, state.next_token_logits.shape[0])
+    logits, caches = model._recirculate_token(
+        token,
+        state.past_key_values,
+        detach_cache=True,
+        full_replay=False,
+    )
+    return PaperRecirculationState(
+        past_key_values=caches,
+        next_token_logits=logits[:, -1, :],
     )
 
 

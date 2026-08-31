@@ -9,6 +9,7 @@ import torch.nn.functional as F
 
 from ..data.packed_dataset import PackedTokenDataset
 from ..variants.multipass import MultiPassVariant
+from ..variants.recirculation import RecirculationVariant
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,7 @@ class NLLResult:
     predicted_tokens: int
     blocks: int
     passes: int
+    forward_mode: str
     nll_by_source: dict[str, float]
 
 
@@ -28,6 +30,7 @@ def evaluate_nll(
     *,
     device: torch.device | str,
     passes: int = 1,
+    forward_mode: str = "parallel_multipass",
     max_blocks: int | None = None,
 ) -> NLLResult:
     if passes < 1:
@@ -36,6 +39,17 @@ def evaluate_nll(
         raise ValueError("validation dataset is empty")
     if max_blocks is not None and max_blocks <= 0:
         raise ValueError("max_blocks must be positive when provided")
+    if forward_mode not in {"parallel_multipass", "paper_recirculation"}:
+        raise ValueError(
+            "forward_mode must be parallel_multipass or paper_recirculation"
+        )
+    if forward_mode == "paper_recirculation":
+        if not isinstance(model, RecirculationVariant):
+            raise ValueError("paper_recirculation NLL requires RecirculationVariant")
+        if passes != 1:
+            raise ValueError(
+                "paper_recirculation NLL has no multipass K axis; use passes=1"
+            )
     was_training = model.training
     model.eval()
     total_nll = 0.0
@@ -46,7 +60,9 @@ def evaluate_nll(
     try:
         for index in range(limit):
             ids = dataset.batch([index], device=device)
-            if isinstance(model, MultiPassVariant):
+            if forward_mode == "paper_recirculation":
+                logits = model.compute_recirculation_logits(ids).float()
+            elif isinstance(model, MultiPassVariant):
                 logits = model.compute_passes(ids, passes=passes, phase="B").final.logits.float()
             else:
                 if passes != 1:
@@ -82,5 +98,6 @@ def evaluate_nll(
         predicted_tokens=total_tokens,
         blocks=limit,
         passes=passes,
+        forward_mode=forward_mode,
         nll_by_source=by_source,
     )

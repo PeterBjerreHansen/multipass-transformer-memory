@@ -224,14 +224,16 @@ class PassFlopEstimate:
     memory_positions: int
     bank_write_positions: int
     forward: FlopBreakdown
+    training_forward: str = "parallel_multipass"
+    training_multiplier: float = BACKWARD_MULTIPLIER
 
     @property
     def forward_flops(self) -> int:
         return self.forward.total
 
     @property
-    def training_flops(self) -> int:
-        return BACKWARD_MULTIPLIER * self.forward_flops
+    def training_flops(self) -> float:
+        return float(self.training_multiplier) * self.forward_flops
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -241,6 +243,8 @@ class PassFlopEstimate:
             "physical_sequence_length": self.physical_sequence_length,
             "memory_positions": self.memory_positions,
             "bank_write_positions": self.bank_write_positions,
+            "training_forward": self.training_forward,
+            "training_multiplier": self.training_multiplier,
             "forward": self.forward.to_dict(),
             "forward_flops": self.forward_flops,
             "training_flops": self.training_flops,
@@ -256,7 +260,7 @@ class ScheduledFlopEstimate:
     pass_estimates: dict[int, PassFlopEstimate]
     weighted_forward_flops: float
     weighted_training_flops: float
-    baseline_training_flops: int
+    baseline_training_flops: float
     relative_training_flops: float
 
     def to_dict(self) -> dict[str, Any]:
@@ -282,12 +286,17 @@ def _backbone_pass_breakdown(
     sparse_attention_stride: int | None = None,
     sparse_attention_window: int = 0,
     sparse_attention_layers: int = 0,
+    layer_count: int | None = None,
+    include_lm_head: bool = True,
 ) -> FlopBreakdown:
     sequence_length = len(key_valid)
     hidden_size = int(config.hidden_size)
     intermediate_size = int(config.intermediate_size)
     kv_width = int(config.num_key_value_heads) * int(config.head_dim)
-    layers = int(config.num_hidden_layers)
+    total_layers = int(config.num_hidden_layers)
+    layers = total_layers if layer_count is None else int(layer_count)
+    if not 0 < layers <= total_layers:
+        raise ValueError("layer_count must select at least one backbone layer")
 
     self_attention_projections = layers * (
         _linear_flops(sequence_length, hidden_size, hidden_size)
@@ -323,7 +332,11 @@ def _backbone_pass_breakdown(
         2 * _linear_flops(sequence_length, hidden_size, intermediate_size)
         + _linear_flops(sequence_length, intermediate_size, hidden_size)
     )
-    lm_head = _linear_flops(sequence_length, hidden_size, int(config.vocab_size))
+    lm_head = (
+        _linear_flops(sequence_length, hidden_size, int(config.vocab_size))
+        if include_lm_head
+        else 0
+    )
     return FlopBreakdown(
         self_attention_projections=self_attention_projections,
         self_attention_products=self_attention_products,
@@ -618,4 +631,81 @@ def estimate_schedule(
         weighted_training_flops=weighted_training,
         baseline_training_flops=baseline,
         relative_training_flops=weighted_training / baseline,
+    )
+
+
+def estimate_recirculation_bptt(
+    config: MistralConfig,
+    *,
+    linguistic_sequence_length: int,
+    source_layer: int,
+    destination_layer: int,
+    recirculation_mode: str = "fixed",
+    activation_checkpointing: bool = False,
+) -> ScheduledFlopEstimate:
+    """Estimate the paper's ordinary-readout plus upper-stack replay forward.
+
+    This is not represented as K=2: the replay starts above the destination
+    layer and does not run a second LM head. Activation checkpointing adds one
+    forward recomputation to the conventional forward-plus-backward estimate.
+    TBPTT boundary savings are deliberately not discounted, making this a
+    conservative dominant-matmul estimate for finite truncation windows.
+    """
+    sequence_length = _validate_positive(
+        "linguistic_sequence_length", linguistic_sequence_length
+    )
+    layers = int(config.num_hidden_layers)
+    source_layer = int(source_layer)
+    destination_layer = int(destination_layer)
+    if not 0 <= destination_layer < source_layer < layers:
+        raise ValueError(
+            "recirculation BPTT FLOPs require 0 <= destination < source < layers"
+        )
+    if recirculation_mode not in {"fixed", "adaptive"}:
+        raise ValueError("recirculation_mode must be fixed or adaptive")
+
+    key_valid = (True,) * sequence_length
+    ordinary = _backbone_pass_breakdown(config, key_valid=key_valid)
+    replayed_layers = layers - destination_layer - 1
+    replay = _backbone_pass_breakdown(
+        config,
+        key_valid=key_valid,
+        layer_count=replayed_layers,
+        include_lm_head=False,
+    )
+    controller = _recurrent_breakdown(
+        config,
+        sequence_length=sequence_length,
+        variant="recirculation",
+        adaptive_recirculation=recirculation_mode == "adaptive",
+    )
+    estimate = PassFlopEstimate(
+        variant="recirculation",
+        passes=1,
+        linguistic_sequence_length=sequence_length,
+        physical_sequence_length=sequence_length,
+        memory_positions=0,
+        bank_write_positions=0,
+        forward=ordinary + replay + controller,
+        training_forward="recirculation_bptt",
+        training_multiplier=(
+            BACKWARD_MULTIPLIER + 1
+            if activation_checkpointing
+            else BACKWARD_MULTIPLIER
+        ),
+    )
+    baseline = estimate_pass(
+        config,
+        variant="vanilla",
+        passes=1,
+        linguistic_sequence_length=sequence_length,
+    ).training_flops
+    return ScheduledFlopEstimate(
+        variant="recirculation",
+        pass_probabilities={1: 1.0},
+        pass_estimates={1: estimate},
+        weighted_forward_flops=float(estimate.forward_flops),
+        weighted_training_flops=float(estimate.training_flops),
+        baseline_training_flops=baseline,
+        relative_training_flops=estimate.training_flops / baseline,
     )

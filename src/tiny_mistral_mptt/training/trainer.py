@@ -21,6 +21,7 @@ from ..evaluation.pass_depth import evaluate_pass_depth
 from ..precision import autocast_context
 from ..variants.base import ExperimentalVariant
 from ..variants.multipass import MultiPassVariant
+from ..variants.recirculation import RecirculationVariant
 from .checkpoint import (
     TrainState,
     inspect_checkpoint,
@@ -31,7 +32,7 @@ from .checkpoint import (
 )
 from .journal import append_jsonl, repair_metrics_to_checkpoint
 from .pass_schedule import PassScheduler
-from .phases import configure_phase
+from .phases import configure_trainability
 from .provenance import hardware_provenance, source_provenance
 from .schedule import lr_multiplier
 
@@ -211,7 +212,21 @@ class Trainer:
             )
             initialization_provenance["source_sha256"] = file_sha256(config.init_from)
 
-        trainable = configure_phase(model, config.phase)
+        microbatch_tokens = config.batch_size * self.linguistic_per_block
+        if (
+            config.freeze_pretrained_until_tokens
+            and config.freeze_pretrained_until_tokens % microbatch_tokens
+        ):
+            raise ValueError(
+                "freeze_pretrained_until_tokens must be divisible by the linguistic "
+                "tokens per microbatch"
+            )
+        trainable = configure_trainability(
+            model,
+            phase=config.phase,
+            unique_tokens_seen=0,
+            freeze_pretrained_until_tokens=config.freeze_pretrained_until_tokens,
+        )
         if trainable == 0:
             raise RuntimeError(f"Phase {config.phase} has no trainable parameters")
         self.optimizer = self._build_optimizer()
@@ -228,7 +243,6 @@ class Trainer:
             for parameter in model.parameters()
             if parameter.requires_grad and id(parameter) in added_ids
         ]
-        microbatch_tokens = config.batch_size * self.linguistic_per_block
         microbatch_positions = config.batch_size * train_data.sequence_length
         nominal_optimizer_batch_tokens = microbatch_tokens * config.grad_accum_steps
         nominal_optimizer_batch_positions = microbatch_positions * config.grad_accum_steps
@@ -371,6 +385,21 @@ class Trainer:
                 f"checkpoint phase {self.state.phase!r} does not match requested phase {self.config.phase!r}"
             )
         self.sampler.load_state_dict(sampler_state)
+        self._configure_trainability()
+
+    def _configure_trainability(self) -> bool:
+        """Apply the token-indexed freeze policy and report backbone state."""
+        configure_trainability(
+            self.model,
+            phase=self.config.phase,
+            unique_tokens_seen=self.state.unique_tokens_seen,
+            freeze_pretrained_until_tokens=self.config.freeze_pretrained_until_tokens,
+        )
+        return bool(
+            self.config.phase == "A"
+            or self.state.unique_tokens_seen
+            < self.config.freeze_pretrained_until_tokens
+        )
 
     def _validation_record_exists_at_current_state(self) -> bool:
         if not self.metrics_path.exists():
@@ -422,7 +451,11 @@ class Trainer:
         pretrained = [
             parameter
             for parameter in self.model.parameters()
-            if parameter.requires_grad and id(parameter) not in added_ids
+            if id(parameter) not in added_ids
+            and (
+                parameter.requires_grad
+                or self.config.freeze_pretrained_until_tokens > 0
+            )
         ]
         added = [
             parameter
@@ -438,7 +471,7 @@ class Trainer:
                     "lr": self.config.pretrained_lr,
                     "base_lr": self.config.pretrained_lr,
                     "group_name": "pretrained",
-                    "weight_decay": self.config.weight_decay,
+                    "weight_decay": self.config.pretrained_wd,
                 }
             )
         if added:
@@ -448,7 +481,7 @@ class Trainer:
                     "lr": self.config.added_lr,
                     "base_lr": self.config.added_lr,
                     "group_name": "added",
-                    "weight_decay": self.config.weight_decay,
+                    "weight_decay": self.config.added_wd,
                 }
             )
         if not groups:
@@ -551,7 +584,25 @@ class Trainer:
             "token_equivalent_compute": self.state.token_equivalent_compute,
             **self._pass_schedule_metrics(),
         }
-        if self.config.eval_passes > 1:
+        if self.config.validation_forward == "paper_recirculation":
+            result = evaluate_nll(
+                self.model,
+                self.validation_data,
+                device=self.device,
+                forward_mode="paper_recirculation",
+                max_blocks=self.config.eval_batches or None,
+            )
+            record = {
+                **common,
+                "nll": result.nll,
+                "perplexity": result.perplexity,
+                "predicted_tokens": result.predicted_tokens,
+                "nll_by_source": result.nll_by_source,
+                "validation_blocks": result.blocks,
+                "validation_forward": result.forward_mode,
+                "eval_passes": result.passes,
+            }
+        elif self.config.eval_passes > 1:
             if not isinstance(self.model, MultiPassVariant):
                 raise ValueError("eval_passes>1 requires a multipass variant")
             result = evaluate_pass_depth(
@@ -571,6 +622,7 @@ class Trainer:
                 "hidden_delta_rms": list(result.hidden_delta_rms),
                 "nll_by_source_by_pass": list(result.nll_by_source_by_pass),
                 "validation_blocks": result.blocks,
+                "validation_forward": "parallel_multipass",
                 "eval_passes": result.passes,
             }
         else:
@@ -587,6 +639,7 @@ class Trainer:
                 "predicted_tokens": result.predicted_tokens,
                 "nll_by_source": result.nll_by_source,
                 "validation_blocks": result.blocks,
+                "validation_forward": result.forward_mode,
                 "eval_passes": result.passes,
             }
         if self.config.early_stop is not None:
@@ -742,6 +795,7 @@ class Trainer:
         self.model.train()
         while self.state.unique_tokens_seen < target_tokens:
             previous_tokens = self.state.unique_tokens_seen
+            backbone_frozen = self._configure_trainability()
             start = time.perf_counter()
             self.optimizer.zero_grad(set_to_none=True)
             update_loss = 0.0
@@ -750,6 +804,11 @@ class Trainer:
             update_metric_counts: dict[str, int] = defaultdict(int)
             remaining_micro = (target_tokens - self.state.unique_tokens_seen) // tokens_per_micro
             accumulation_steps = min(cfg.grad_accum_steps, remaining_micro)
+            if backbone_frozen and cfg.freeze_pretrained_until_tokens:
+                micros_until_unfreeze = (
+                    cfg.freeze_pretrained_until_tokens - self.state.unique_tokens_seen
+                ) // tokens_per_micro
+                accumulation_steps = min(accumulation_steps, micros_until_unfreeze)
             if accumulation_steps <= 0:
                 raise RuntimeError("invalid zero-length optimizer update")
 
@@ -759,25 +818,72 @@ class Trainer:
                 if int(ids.numel()) != positions_per_micro:
                     raise RuntimeError("physical packed sequence length changed across microbatches")
                 passes = self.pass_scheduler.sample(self.state.unique_tokens_seen)
-                with autocast_context(self.device, cfg.autocast_dtype):
-                    output = self.model.compute_loss(
-                        ids,
-                        phase=cfg.phase,
-                        passes=passes,
-                        loss_weights=cfg.ntp_loss_weights_for_passes(passes),
+                if cfg.recirculation_bptt_truncate_tokens is not None:
+                    if not isinstance(self.model, RecirculationVariant):
+                        raise RuntimeError("TBPTT requires a RecirculationVariant")
+                    chunks = iter(
+                        self.model.iter_recirculation_tbptt_losses(
+                            ids,
+                            truncate_tokens=cfg.recirculation_bptt_truncate_tokens,
+                            activation_checkpointing=cfg.recirculation_activation_checkpointing,
+                        )
                     )
-                if not bool(torch.isfinite(output.loss).item()):
-                    raise RuntimeError("non-finite training loss")
-                (output.loss / accumulation_steps).backward()
-                update_loss += float(output.loss.detach().cpu())
-                update_passes += output.effective_passes
-                for key, value in output.metrics.items():
-                    update_metrics[key] += float(value)
-                    update_metric_counts[key] += 1
+                    predicted_tokens = int(ids.shape[0] * (ids.shape[1] - 1))
+                    micro_loss = 0.0
+                    while True:
+                        with autocast_context(self.device, cfg.autocast_dtype):
+                            try:
+                                chunk_loss, chunk_predictions = next(chunks)
+                            except StopIteration:
+                                break
+                        if not bool(torch.isfinite(chunk_loss).item()):
+                            raise RuntimeError("non-finite training loss")
+                        chunk_weight = chunk_predictions / predicted_tokens
+                        if chunk_loss.requires_grad:
+                            (
+                                chunk_loss * chunk_weight / accumulation_steps
+                            ).backward()
+                        micro_loss += float(chunk_loss.detach().cpu()) * chunk_weight
+                    update_loss += micro_loss
+                    micro_effective_passes = 2
+                    update_passes += micro_effective_passes
+                    chunk_metrics = self.model.recirculation_compute_metrics()
+                    chunk_metrics.update(
+                        {
+                            "recirculation_bptt_loss": micro_loss,
+                            "recirculation_bptt_truncate_tokens": float(
+                                cfg.recirculation_bptt_truncate_tokens
+                            ),
+                        }
+                    )
+                    for key, value in chunk_metrics.items():
+                        update_metrics[key] += value
+                        update_metric_counts[key] += 1
+                else:
+                    with autocast_context(self.device, cfg.autocast_dtype):
+                        output = self.model.compute_training_loss(
+                            ids,
+                            training_forward=cfg.training_forward,
+                            phase="A" if backbone_frozen else cfg.phase,
+                            passes=passes,
+                            loss_weights=cfg.ntp_loss_weights_for_passes(passes),
+                            activation_checkpointing=cfg.recirculation_activation_checkpointing,
+                        )
+                    if not bool(torch.isfinite(output.loss).item()):
+                        raise RuntimeError("non-finite training loss")
+                    (output.loss / accumulation_steps).backward()
+                    update_loss += float(output.loss.detach().cpu())
+                    micro_effective_passes = output.effective_passes
+                    update_passes += micro_effective_passes
+                    for key, value in output.metrics.items():
+                        update_metrics[key] += float(value)
+                        update_metric_counts[key] += 1
                 self.state.micro_steps += 1
                 self.state.unique_tokens_seen += tokens_per_micro
                 self.state.model_positions_seen += positions_per_micro
-                self.state.token_equivalent_compute += positions_per_micro * output.effective_passes
+                self.state.token_equivalent_compute += (
+                    positions_per_micro * micro_effective_passes
+                )
 
             grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), cfg.grad_clip)
             if not bool(torch.isfinite(grad_norm).item()):
@@ -791,6 +897,8 @@ class Trainer:
                 "event": "train",
                 "run_segment": self.segment_id,
                 "phase": cfg.phase,
+                "training_forward": cfg.training_forward,
+                "backbone_frozen": backbone_frozen,
                 "optimizer_steps": self.state.optimizer_steps,
                 "micro_steps": self.state.micro_steps,
                 "unique_tokens_seen": self.state.unique_tokens_seen,

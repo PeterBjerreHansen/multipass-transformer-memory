@@ -12,12 +12,15 @@ from typing import Any
 import yaml
 
 from tiny_mistral.config import MistralConfig, tiny_mistral_248m_config
-from tiny_mistral_mptt.flops import estimate_schedule
+from tiny_mistral_mptt.flops import estimate_recirculation_bptt, estimate_schedule
 from tiny_mistral_mptt.config import canonical_variant_name
 
 
 ARCHITECTURE_FIELDS = (
     "variant",
+    "training_forward",
+    "recirculation_activation_checkpointing",
+    "recirculation_bptt_truncate_tokens",
     "sequence_length",
     "memory_window",
     "memory_write_mode",
@@ -94,6 +97,24 @@ def _config(path: str | None) -> MistralConfig:
 def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[int, float]):
     variant = str(case["variant"])
     implementation_variant = canonical_variant_name(variant)
+    training_forward = str(case.get("training_forward", "parallel_multipass"))
+    if training_forward == "recirculation_bptt":
+        if implementation_variant != "recirculation" or int(case["passes"]) != 1:
+            raise ValueError(
+                "recirculation_bptt FLOP cases require recirculation with passes=1"
+            )
+        return estimate_recirculation_bptt(
+            config,
+            linguistic_sequence_length=int(case.get("sequence_length", 2048)),
+            source_layer=int(case["recirculation_source_layer"]),
+            destination_layer=int(case["recirculation_destination_layer"]),
+            recirculation_mode=str(case.get("recirculation_mode", "fixed")),
+            activation_checkpointing=bool(
+                case.get("recirculation_activation_checkpointing", False)
+            ),
+        )
+    if training_forward != "parallel_multipass":
+        raise ValueError(f"unknown training_forward {training_forward!r}")
     if implementation_variant in {"vanilla", "sparse_swa"}:
         probabilities = {1: 1.0}
     else:
@@ -137,7 +158,12 @@ def build_report(
         observed_passes = {int(case["passes"]) for case in group_cases}
         expected_passes = (
             {1}
-            if canonical_variant_name(str(first["variant"])) in {"vanilla", "sparse_swa"}
+            if (
+                str(first.get("training_forward", "parallel_multipass"))
+                == "recirculation_bptt"
+                or canonical_variant_name(str(first["variant"]))
+                in {"vanilla", "sparse_swa"}
+            )
             else set(schedule)
         )
         if not expected_passes.issubset(observed_passes):
@@ -148,6 +174,9 @@ def build_report(
         estimate = _estimate_case(config, first, schedule)
         row = {
             "variant": first["variant"],
+            "training_forward": first.get(
+                "training_forward", "parallel_multipass"
+            ),
             "sequence_length": int(first.get("sequence_length", 2048)),
             "relative_training_flops": estimate.relative_training_flops,
             "weighted_training_flops": estimate.weighted_training_flops,

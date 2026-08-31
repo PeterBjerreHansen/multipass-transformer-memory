@@ -22,6 +22,7 @@ def test_efficiency_suites_are_explicit_and_non_scientific():
         "bank_write_scaling.yaml",
         "stage_5_architectures.yaml",
         "attention_controls.yaml",
+        "forward_modes.yaml",
     }
     assert {path.name for path in SUITES.glob("*.yaml")} == expected
     assert (ROOT / "benchmarks" / "efficiency" / "README.md").exists()
@@ -81,3 +82,18 @@ def test_cuda_batch_qualification_is_k2_bf16_and_does_not_accumulate():
         assert {
             case["batch_size"] for case in raw["cases"] if case["variant"] == variant
         } == {1, 2, 4, 8}
+
+
+def test_forward_mode_suite_keeps_bptt_separate_from_multipass_k():
+    raw = _suite(SUITES / "forward_modes.yaml")
+    merged = [{**raw["defaults"], **case} for case in raw["cases"]]
+    bptt = [case for case in merged if case["training_forward"] == "recirculation_bptt"]
+
+    assert {case["sequence_length"] for case in bptt} == {1024}
+    assert {
+        case.get("recirculation_bptt_truncate_tokens") for case in bptt
+    } == {128, 256, 512, None}
+    assert all(case["variant"] == "recirculation" for case in bptt)
+    assert all(case["passes"] == 1 for case in bptt)
+    assert all(case["phase"] == "A" for case in bptt)
+    assert all(case["recirculation_activation_checkpointing"] for case in bptt)

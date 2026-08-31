@@ -11,7 +11,7 @@ from ..feedback import FeedbackMemory, feedback_shape
 
 
 KVCache = tuple[LayerKVCache, ...]
-DecodeMode = Literal["standard", "feedback"]
+DecodeMode = Literal["standard", "feedback", "paper_recirculation"]
 
 
 def cache_next_position(past_key_values: KVCache) -> int:
@@ -117,6 +117,23 @@ class RecurrentState:
     @property
     def feedback_enabled(self) -> bool:
         return self.decode_mode == "feedback"
+
+    @property
+    def next_position(self) -> int:
+        return cache_next_position(self.past_key_values)
+
+
+@dataclass(frozen=True)
+class PaperRecirculationState:
+    """One replayed KV stream for the paper's diagonal recurrence."""
+
+    past_key_values: KVCache
+    next_token_logits: torch.Tensor
+
+    def __post_init__(self) -> None:
+        if self.next_token_logits.ndim != 2:
+            raise ValueError("next_token_logits must be [B,V]")
+        cache_next_position(self.past_key_values)
 
     @property
     def next_position(self) -> int:

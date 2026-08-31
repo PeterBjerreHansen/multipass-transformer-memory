@@ -20,12 +20,18 @@ from tiny_mistral_mptt.model_factory import load_variant_from_config
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Evaluate exact full-sequence validation NLL at one pass depth."
+        description="Evaluate teacher-forced validation NLL under explicit forward semantics."
     )
     parser.add_argument("--config", required=True)
     add_checkpoint_arguments(parser)
     parser.add_argument("--evaluation-data-dir", default=None)
     parser.add_argument("--passes", type=int, required=True)
+    parser.add_argument(
+        "--forward",
+        choices=("parallel_multipass", "paper_recirculation"),
+        default=None,
+        help="default: validation_forward from the experiment config",
+    )
     parser.add_argument("--max-blocks", type=int, default=None)
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--output", default=None)
@@ -48,16 +54,19 @@ def main() -> None:
         memory_write_mode=cfg.memory_write_mode,
         memory_write_stride=cfg.memory_write_stride,
     )
+    forward_mode = cfg.validation_forward if args.forward is None else args.forward
     result = evaluate_nll(
         model,
         dataset,
         device=device,
         passes=args.passes,
+        forward_mode=forward_mode,
         max_blocks=args.max_blocks,
     )
     document = {
         "evaluation_kind": "full_sequence_validation_nll",
         "semantics": {
+            "forward": forward_mode,
             "passes": args.passes,
             "teacher_forced": True,
             "generation": False,

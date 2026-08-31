@@ -378,6 +378,12 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
         canonical["ntp_pass_loss_weights_by_k"] = canonical.get("pass_loss_weights_by_k")
     canonical.setdefault("fbt_normalize_gate_input", False)
     canonical.setdefault("fbt_latent_jitter_std", 0.0)
+    canonical.setdefault("training_forward", "parallel_multipass")
+    canonical.setdefault("recirculation_activation_checkpointing", False)
+    canonical.setdefault("recirculation_bptt_truncate_tokens", None)
+    canonical.setdefault("freeze_pretrained_until_tokens", 0)
+    canonical.setdefault("pretrained_weight_decay", None)
+    canonical.setdefault("added_weight_decay", None)
     canonical.pop("pass_loss_weights", None)
     canonical.pop("pass_loss_weights_by_k", None)
     canonical = {
@@ -403,6 +409,7 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
         "eval_every_tokens",
         "eval_batches",
         "eval_passes",
+        "validation_forward",
         "train_log_every_tokens",
         "early_stop",
         "checkpoint_every_tokens",

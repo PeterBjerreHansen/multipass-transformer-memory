@@ -15,6 +15,11 @@ Research infrastructure must not change ordinary vanilla behavior silently.
 Baseline tests, HF-comparison scripts, and `VANILLA_SOURCE.sha256` are the
 guardrails.
 
+The local cache API additionally accepts `detach_cache`. Its default remains
+`true`, preserving ordinary inference and multipass behavior. Paper-style BPTT
+sets it to `false` only for differentiable recurrent caches; the vanilla
+numerical-equivalence tests remain authoritative for the default path.
+
 Memory Attention and Strided Attention add two tested substrate capabilities. Self-attention K/V
 entries can carry a validity mask, and selected layers can use a bounded
 dense-recent/fixed-stride-old mask. Write-only `<MEM>` positions retain their
@@ -28,6 +33,14 @@ The `fbt` variant is based on the asymmetric latent-feedback construction in
 Xi Wang et al., *Full-bandwidth Transformer*, arXiv:2608.08888. This repository
 uses a TinyMistral retrofit and does not claim to reproduce the paper's full
 pretraining recipe.
+
+## Recirculation architecture reference
+
+The paper-forward implementation follows Michael C. Mozer et al.,
+*Recirculation*, arXiv:2608.17981v2. In particular, the same token is read out
+before its replayed upper-layer KV state becomes strict-past context for the
+next token. The checked-in paper-faithful training policy uses full BPTT;
+finite TBPTT windows are explicitly labeled repository approximations.
 
 ## Earlier MPTT research reference
 

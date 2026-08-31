@@ -21,6 +21,39 @@ Changing `batch_size` can therefore be both an engineering change and a
 scientific optimizer-batch change. The benchmark tooling reports the distinction
 rather than hiding it.
 
+## Recirculation forward and truncation qualification
+
+Run the paper-forward engineering suite before selecting a BPTT configuration:
+
+```bash
+uv run python scripts/benchmark_training_efficiency.py \
+  --suite benchmarks/efficiency/suites/forward_modes.yaml \
+  --output benchmarks/efficiency/results/cuda_forward_modes.json
+```
+
+Every recurrent case keeps the 1,024-token forward sequence fixed. The suite
+compares full BPTT with TBPTT windows 128, 256, and 512, all using activation
+checkpointing, plus whole-block Recirculation and dense Memory Attention
+references. A TBPTT row carries its window explicitly in the JSON. Its loss is
+forward-equivalent, but its gradients are truncated at window boundaries.
+
+The suite starts with hardware microbatch 1. If the GPU can fit more, repeat the
+feasible window at larger microbatches. For a scientific optimizer batch of 32
+sequences, reduce gradient accumulation as microbatch increases. Peak memory
+and runtime choose feasible execution settings; held-out NLL and short training
+curves choose among gradient windows and learning rates.
+
+Afterward, run `make estimate-flops-forward-modes`. The estimator counts the
+ordinary stack, only the layers above the recirculation destination on replay,
+one LM-head readout, the adaptive controller, and activation-checkpoint
+recomputation. It conservatively does not discount the small backward savings
+at TBPTT boundaries.
+
+For token-diagonal recurrence, `stack_iterations_per_token: 2` means one
+ordinary readout plus one optimized upper-stack replay. It is not two complete
+backbone passes. Use measured runtime or an architecture-aware FLOP estimator,
+not this iteration count, for compute-axis claims.
+
 ## Relative training FLOP estimates
 
 The README results table uses a configuration-aware relative training-FLOP

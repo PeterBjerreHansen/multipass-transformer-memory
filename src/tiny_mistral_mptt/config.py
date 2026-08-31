@@ -79,6 +79,8 @@ MULTISCALE_MEMORY_ATTENTION_VARIANTS = {
 }
 SUPPORTED_LR_SCHEDULES = {"constant", "cosine", "piecewise_linear"}
 SUPPORTED_AUTOCAST_DTYPES = {"bfloat16"}
+SUPPORTED_TRAINING_FORWARDS = {"parallel_multipass", "recirculation_bptt"}
+SUPPORTED_VALIDATION_FORWARDS = {"parallel_multipass", "paper_recirculation"}
 
 
 def _coerce_pass_probabilities(raw: Any) -> dict[int, float]:
@@ -319,10 +321,13 @@ class ExperimentConfig:
     lr_schedule: dict[str, Any] | None = None
 
     weight_decay: float = 0.01
+    pretrained_weight_decay: float | None = None
+    added_weight_decay: float | None = None
     grad_clip: float = 1.0
     eval_every_tokens: int = 32_768
     eval_batches: int = 16
     eval_passes: int = 1
+    validation_forward: str = "parallel_multipass"
     # Zero preserves the historical per-update training journal. Long runs
     # should set this to a larger token interval; validation and checkpoint
     # events remain independently recorded at their own cadences.
@@ -336,6 +341,16 @@ class ExperimentConfig:
     # Architecture/training protocol knobs. Explicit NTP names and historical
     # bank field names remain serialized for checkpoint compatibility.
     phase: str = "B"
+    training_forward: str = "parallel_multipass"
+    recirculation_activation_checkpointing: bool = False
+    # None is paper-faithful full BPTT. A positive value explicitly selects a
+    # truncated-gradient approximation while preserving the forward KV state.
+    recirculation_bptt_truncate_tokens: int | None = None
+    # In an integrated retrofit run, added parameters train immediately while
+    # pretrained parameters remain frozen up to this linguistic-token count.
+    # The optimizer contains both groups from the start, so the transition does
+    # not reset added-parameter AdamW state.
+    freeze_pretrained_until_tokens: int = 0
     pass_schedule: list[dict[str, Any]] | None = None
     ntp_pass_loss_weights: list[float] | None = None
     ntp_pass_loss_weights_by_k: dict[int, list[float]] | None = None
@@ -438,6 +453,14 @@ class ExperimentConfig:
     def added_lr(self) -> float:
         return self.learning_rate if self.added_learning_rate is None else float(self.added_learning_rate)
 
+    @property
+    def pretrained_wd(self) -> float:
+        return self.weight_decay if self.pretrained_weight_decay is None else float(self.pretrained_weight_decay)
+
+    @property
+    def added_wd(self) -> float:
+        return self.weight_decay if self.added_weight_decay is None else float(self.added_weight_decay)
+
     def ntp_loss_weights_for_passes(self, passes: int) -> list[float] | None:
         if passes < 1:
             raise ValueError("passes must be positive")
@@ -459,6 +482,31 @@ class ExperimentConfig:
             raise ValueError(f"variant must be one of {sorted(SUPPORTED_VARIANTS)}; got {self.variant!r}")
         if self.phase not in {"A", "B"}:
             raise ValueError("phase must be 'A' or 'B'")
+        if self.training_forward not in SUPPORTED_TRAINING_FORWARDS:
+            raise ValueError(
+                "training_forward must be parallel_multipass or recirculation_bptt"
+            )
+        if not isinstance(self.recirculation_activation_checkpointing, bool):
+            raise ValueError("recirculation_activation_checkpointing must be boolean")
+        if (
+            self.recirculation_bptt_truncate_tokens is not None
+            and self.recirculation_bptt_truncate_tokens < 2
+        ):
+            raise ValueError(
+                "recirculation_bptt_truncate_tokens must be at least 2"
+            )
+        if self.freeze_pretrained_until_tokens < 0:
+            raise ValueError("freeze_pretrained_until_tokens must be non-negative")
+        if self.freeze_pretrained_until_tokens:
+            if self.phase != "B":
+                raise ValueError(
+                    "freeze_pretrained_until_tokens is an integrated Phase-B policy"
+                )
+            if self.freeze_pretrained_until_tokens >= self.max_unique_tokens:
+                raise ValueError(
+                    "freeze_pretrained_until_tokens must be below max_unique_tokens; "
+                    "use Phase A for a fully frozen run"
+                )
         if self.resume_from and self.init_from:
             raise ValueError("resume_from and init_from are mutually exclusive")
         if self.autocast_dtype is not None:
@@ -490,12 +538,33 @@ class ExperimentConfig:
         validate_lr_schedule(self.lr_schedule)
         if self.weight_decay < 0 or self.grad_clip <= 0:
             raise ValueError("weight_decay must be non-negative and grad_clip positive")
+        for name, value in (
+            ("pretrained_weight_decay", self.pretrained_weight_decay),
+            ("added_weight_decay", self.added_weight_decay),
+        ):
+            if value is not None and (
+                not math.isfinite(float(value)) or float(value) < 0
+            ):
+                raise ValueError(f"{name} must be finite and non-negative")
         if self.eval_every_tokens < 0 or self.eval_batches < 0:
             raise ValueError("evaluation cadence/count must be non-negative")
         if self.train_log_every_tokens < 0:
             raise ValueError("train_log_every_tokens must be non-negative")
         if self.eval_passes < 1:
             raise ValueError("eval_passes must be positive")
+        if self.validation_forward not in SUPPORTED_VALIDATION_FORWARDS:
+            raise ValueError(
+                "validation_forward must be parallel_multipass or paper_recirculation"
+            )
+        if self.validation_forward == "paper_recirculation":
+            if self.variant != "recirculation":
+                raise ValueError(
+                    "paper_recirculation validation requires variant=recirculation"
+                )
+            if self.eval_passes != 1:
+                raise ValueError(
+                    "paper_recirculation validation has no multipass K axis; use eval_passes=1"
+                )
         self.early_stop = _coerce_early_stop(self.early_stop)
         if self.early_stop is not None:
             if self.eval_every_tokens <= 0:
@@ -691,6 +760,28 @@ class ExperimentConfig:
             raise ValueError("fbt_* fields are supported only for variant=fbt")
         schedule = self.normalized_pass_schedule()
         pass_counts = {passes for stage in schedule for passes in stage["probabilities"]}
+        if self.training_forward == "recirculation_bptt":
+            if self.variant != "recirculation":
+                raise ValueError(
+                    "recirculation_bptt is implemented only for variant=recirculation"
+                )
+            if pass_counts != {1}:
+                raise ValueError(
+                    "recirculation_bptt uses pass_schedule K=1; K is not a diagonal-recurrence axis"
+                )
+            if (
+                self.ntp_pass_loss_weights is not None
+                or self.ntp_pass_loss_weights_by_k is not None
+            ):
+                raise ValueError("recirculation_bptt does not use multipass loss weights")
+        elif self.recirculation_activation_checkpointing:
+            raise ValueError(
+                "recirculation_activation_checkpointing requires recirculation_bptt"
+            )
+        elif self.recirculation_bptt_truncate_tokens is not None:
+            raise ValueError(
+                "recirculation_bptt_truncate_tokens requires recirculation_bptt"
+            )
         single_pass_variants = {"vanilla", "sparse_swa", "swa_transformer", "strided_attention"}
         if self.variant in single_pass_variants and pass_counts != {1}:
             raise ValueError(f"{self.variant} supports only one-pass training")
@@ -698,7 +789,11 @@ class ExperimentConfig:
             raise ValueError(f"{self.variant} supports eval_passes=1 only")
         if self.phase == "A" and self.variant in single_pass_variants:
             raise ValueError(f"{self.variant} has no Phase-A parameters")
-        if self.phase == "A" and any(passes < 2 for passes in pass_counts):
+        if (
+            self.phase == "A"
+            and self.training_forward == "parallel_multipass"
+            and any(passes < 2 for passes in pass_counts)
+        ):
             raise ValueError("Phase A for multipass variants requires at least two passes on every batch")
         if self.ntp_pass_loss_weights is not None and self.ntp_pass_loss_weights_by_k is not None:
             raise ValueError(

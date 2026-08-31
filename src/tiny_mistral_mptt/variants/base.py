@@ -30,6 +30,32 @@ class ExperimentalVariant(nn.Module):
     ) -> TrainOutput:
         raise NotImplementedError
 
+    def compute_training_loss(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        training_forward: str,
+        phase: str,
+        passes: int,
+        loss_weights: Sequence[float] | None,
+        activation_checkpointing: bool = False,
+    ) -> TrainOutput:
+        """Dispatch the configured training semantics without changing models."""
+        if training_forward != "parallel_multipass":
+            raise ValueError(
+                f"{self.variant_name} does not support training_forward={training_forward!r}"
+            )
+        if activation_checkpointing:
+            raise ValueError(
+                "recirculation activation checkpointing requires recirculation_bptt"
+            )
+        return self.compute_loss(
+            input_ids,
+            phase=phase,
+            passes=passes,
+            loss_weights=loss_weights,
+        )
+
     def added_parameters(self) -> Iterable[nn.Parameter]:
         """Parameters absent from the validated vanilla backbone."""
         return ()

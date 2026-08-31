@@ -5,8 +5,15 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from ..inference import DecodeMode, prefill_recurrent, recurrent_decode_step
+from ..inference import (
+    DecodeMode,
+    paper_recirculation_decode_step,
+    prefill_paper_recirculation,
+    prefill_recurrent,
+    recurrent_decode_step,
+)
 from ..variants.multipass import MultiPassVariant
+from ..variants.recirculation import RecirculationVariant
 
 
 try:  # Optional dependency: imported only for the external benchmark battery.
@@ -132,12 +139,19 @@ def score_token_continuation_recurrent(
         return 0.0, True
 
     prompt_ids = torch.tensor([prompt], dtype=torch.long, device=device)
-    state = prefill_recurrent(
-        model,
-        prompt_ids,
-        passes=prefill_passes,
-        decode_mode=decode_mode,
-    )
+    if decode_mode == "paper_recirculation":
+        if not isinstance(model, RecirculationVariant):
+            raise ValueError("paper_recirculation requires RecirculationVariant")
+        if prefill_passes != 1:
+            raise ValueError("paper_recirculation has no prompt K axis; use prefill_passes=1")
+        state = prefill_paper_recirculation(model, prompt_ids)
+    else:
+        state = prefill_recurrent(
+            model,
+            prompt_ids,
+            passes=prefill_passes,
+            decode_mode=decode_mode,
+        )
     total = 0.0
     greedy = True
     for index, target_id in enumerate(targets):
@@ -151,7 +165,11 @@ def score_token_continuation_recurrent(
         # consumed.  Avoiding that extra cache write preserves max_length + 1
         # harness scoring semantics.
         if index + 1 < len(targets):
-            state = recurrent_decode_step(model, state, target)
+            if decode_mode == "paper_recirculation":
+                assert isinstance(model, RecirculationVariant)
+                state = paper_recirculation_decode_step(model, state, target)
+            else:
+                state = recurrent_decode_step(model, state, target)
     return total, greedy
 
 
@@ -179,12 +197,19 @@ def generate_recurrent(
     if max_new_tokens == 0:
         return input_ids
 
-    state = prefill_recurrent(
-        model,
-        input_ids,
-        passes=prefill_passes,
-        decode_mode=decode_mode,
-    )
+    if decode_mode == "paper_recirculation":
+        if not isinstance(model, RecirculationVariant):
+            raise ValueError("paper_recirculation requires RecirculationVariant")
+        if prefill_passes != 1:
+            raise ValueError("paper_recirculation has no prompt K axis; use prefill_passes=1")
+        state = prefill_paper_recirculation(model, input_ids)
+    else:
+        state = prefill_recurrent(
+            model,
+            input_ids,
+            passes=prefill_passes,
+            decode_mode=decode_mode,
+        )
     eos = model.config.eos_token_id if eos_token_id is None else eos_token_id
     result = input_ids
     for step in range(max_new_tokens):
@@ -203,7 +228,11 @@ def generate_recurrent(
             break
         if step == max_new_tokens - 1:
             break
-        state = recurrent_decode_step(model, state, next_token)
+        if decode_mode == "paper_recirculation":
+            assert isinstance(model, RecirculationVariant)
+            state = paper_recirculation_decode_step(model, state, next_token)
+        else:
+            state = recurrent_decode_step(model, state, next_token)
     return result
 
 
@@ -248,8 +277,10 @@ def _build_lm_eval_class():
             prefill_passes: int,
         ):
             super().__init__()
-            if decode_mode not in {"standard", "feedback"}:
-                raise ValueError("decode_mode must be 'standard' or 'feedback'")
+            if decode_mode not in {"standard", "feedback", "paper_recirculation"}:
+                raise ValueError(
+                    "decode_mode must be standard, feedback, or paper_recirculation"
+                )
             if prefill_passes < 1:
                 raise ValueError("prefill_passes must be positive")
             if not isinstance(model, MultiPassVariant):
@@ -257,6 +288,15 @@ def _build_lm_eval_class():
                     raise ValueError("vanilla models require prefill_passes=1")
                 if decode_mode == "feedback":
                     raise ValueError("vanilla models do not implement feedback decoding")
+                if decode_mode == "paper_recirculation":
+                    raise ValueError("vanilla models do not implement recurrent decoding")
+            if decode_mode == "paper_recirculation":
+                if not isinstance(model, RecirculationVariant):
+                    raise ValueError("paper_recirculation requires RecirculationVariant")
+                if prefill_passes != 1:
+                    raise ValueError(
+                        "paper_recirculation has no prompt K axis; use prefill_passes=1"
+                    )
             self.model = model
             self._device = torch.device(device)
             self._tokenizer_facade = _TokenizerFacade(tokenizer_path)

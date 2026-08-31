@@ -51,6 +51,18 @@ def make_fbt(seed=123):
     )
 
 
+def make_adaptive_recirculation(seed=123):
+    torch.manual_seed(17)
+    return build_variant(
+        "recirculation",
+        MistralForCausalLM(micro_config(), attention_backend="reference"),
+        architecture_seed=seed,
+        recirculation_source_layer=1,
+        recirculation_destination_layer=0,
+        recirculation_mode="adaptive",
+    )
+
+
 
 def test_phase_a_fixed_two_pass_training_counts_compute_and_freezes_backbone(tmp_path):
     data_dir = tmp_path / "data"
@@ -101,6 +113,8 @@ def test_phase_b_has_independent_pretrained_and_added_learning_rates(tmp_path):
         pass_schedule=[{"probabilities": {2: 1.0}}],
         pretrained_learning_rate=1e-6,
         added_learning_rate=1e-4,
+        pretrained_weight_decay=0.01,
+        added_weight_decay=1e-4,
         lr_schedule={"type": "constant"},
         eval_every_tokens=0,
         eval_batches=0,
@@ -109,6 +123,145 @@ def test_phase_b_has_independent_pretrained_and_added_learning_rates(tmp_path):
     trainer = Trainer(model=make_fbt(), config=cfg, train_data=train, validation_data=val, device=torch.device("cpu"))
     groups = {group["group_name"]: group["base_lr"] for group in trainer.optimizer.param_groups}
     assert groups == {"pretrained": 1e-6, "added": 1e-4}
+    decay = {
+        group["group_name"]: group["weight_decay"]
+        for group in trainer.optimizer.param_groups
+    }
+    assert decay == {"pretrained": 0.01, "added": 1e-4}
+
+
+def test_integrated_freeze_unfreezes_without_resetting_added_optimizer_state(
+    tmp_path,
+):
+    data_dir = tmp_path / "data-integrated-freeze"
+    make_artifact(data_dir)
+    train = PackedTokenDataset(data_dir, "train")
+    val = PackedTokenDataset(data_dir, "validation")
+    run_dir = tmp_path / "integrated-freeze"
+    cfg = ExperimentConfig(
+        variant="recirculation",
+        recirculation_source_layer=1,
+        recirculation_destination_layer=0,
+        recirculation_mode="adaptive",
+        training_forward="recirculation_bptt",
+        freeze_pretrained_until_tokens=16,
+        phase="B",
+        model_dir="unused",
+        data_dir=str(data_dir),
+        output_dir=str(run_dir),
+        device="cpu",
+        attention_backend="reference",
+        max_unique_tokens=32,
+        batch_size=1,
+        grad_accum_steps=1,
+        pretrained_learning_rate=1e-3,
+        added_learning_rate=1e-3,
+        lr_schedule={"type": "constant"},
+        eval_every_tokens=0,
+        eval_batches=0,
+        checkpoint_every_tokens=0,
+    )
+    first_model = make_adaptive_recirculation()
+    initial_backbone = {
+        name: value.detach().clone()
+        for name, value in first_model.backbone.state_dict().items()
+    }
+    first = Trainer(
+        model=first_model,
+        config=cfg,
+        train_data=train,
+        validation_data=val,
+        device=torch.device("cpu"),
+    )
+    first.train(until_unique_tokens=16)
+
+    for name, value in first_model.backbone.state_dict().items():
+        torch.testing.assert_close(value, initial_backbone[name], atol=0, rtol=0)
+    checkpoint = candidate_checkpoint_paths(run_dir)[0]
+    added_parameter = next(iter(first_model.added_parameters()))
+    first_added_step = int(first.optimizer.state[added_parameter]["step"].item())
+    assert first_added_step == 2
+    pretrained_group = next(
+        group for group in first.optimizer.param_groups if group["group_name"] == "pretrained"
+    )
+    assert all(parameter not in first.optimizer.state for parameter in pretrained_group["params"])
+
+    resumed_cfg = ExperimentConfig.from_dict(
+        {**cfg.to_dict(), "resume_from": str(checkpoint)}
+    )
+    resumed_model = make_adaptive_recirculation()
+    resumed = Trainer(
+        model=resumed_model,
+        config=resumed_cfg,
+        train_data=train,
+        validation_data=val,
+        device=torch.device("cpu"),
+        allow_source_mismatch=True,
+    )
+    assert all(parameter.requires_grad for parameter in resumed_model.backbone.parameters())
+    resumed_added = next(iter(resumed_model.added_parameters()))
+    assert int(resumed.optimizer.state[resumed_added]["step"].item()) == first_added_step
+
+    resumed.train()
+
+    assert int(resumed.optimizer.state[resumed_added]["step"].item()) == 4
+    assert any(
+        not torch.equal(value, initial_backbone[name])
+        for name, value in resumed_model.backbone.state_dict().items()
+    )
+    records = [
+        json.loads(line) for line in (run_dir / "metrics.jsonl").read_text().splitlines()
+    ]
+    train_records = [record for record in records if record["event"] == "train"]
+    assert [record["backbone_frozen"] for record in train_records] == [True, True, False, False]
+
+
+def test_trainer_backpropagates_tbptt_chunks_before_advancing(tmp_path):
+    data_dir = tmp_path / "data-tbptt"
+    make_artifact(data_dir)
+    train = PackedTokenDataset(data_dir, "train")
+    val = PackedTokenDataset(data_dir, "validation")
+    model = make_adaptive_recirculation()
+    cfg = ExperimentConfig(
+        variant="recirculation",
+        recirculation_source_layer=1,
+        recirculation_destination_layer=0,
+        recirculation_mode="adaptive",
+        training_forward="recirculation_bptt",
+        recirculation_activation_checkpointing=True,
+        recirculation_bptt_truncate_tokens=2,
+        phase="A",
+        model_dir="unused",
+        data_dir=str(data_dir),
+        output_dir=str(tmp_path / "tbptt"),
+        device="cpu",
+        attention_backend="reference",
+        max_unique_tokens=8,
+        batch_size=1,
+        grad_accum_steps=1,
+        added_learning_rate=1e-3,
+        lr_schedule={"type": "constant"},
+        pass_schedule=[{"probabilities": {1: 1.0}}],
+        eval_every_tokens=0,
+        eval_batches=0,
+        checkpoint_every_tokens=0,
+    )
+
+    state = Trainer(
+        model=model,
+        config=cfg,
+        train_data=train,
+        validation_data=val,
+        device=torch.device("cpu"),
+    ).train()
+
+    assert state.optimizer_steps == 1
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "tbptt" / "metrics.jsonl").read_text().splitlines()
+    ]
+    train_record = next(record for record in records if record["event"] == "train")
+    assert train_record["recirculation_bptt_truncate_tokens"] == 2.0
 
 
 def test_training_journal_can_aggregate_over_token_intervals(tmp_path):

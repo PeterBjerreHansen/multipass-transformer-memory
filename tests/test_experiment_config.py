@@ -293,6 +293,74 @@ def test_adaptive_recirculation_adds_a_phase_a_controller():
         )
 
 
+def test_recirculation_bptt_is_distinct_from_multipass_k() -> None:
+    cfg = _config(
+        variant="recirculation",
+        phase="A",
+        training_forward="recirculation_bptt",
+        recirculation_activation_checkpointing=True,
+        pass_schedule=[{"probabilities": {1: 1.0}}],
+        recirculation_mode="adaptive",
+        recirculation_source_layer=3,
+        recirculation_destination_layer=1,
+    )
+    assert cfg.training_forward == "recirculation_bptt"
+
+    truncated = _config(
+        variant="recirculation",
+        phase="A",
+        training_forward="recirculation_bptt",
+        recirculation_bptt_truncate_tokens=128,
+        pass_schedule=[{"probabilities": {1: 1.0}}],
+        recirculation_mode="adaptive",
+        recirculation_source_layer=3,
+        recirculation_destination_layer=1,
+    )
+    assert truncated.recirculation_bptt_truncate_tokens == 128
+
+    with pytest.raises(ValueError, match="pass_schedule K=1"):
+        _config(
+            variant="recirculation",
+            phase="A",
+            training_forward="recirculation_bptt",
+            recirculation_mode="adaptive",
+            recirculation_source_layer=3,
+            recirculation_destination_layer=1,
+        )
+    with pytest.raises(ValueError, match="does not use multipass loss weights"):
+        _config(
+            variant="recirculation",
+            phase="A",
+            training_forward="recirculation_bptt",
+            pass_schedule=[{"probabilities": {1: 1.0}}],
+            pass_loss_weights=[1.0],
+            recirculation_mode="adaptive",
+            recirculation_source_layer=3,
+            recirculation_destination_layer=1,
+        )
+    with pytest.raises(ValueError, match="implemented only"):
+        _config(
+            training_forward="recirculation_bptt",
+            pass_schedule=[{"probabilities": {1: 1.0}}],
+        )
+    with pytest.raises(ValueError, match="requires recirculation_bptt"):
+        _config(recirculation_bptt_truncate_tokens=128)
+
+
+def test_integrated_freeze_policy_requires_a_later_phase_b_transition() -> None:
+    cfg = _config(freeze_pretrained_until_tokens=50, max_unique_tokens=100)
+    assert cfg.freeze_pretrained_until_tokens == 50
+
+    with pytest.raises(ValueError, match="integrated Phase-B"):
+        _config(
+            phase="A",
+            freeze_pretrained_until_tokens=50,
+            max_unique_tokens=100,
+        )
+    with pytest.raises(ValueError, match="below max_unique_tokens"):
+        _config(freeze_pretrained_until_tokens=100, max_unique_tokens=100)
+
+
 def test_bank_recirculation_hybrid_requires_both_configuration_contracts():
     cfg = _config(
         variant="bank_recirculation_hybrid",

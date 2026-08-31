@@ -15,6 +15,18 @@ The trainer has two mechanics:
 
 Phase names describe optimization mechanics, not research-stage names.
 
+An integrated retrofit remains one Phase-B trajectory. Set
+`freeze_pretrained_until_tokens` to train only architecture-added parameters at
+the beginning of that trajectory. At the boundary, the trainer enables the
+pretrained parameters without rebuilding the optimizer. The added group keeps
+its AdamW moments and step count; the pretrained group has no optimizer state
+until it first receives a gradient. The threshold must align to a complete
+microbatch, and an optimizer update is shortened when necessary so it cannot
+straddle the boundary.
+
+Use Phase A, not an integrated freeze threshold, when the backbone should stay
+frozen for the entire run.
+
 ## Pass objective
 
 For pass losses `L_1 ... L_K`, configured non-negative loss weights are
@@ -32,12 +44,50 @@ K-specific loss weights make Phase A estimate `0.9 L2 + 0.1 L3` with 2.1
 average passes. Phase B also retains a first-pass loss. One-pass controls such
 as Strided Attention use K=1. Runnable protocols live under `benchmarks/development/`.
 
+## Recirculation training forwards
+
+`training_forward: parallel_multipass` is the existing whole-block objective.
+It computes K complete sequence passes, and `pass_schedule` plus the NTP loss
+weights define the training objective.
+
+`training_forward: recirculation_bptt` is a different computation, not K=2.
+For each token it:
+
+1. performs the ordinary first iteration and reads out its logits;
+2. mixes the source and destination residuals;
+3. replays the token above the destination layer and replaces those KV entries;
+4. lets the next token attend to the replayed strict-past cache.
+
+The `pass_schedule` must therefore be K=1 and multipass loss weights are
+invalid. `recirculation_activation_checkpointing: true` recomputes token steps
+during backward to reduce saved activations without changing gradients.
+
+By default, `recirculation_bptt_truncate_tokens: null` propagates gradients
+through the complete packed sequence. This is the paper-faithful BPTT policy.
+A positive value selects explicit TBPTT: the forward KV values continue across
+the complete sequence, but the cache is detached every N input positions. The
+trainer backpropagates each chunk before computing the next one, so completed
+graphs can be released. A finite window changes the gradient estimator and must
+be qualified and reported; it is not a harmless hardware switch.
+
+The legacy `effective_passes` and `token_equivalent_compute` counters record two
+recurrence iterations for this forward. The second iteration replays only the
+layers above the destination, not the full backbone. Training records therefore
+also include the replayed-layer count and fraction. Use those fields with the
+FLOP estimator—or measured accelerator time—instead of interpreting the legacy
+2x counter as a FLOP ratio.
+
 ## Parameter groups and schedules
 
 Phase B maintains separate AdamW groups for pretrained and architecture-added
 parameters. Each group has its own base learning rate. A common schedule
 multiplier is supplied by `constant`, `cosine`, or `piecewise_linear` schedule
 logic.
+
+`pretrained_weight_decay` and `added_weight_decay` optionally separate the two
+groups' AdamW decay. If either is omitted, it inherits `weight_decay`. This
+allows a common-checkpoint retrofit to retain the backbone's established decay
+while reproducing a controller-specific paper setting.
 
 ## `init_from`, `resume_from`, and auto-resume
 
@@ -62,6 +112,13 @@ linguistic tokens / nominal optimizer update = batch_size * grad_accum_steps * L
 A larger hardware microbatch can therefore change the scientific optimizer
 batch when accumulation is unchanged. It must not be treated as a harmless
 hardware default.
+
+The planned recirculation studies target 32 sequences per optimizer update. A
+target GPU may use microbatch 1 with accumulation 32, microbatch 2 with
+accumulation 16, and so on. Preserve `batch_size * grad_accum_steps` when the
+goal is only hardware fit. Learning rate still requires qualification for this
+model and optimizer batch; copying a paper value is a starting hypothesis, not
+evidence that it is optimal.
 
 The trainer consumes whole packed blocks. An exact linguistic-token budget must
 be divisible by `batch_size * linguistic_tokens_per_block`; the final optimizer
@@ -134,3 +191,8 @@ other interruption-sensitive runs.
 Optional `snapshot_at_tokens` writes weights-only safetensors for scientific
 analysis. Snapshots never drive resume; resumable generation checkpoints remain
 the trajectory source of truth.
+
+Training logs already record input tokens, model positions, token-equivalent
+compute, elapsed time, and the realized pass schedule. Use one trajectory per
+arm, then rescale the x-axis for data, compute, or wall-time views during
+analysis. Do not rerun an arm solely to produce a different plot axis.
