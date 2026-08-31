@@ -1,14 +1,14 @@
-name: common_checkpoint_retrofit
+name: common_checkpoint_comparison
 status: planned
 question: From one pretrained checkpoint, do feedback mechanisms improve a continuously trained backbone when their added pathways receive a 5M-token frozen-backbone retrofit window?
 arms:
   - {id: vanilla_100m, config: vanilla_100m.yaml}
   - {id: recirculation_bptt_100m, config: recirculation_bptt_100m.yaml}
-  - {id: recirculation_parallel_100m, config: recirculation_parallel_100m.yaml}
-  - {id: dense_memory_attention_parallel_100m, config: dense_memory_attention_parallel_100m.yaml}
+  - {id: recirculation_multipass_100m, config: recirculation_multipass_100m.yaml}
+  - {id: dense_memory_attention_multipass_100m, config: dense_memory_attention_multipass_100m.yaml}
 comparisons:
   - name: recirculation_training_policy
-    arms: [recirculation_bptt_100m, recirculation_parallel_100m]
+    arms: [recirculation_bptt_100m, recirculation_multipass_100m]
     experimental_axes:
       - training_forward
       - recirculation_activation_checkpointing
@@ -22,8 +22,8 @@ comparisons:
     arms:
       - vanilla_100m
       - recirculation_bptt_100m
-      - recirculation_parallel_100m
-      - dense_memory_attention_parallel_100m
+      - recirculation_multipass_100m
+      - dense_memory_attention_multipass_100m
     experimental_axes:
       - variant
       - training_forward

@@ -3,6 +3,11 @@
 Scientific configuration is colocated with the study that owns it. The
 repository intentionally has no central `configs/` tree.
 
+Only `benchmarks/development/` and `benchmarks/core/` are active study
+namespaces. `benchmarks/historical/` preserves superseded manifests and raw
+artifacts, but the verifier does not discover or reinterpret them. Historical
+configs deliberately retain the paths recorded when they ran.
+
 A development or core study has the following shape:
 
 ```text

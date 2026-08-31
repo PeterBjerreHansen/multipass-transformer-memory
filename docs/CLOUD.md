@@ -4,28 +4,27 @@ Cloud execution is provider-agnostic. A serious run assumes a Linux CUDA host,
 a persistent filesystem, the pinned model/data inputs, and this repository's
 locked Python environment.
 
-## Qualify batching first
+## Qualify the forward policy and batching first
 
-The 2048-linguistic-token development reference uses `batch_size=1` and
-`grad_accum_steps=1`. GPU capacity alone is not evidence for changing the
-optimizer batch.
+The active paper configs use 1,024-token blocks and an effective optimizer
+batch of 32 sequences. The checked-in microbatch 1 and accumulation 32 are a
+portable starting point; GPU capacity alone is not evidence for changing that
+effective batch.
 
 On the intended GPU:
 
 ```bash
 uv sync --extra data --extra eval
 make check
-make efficiency-cuda-batch-qualification
-make select-cuda-batch \
-  RESULT=benchmarks/efficiency/results/cuda_batch_qualification.json
+make efficiency-cuda-forward-modes
 ```
 
-The qualification compares K=2 adaptive Recirculation and dense Memory Attention with BF16
-autocast and accumulation 1 over microbatches 1/2/4/8. OOM cases are retained.
-The selector chooses the smallest common successful batch reaching the
-configured efficiency threshold for both architectures. If this is larger than
-1, the scientific optimizer batch has changed and must be qualified before a
-core study is locked.
+The suite compares full BPTT, candidate TBPTT windows, whole-block K=2
+Recirculation, dense Memory Attention, and vanilla with BF16 autocast. Rerun the
+selected feasible policies at candidate microbatches on the target GPU, then
+reduce accumulation so the product remains 32. If that product or a learning
+rate changes, qualify it as a scientific protocol change before locking a core
+study.
 
 For memory-token models, benchmark output distinguishes linguistic sequence
 length from expanded physical model positions.
@@ -150,9 +149,9 @@ Example for a serious run:
 ./scripts/start-and-watch \
   --host <vm-ip> \
   --vm-id <verda-vm-id> \
-  --config benchmarks/core/stage_5_cloud_100m/vanilla_100m.yaml \
-  --remote-output benchmarks/core/stage_5_cloud_100m/results/vanilla_100m \
-  --local-output benchmarks/core/stage_5_cloud_100m/results/vanilla_100m \
+  --config benchmarks/core/<locked-study>/<arm>.yaml \
+  --remote-output benchmarks/core/<locked-study>/results/<arm> \
+  --local-output benchmarks/core/<locked-study>/results/<arm> \
   --start-vm \
   --cleanup delete
 ```
@@ -171,25 +170,26 @@ The script sends a macOS notification on success or failure when
 `osascript` is available. It continues independently of Codex and does not
 consume model tokens while waiting between status checks.
 
-For the locked Stage-5 eight-arm campaign, use `scripts/run-cloud-campaign`. It applies
-the same transfer and checksum boundary to each selected arm, removes the
-verified remote run directory before shutdown, and deletes the compute instance
-after all arms complete. It is restartable because locally complete arms are
-skipped:
+For a locked multi-arm study, use `scripts/run-cloud-study`. It reads the arm
+IDs and config names from that study's manifest, applies the same transfer and
+checksum boundary to each selected arm, removes each verified remote run
+directory before shutdown, and deletes the compute instance after all arms
+complete. It is restartable because locally complete arms are skipped:
 
 ```bash
-nohup caffeinate -dimsu ./scripts/run-cloud-campaign \
+nohup caffeinate -dimsu ./scripts/run-cloud-study \
   --host <vm-ip> \
   --vm-id <verda-vm-id> \
-  > /tmp/tinymistral-cloud-campaign.log 2>&1 &
+  --study-dir benchmarks/core/<locked-study> \
+  > /tmp/tinymistral-cloud-study.log 2>&1 &
 echo $!
 ```
 
-The campaign keeps the persistent OS volume by omitting `--with-volumes` from
+The wrapper keeps the persistent OS volume by omitting `--with-volumes` from
 the final Verda delete operation. On failure it shuts down the compute
 instance but retains remote artifacts for recovery; it does not delete a
 failed run's data.
 
-The campaign wrapper has a fixed list of the non-SWA Transformer Stage-5 arms, including
-Multiscale Memory Attention and Strided Attention. Use `--arm` to run only the selected controls;
-locally complete arms are skipped, so the same command is safe to resume.
+Use `--arm` to run only selected manifest arms. Locally complete arms are
+skipped, so the same command is safe to resume. The wrapper rejects studies
+whose manifest is not locked.

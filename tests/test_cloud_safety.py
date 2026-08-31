@@ -33,7 +33,7 @@ def _objects():
 
 
 def test_campaign_requires_verified_manifest_and_readable_current_checkpoint(tmp_path):
-    campaign = _load_extensionless("run_cloud_campaign_test", "run-cloud-campaign")
+    campaign = _load_extensionless("run_cloud_study_test", "run-cloud-study")
     run = tmp_path / "arm"
     model, optimizer = _objects()
     save_checkpoint_generation(

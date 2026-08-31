@@ -18,10 +18,6 @@ def test_efficiency_suites_are_explicit_and_non_scientific():
         "batch_scaling.yaml",
         "precision_mps.yaml",
         "precision_cuda.yaml",
-        "cuda_batch_qualification.yaml",
-        "bank_write_scaling.yaml",
-        "stage_5_architectures.yaml",
-        "attention_controls.yaml",
         "forward_modes.yaml",
     }
     assert {path.name for path in SUITES.glob("*.yaml")} == expected
@@ -66,22 +62,6 @@ def test_precision_suites_compare_fp32_and_bfloat16_on_each_backend():
         assert modes == {None, "bfloat16"}
         pairs = {(case["variant"], case["passes"]) for case in raw["cases"]}
     assert pairs == {("swa_transformer", 1), ("recirculation", 2), ("memory_attention", 3)}
-
-
-def test_cuda_batch_qualification_is_k2_bf16_and_does_not_accumulate():
-    raw = _suite(SUITES / "cuda_batch_qualification.yaml")
-    assert raw["defaults"]["device"] == "cuda"
-    assert raw["defaults"]["autocast_dtype"] == "bfloat16"
-    assert raw["defaults"]["sequence_length"] == 2048
-    assert raw["defaults"]["grad_accum_steps"] == 1
-    assert {(case["variant"], case["passes"]) for case in raw["cases"]} == {
-        ("recirculation", 2),
-        ("memory_attention", 2),
-    }
-    for variant in ("recirculation", "memory_attention"):
-        assert {
-            case["batch_size"] for case in raw["cases"] if case["variant"] == variant
-        } == {1, 2, 4, 8}
 
 
 def test_forward_mode_suite_keeps_bptt_separate_from_multipass_k():

@@ -1,4 +1,4 @@
-# Common-checkpoint retrofit
+# Common-checkpoint comparison
 
 This planned study replaces a separate wiring checkpoint with one continuous
 trajectory from the same pretrained TinyMistral backbone. Feedback arms train

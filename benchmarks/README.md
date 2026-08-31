@@ -1,25 +1,40 @@
 # Benchmark studies
 
-Benchmark work is organized by scientific role:
+The benchmark tree has four active roles:
 
-- `historical/`: retained evidence from superseded campaigns.
-- `controls/`: reusable vanilla substrate controls and smoke checks.
-- `development/`: structured protocol studies and retained runnable configs.
-- `ad_hoc/`: one-off exploratory work and disposable diagnostics.
-- `core/`: larger, predeclared studies intended to establish central claims.
-- `efficiency/`: engineering measurements of throughput, memory, precision, and
-  feasible batch/context sizes.
+- `controls/`: reusable substrate checks and vanilla smoke tests;
+- `development/`: planned or qualifying scientific studies;
+- `core/`: reviewed, locked studies used for central paper claims;
+- `efficiency/`: hardware measurements used to choose feasible execution
+  settings and report compute.
 
-Configuration is colocated with its owner. Development and core studies should
-use `STUDY.yaml` to state the scientific question, runnable arms, and declared
-comparison differences without duplicating execution parameters from those
-configs. The schema and conventions are documented in `docs/STUDIES.md`.
+Superseded protocols and retained runs live under `historical/`. Nothing in
+that directory defines the current contract or participates in automatic study
+discovery. `ad_hoc/` is ignored local scratch space and must not be cited as a
+study.
 
-Paper-era candidates remain in `development/` while their BPTT/TBPTT,
-microbatch, and learning-rate choices are qualified. Moving a directory under
-`core/` means its manifest and runnable protocol are ready to be locked.
+## Current experimental contract
 
-For training studies, compact summaries and comparison tables are tracked under
-`results/`; each arm's generated run artifacts live directly under
-`results/<arm>/` and remain ignored. Efficiency JSON files are small retained
-benchmark results and may be tracked directly under `benchmarks/efficiency/results/`.
+The active scientific program is intentionally small:
+
+1. `development/forward_policy_qualification/` qualifies paper-style
+   token-diagonal BPTT/TBPTT against whole-block multipass Recirculation.
+2. `development/frozen_backbone_comparison/` compares 20M-token learning curves
+   while the pretrained backbone remains frozen throughout.
+3. `development/common_checkpoint_comparison/` is the proposed main 100M-token
+   comparison. Every arm starts from one pretrained checkpoint; feedback arms
+   freeze the pretrained backbone for the first 5M input tokens, while vanilla
+   trains it from token zero.
+
+The first study selects feasible BPTT/TBPTT and hardware settings. The latter
+two remain planned until their microbatch, gradient-accumulation, learning-rate,
+and truncation choices have been qualified. Promotion means moving an unchanged
+study directory to `core/` and setting `status: locked` after review.
+
+Each development or core study owns a `STUDY.yaml`, runnable arm configs, and
+its `results/` directory. Arm names use `bptt` for token-diagonal recurrence and
+`multipass` for whole-block parallel passes. The schema and comparison rules are
+documented in `docs/STUDIES.md`.
+
+Raw checkpoints and run telemetry remain ignored under `results/<arm>/`.
+Compact summaries may be tracked beside them when they are needed for a paper.

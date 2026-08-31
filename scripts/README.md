@@ -23,16 +23,15 @@ smoke_mps.py
 
 ```text
 benchmark_training_efficiency.py
-select_cuda_batch.py
+estimate_training_flops.py
 cloud_preflight.py
 ```
 
 The efficiency runner performs real optimizer steps and reports linguistic-token
-and physical-position throughput when they differ. Memory Attention cases must state their
-write policy explicitly. `select_cuda_batch.py` consumes the dedicated CUDA K=2
-qualification and chooses the smallest common efficient adaptive-Recirculation/
-dense-Memory-Attention microbatch rather than assuming maximum feasible batch is
-scientifically valid.
+and physical-position throughput when they differ. Memory Attention cases must
+state their write policy explicitly. The active `forward_modes.yaml` suite
+qualifies full BPTT, candidate TBPTT windows, and whole-block multipass training
+on the target GPU.
 
 `cloud_preflight.py` checks CUDA/model/data/source/run compatibility, persistent
 storage, free space, and memory-token-expanded batching before a paid run.
@@ -62,18 +61,16 @@ the Verda compute instance. It leaves the VM untouched when a run is
 interrupted or transfer verification fails. Run `--help` for the full
 interface; use `--transfer metadata` only for small smoke checks.
 
-`run-cloud-campaign` applies that lifecycle to selected arms of the locked
-Stage-5 eight-arm study. It can be used for a complete campaign or to resume
-an interrupted subset; locally complete arms are skipped.
-It skips locally complete arms, transfers full artifacts, deletes
-each verified remote run directory, shuts down between arms, and deletes the
-compute instance after the selected campaign. A lock file prevents two
-campaigns from using the same VM concurrently.
+`run-cloud-study` applies that lifecycle to the manifest arms of any explicitly
+selected locked study. It skips locally complete arms, transfers full artifacts,
+deletes each verified remote run directory, shuts down between arms, and deletes
+the compute instance after the selected study. A lock file prevents two study
+controllers from using the same VM concurrently.
 
 ```bash
 uv run python scripts/run_study.py \
-  --study-dir benchmarks/development/stage_1_wiring \
-  --wire-only --wire-device mps
+  --study-dir benchmarks/development/forward_policy_qualification \
+  --wire-only --wire-device cuda
 ```
 
 Training/evaluation loaders automatically wrap ordinary packed artifacts with

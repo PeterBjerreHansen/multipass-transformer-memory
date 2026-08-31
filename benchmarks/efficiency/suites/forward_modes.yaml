@@ -24,7 +24,7 @@ cases:
     passes: 1
     sequence_length: 1024
 
-  - name: recirculation_parallel_k2_t1024
+  - name: recirculation_multipass_k2_t1024
     variant: recirculation
     phase: A
     training_forward: parallel_multipass
@@ -86,7 +86,7 @@ cases:
     recirculation_alpha: 0.1
     recirculation_mode: adaptive
 
-  - name: dense_memory_attention_parallel_k2_t1024
+  - name: dense_memory_attention_multipass_k2_t1024
     variant: memory_attention
     phase: A
     training_forward: parallel_multipass

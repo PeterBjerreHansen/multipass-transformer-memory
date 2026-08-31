@@ -1,4 +1,4 @@
-# Frozen-backbone curves
+# Frozen-backbone comparison
 
 This is a planned core candidate, not a locked campaign. All trained arms keep
 the pretrained TinyMistral backbone frozen for the complete 20,021,248-token

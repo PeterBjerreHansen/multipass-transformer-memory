@@ -1,11 +1,12 @@
-# Recirculation forward qualification
+# Forward-policy qualification
 
-This planned study qualifies the new token-diagonal forward before it can
-enter a core comparison. `recirculation_bptt` is the paper-style policy: each
+This planned study qualifies the two Recirculation training policies before
+either can enter a core comparison. `recirculation_bptt` is the paper-style
+policy: each
 token is read out normally, replayed from the source/destination mixture, and
 the replayed upper-layer KV state is used by the next token. It is not K=2.
 
-The checked-in BPTT config uses microbatch 1 and accumulation 32 to reproduce
+Both configs use microbatch 1 and accumulation 32 to reproduce
 the paper's effective batch of 32 sequences on smaller GPUs. Change those two
 fields together if hardware permits a larger microbatch. Preserve their product
 unless the optimizer-batch change and learning-rate retuning are explicitly

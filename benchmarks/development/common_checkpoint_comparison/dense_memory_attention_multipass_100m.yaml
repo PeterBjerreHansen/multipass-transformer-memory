@@ -8,7 +8,7 @@ memory_layers: [3, 7]
 memory_position_encoding: rope
 model_dir: checkpoints/TinyMistral-248M-v3
 data_dir: data/dolmino/paper_1024
-output_dir: benchmarks/development/common_checkpoint_retrofit/results/dense_memory_attention_parallel_100m
+output_dir: benchmarks/development/common_checkpoint_comparison/results/dense_memory_attention_multipass_100m
 device: cuda
 dtype: float32
 autocast_dtype: bfloat16

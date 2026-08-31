@@ -208,10 +208,10 @@ def main() -> None:
     parser.add_argument(
         "--suite",
         type=Path,
-        default=Path("benchmarks/efficiency/suites/stage_5_architectures.yaml"),
+        default=Path("benchmarks/efficiency/suites/forward_modes.yaml"),
     )
     parser.add_argument("--model-config", help="Optional model config.json; defaults to TinyMistral-248M-v3 fields")
-    parser.add_argument("--schedule", default="2:0.9,3:0.1")
+    parser.add_argument("--schedule", default="2:1")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     report = build_report(

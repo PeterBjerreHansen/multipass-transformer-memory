@@ -3,18 +3,15 @@
   efficiency-mps efficiency-cuda efficiency-mps-training efficiency-mps-precision \
   efficiency-mps-context efficiency-mps-batch efficiency-cuda-training \
   efficiency-cuda-precision efficiency-cuda-context efficiency-cuda-batch \
-  efficiency-cuda-stage5 \
   efficiency-cuda-forward-modes \
-  estimate-flops-stage5 estimate-flops-forward-modes \
-  efficiency-cuda-batch-qualification efficiency-bank-write \
-  select-cuda-batch cloud-preflight
+  estimate-flops-forward-modes cloud-preflight
 
 test:
 	uv run pytest -q
 
 compile:
 	uv run python -m compileall -q src scripts tests
-	uv run python -m py_compile scripts/start-and-watch scripts/run-cloud-campaign
+	uv run python -m py_compile scripts/start-and-watch scripts/run-cloud-study
 
 study-gates:
 	uv run python scripts/verify_study.py
@@ -105,21 +102,10 @@ efficiency-cuda-batch:
 		--suite benchmarks/efficiency/suites/batch_scaling.yaml --device cuda --autocast-dtype bfloat16 \
 		--output benchmarks/efficiency/results/cuda_batch.json
 
-efficiency-cuda-stage5:
-	uv run python scripts/benchmark_training_efficiency.py \
-		--suite benchmarks/efficiency/suites/stage_5_architectures.yaml \
-		--output benchmarks/efficiency/results/stage_5_architectures.json
-
 efficiency-cuda-forward-modes:
 	uv run python scripts/benchmark_training_efficiency.py \
 		--suite benchmarks/efficiency/suites/forward_modes.yaml \
 		--output benchmarks/efficiency/results/cuda_forward_modes.json
-
-estimate-flops-stage5:
-	uv run python scripts/estimate_training_flops.py \
-		--suite benchmarks/efficiency/suites/stage_5_architectures.yaml \
-		--model-config checkpoints/TinyMistral-248M-v3/config.json \
-		--output benchmarks/efficiency/results/stage_5_training_flops.json
 
 estimate-flops-forward-modes:
 	uv run python scripts/estimate_training_flops.py \
@@ -127,26 +113,6 @@ estimate-flops-forward-modes:
 		--schedule 2:1 \
 		--model-config checkpoints/TinyMistral-248M-v3/config.json \
 		--output benchmarks/efficiency/results/forward_mode_training_flops.json
-
-
-# Engineering-only bank write-cadence scaling. This does not select C.
-efficiency-bank-write:
-	uv run python scripts/benchmark_training_efficiency.py \
-		--suite benchmarks/efficiency/suites/bank_write_scaling.yaml \
-		--device cuda --autocast-dtype bfloat16 \
-		--output benchmarks/efficiency/results/bank_write_scaling.json
-
-# Core-run batching qualification. This keeps grad accumulation at 1 so the
-# hardware microbatch axis is measured without silently changing optimizer batch.
-efficiency-cuda-batch-qualification:
-	uv run python scripts/benchmark_training_efficiency.py \
-		--suite benchmarks/efficiency/suites/cuda_batch_qualification.yaml \
-		--output benchmarks/efficiency/results/cuda_batch_qualification.json
-
-# Usage: make select-cuda-batch RESULT=benchmarks/efficiency/results/cuda_batch_qualification.json
-select-cuda-batch:
-	@test -n "$(RESULT)" || (echo "RESULT is required" && exit 2)
-	uv run python scripts/select_cuda_batch.py $(RESULT)
 
 # Usage: make cloud-preflight CONFIG=path/to/config.yaml
 cloud-preflight:

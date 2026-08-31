@@ -1,0 +1,41 @@
+variant: memory_attention
+phase: B
+memory_window: 32
+memory_write_mode: dense
+memory_write_stride: null
+memory_token_visibility: null
+memory_layers: [3, 7]
+memory_position_encoding: rope
+model_dir: checkpoints/TinyMistral-248M-v3
+data_dir: data/dolmino/gpu_2048_staged
+output_dir: benchmarks/ad_hoc/backbone_lr_sweep/results/dense_lr1e5
+device: mps
+dtype: float32
+autocast_dtype: null
+attention_backend: auto
+seed: 1337
+architecture_seed: 4242
+batch_size: 1
+grad_accum_steps: 1
+max_unique_tokens: 10002432
+learning_rate: 1.0e-5
+pretrained_learning_rate: 1.0e-5
+added_learning_rate: 3.0e-5
+lr_schedule: {type: cosine, warmup_tokens: 1048576, min_multiplier: 0.1}
+weight_decay: 0.01
+grad_clip: 1.0
+pass_schedule:
+  - probabilities: {2: 0.9, 3: 0.1}
+ntp_pass_loss_weights: null
+ntp_pass_loss_weights_by_k:
+  2: [0.1, 0.9]
+  3: [0.1, 0.0, 0.9]
+eval_every_tokens: 524288
+eval_passes: 4
+eval_batches: 64
+checkpoint_every_tokens: 524288
+checkpoint_every_seconds: 900.0
+checkpoint_keep_last: 2
+snapshot_at_tokens: [10002432]
+resume_from: null
+init_from: benchmarks/core/stage_5_cloud_100m/results/bank_dense_100m/snapshots/model_000100007936.safetensors

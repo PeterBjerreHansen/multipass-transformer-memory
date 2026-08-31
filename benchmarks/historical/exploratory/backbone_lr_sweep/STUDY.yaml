@@ -1,0 +1,19 @@
+name: backbone_lr_sweep
+status: planned
+question: Which backbone learning rate gives the best short continuation from the completed 100M-token vanilla and Dense Memory Attention checkpoints?
+arms:
+  - {id: vanilla_lr1e6, config: vanilla_lr1e6.yaml}
+  - {id: vanilla_lr3e6, config: vanilla_lr3e6.yaml}
+  - {id: vanilla_lr1e5, config: vanilla_lr1e5.yaml}
+  - {id: dense_lr1e6, config: dense_lr1e6.yaml}
+  - {id: dense_lr3e6, config: dense_lr3e6.yaml}
+  - {id: dense_lr1e5, config: dense_lr1e5.yaml}
+comparisons:
+  - name: vanilla_backbone_lr
+    arms: [vanilla_lr1e6, vanilla_lr3e6, vanilla_lr1e5]
+    experimental_axes: [learning_rate, pretrained_learning_rate]
+    allowed_differences: []
+  - name: dense_backbone_lr
+    arms: [dense_lr1e6, dense_lr3e6, dense_lr1e5]
+    experimental_axes: [learning_rate, pretrained_learning_rate]
+    allowed_differences: []

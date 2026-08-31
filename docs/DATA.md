@@ -8,6 +8,7 @@ order.
 Checked-in preparation recipes live beside their local generated artifacts:
 
 ```text
+data/dolmino/paper_1024/config.yaml
 data/dolmino/wiring_2048/config.yaml
 data/dolmino/pilot_2048/config.yaml
 data/dolmino/gpu_2048/config.yaml
@@ -15,6 +16,10 @@ data/dolmino/gpu_2048_staged/config.yaml
 data/dolmino/gpu_2048_long_2p5b/config.yaml
 data/dolmino/stage_6_evaluation_2048/config.yaml
 ```
+
+`paper_1024` is the active paper-contract artifact. The 2,048-token recipes are
+retained to reproduce the historical staged pipeline and its evaluation
+provenance.
 
 Generated binaries and manifests remain local/ignored.
 
@@ -77,7 +82,7 @@ reducing the text/data dose for MEM experiments.
 The model's maximum position range must be large enough for the expanded block;
 training preflight checks this.
 
-## Core-run split ownership
+## Historical staged-run split ownership
 
 The document-disjoint guarantee belongs to one materialized artifact.
 Development wiring uses `wiring_2048` exactly once per arm. Development pilots

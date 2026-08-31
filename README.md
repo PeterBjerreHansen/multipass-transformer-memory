@@ -2,6 +2,11 @@
 
 **tl;dr:** Recent work such as the [full bandwidth transformer](https://arxiv.org/abs/2608.08888) and [recirculation](https://arxiv.org/abs/2608.17981) suggests that recurrently feeding intermediate representations back through a transformer can improve performance. In this exploratory, equal-token experiment, attention over previous-pass states produced lower same-stream validation NLL than the recurrent controls. The result is not an equal-compute comparison and does not yet establish downstream capability gains.
 
+The results below are the completed historical architecture screen. Its exact
+protocol and artifacts are preserved under
+`benchmarks/historical/staged_pipeline/`; they do not define the current paper
+experiment contract.
+
 The idea behind [multi-pass training](https://github.com/PeterBjerreHansen/multi-pass-transformer-training) goes something like this: Pass 1 is an ordinary transformer pass. Pass 2 runs the same transformer again, but can use additional hidden states produced on pass 1. The question is if that information should arrive through a recurrent connection or through cross-pass attention over previous-pass states. To test this I first retrofitted [a TinyMistral model](https://huggingface.co/M4-ai/TinyMistral-248M-v3) into doing feedback inference by training it with multi-pass Jacobi-style updates. The new parameters were first wired into the frozen backbone for 5 million tokens, then the whole models were trained on 100M tokens from the [OLMo2 annealing mixture](https://huggingface.co/datasets/allenai/dolmino-mix-1124).
 
 | Model / method                                | Final monitoring PPL | Late PPL reduction, 50M → 100M | Total parameters | Relative training FLOPs |
@@ -80,11 +85,13 @@ See `docs/MEMORY_ATTENTION.md` for the conceptual vocabulary and `docs/BANK_MEMO
 
 `Relative training FLOPs` is normalized to the SWA Transformer K=1 run at 1.000x. It uses the 90% K=2 / 10% K=3 training schedule, so most of the $>2x$ multiplier is because I chose to always run at least two passes. This policy puts more pressure on the memory adaptations (which is what I wanted to study most), but is presumably computationally suboptimal since single passes will adapt the backbone to the training distribution more efficiently. The measure counts mostly the dominant dense matrix products in the forward and backward passes, and you can see the estimator in `scripts/estimate_training_flops.py`.
 
-### More Ideas, Future Work
+### Follow-up ideas from the historical screen
 
 1. Most SOTA models still use dense attention in at least a few layers. I suspect that a local SWA attention + dense long-range attention over memories might perform better than placing the dense attention in a normal layer.
 
-2. I want to properly wire in the [FBT](https://arxiv.org/abs/2608.08888) model next and test out hybrids. However, the process is a little more tricky for FBT as the mechanism is not residual.
+2. A later FBT wiring investigation was attempted and is preserved under the
+   historical exploratory runs. It is not part of the current comparison
+   because its initialization and pretraining requirements differ.
 
 ## Repository map
 
@@ -122,9 +129,23 @@ Learning-rate schedules and run token budgets use linguistic tokens. Throughput 
 
 ## Current research status
 
-The locked eight-arm study compares the SWA Transformer, adaptive Recirculation, three Memory Attention access patterns, the Recirculation–Strided Memory Attention hybrid, Multiscale Memory Attention, and Strided Attention. Its configs remain under `benchmarks/core/stage_5_cloud_100m/`; all eight 100M-token runs are complete and their full artifacts are under `benchmarks/core/stage_5_cloud_100m/results/`. Multiscale Memory Attention used its verified frozen-backbone wiring checkpoint. Strided Attention has no added parameters and started in Phase B. The runnable path is documented in `benchmarks/development/experimental_pipeline.md`.
+The active contract is documented in `benchmarks/README.md` and contains three
+studies under `benchmarks/development/`: forward-policy qualification,
+frozen-backbone comparison, and common-checkpoint comparison. The proposed main
+experiment starts every arm from the same pretrained checkpoint. Feedback arms
+freeze the pretrained backbone for their first 5M input tokens; vanilla trains
+it from token zero. Paper-style token-diagonal BPTT/TBPTT and whole-block
+multipass Recirculation are named and measured as separate training policies.
 
-FBT and MemoryAdd are retired controls. Their implementations and focused correctness tests remain only for historical checkpoint/provenance compatibility, like other archived research controls, but neither appears in the active studies, efficiency qualifications, or cloud campaign. MemoryAttentionAddHybrid, which uses the same MemoryAdd fast channel, is also retired from the active experiment surface.
+No paper-era study is in `benchmarks/core/` yet. Hardware-facing microbatch,
+gradient-accumulation, BPTT/TBPTT window, and learning-rate choices must be
+qualified before a study is moved there and locked.
+
+The completed eight-arm 100M architecture screen and the later Stage-6 work are
+under `benchmarks/historical/staged_pipeline/`. Their original configs and
+locally retained raw artifacts remain provenance for the table above.
+
+FBT and MemoryAdd are retired controls. Their implementations and focused correctness tests remain only for historical checkpoint/provenance compatibility, like other archived research controls, but neither appears in the active studies, efficiency qualifications, or cloud study runner. MemoryAttentionAddHybrid, which uses the same MemoryAdd fast channel, is also retired from the active experiment surface.
 
 Historical benchmark results remain read-only evidence; they do not define the active architecture API.
 
@@ -145,16 +166,12 @@ Without dependency installation, the source tree can also be tested in an enviro
 PYTHONPATH=src pytest -q
 ```
 
-Prepare and verify the wiring and pilot artifacts with:
+Prepare and verify the active 1,024-token paper artifact with:
 
 ```bash
-uv run python scripts/prepare_data.py
+uv run python scripts/prepare_data.py --config data/dolmino/paper_1024/config.yaml
 
-uv run python scripts/verify_data.py data/dolmino/wiring_2048
-
-uv run python scripts/prepare_data.py --config data/dolmino/pilot_2048/config.yaml
-
-uv run python scripts/verify_data.py data/dolmino/pilot_2048
+uv run python scripts/verify_data.py data/dolmino/paper_1024
 ```
 
 Before paid CUDA training, qualify batching using `benchmarks/efficiency/`, then run the provider-agnostic preflight described in `docs/CLOUD.md`.

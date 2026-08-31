@@ -1,13 +1,13 @@
-name: frozen_backbone_curves
+name: frozen_backbone_comparison
 status: planned
 question: With one common frozen TinyMistral checkpoint and equal data dose, how long do the added feedback mechanisms continue to reduce held-out NLL?
 arms:
   - {id: recirculation_bptt_20m, config: recirculation_bptt_20m.yaml}
-  - {id: recirculation_parallel_20m, config: recirculation_parallel_20m.yaml}
-  - {id: dense_memory_attention_parallel_20m, config: dense_memory_attention_parallel_20m.yaml}
+  - {id: recirculation_multipass_20m, config: recirculation_multipass_20m.yaml}
+  - {id: dense_memory_attention_multipass_20m, config: dense_memory_attention_multipass_20m.yaml}
 comparisons:
   - name: recirculation_training_policy
-    arms: [recirculation_bptt_20m, recirculation_parallel_20m]
+    arms: [recirculation_bptt_20m, recirculation_multipass_20m]
     experimental_axes:
       - training_forward
       - recirculation_activation_checkpointing
@@ -19,8 +19,8 @@ comparisons:
   - name: frozen_feedback_mechanisms
     arms:
       - recirculation_bptt_20m
-      - recirculation_parallel_20m
-      - dense_memory_attention_parallel_20m
+      - recirculation_multipass_20m
+      - dense_memory_attention_multipass_20m
     experimental_axes:
       - variant
       - training_forward

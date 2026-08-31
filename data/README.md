@@ -4,6 +4,12 @@ Dataset preparation recipes live beside the generated artifacts they define.
 Only the small source recipes are tracked; token binaries, manifests, and other
 materialized dataset files are ignored.
 
+- `dolmino/paper_1024/config.yaml`: the active ordinary packed 1,024-token
+  artifact for forward-policy qualification and the proposed paper comparisons.
+  It does not impose document-contained packing.
+
+The remaining recipes are retained for the historical staged pipeline:
+
 - `dolmino/wiring_2048/config.yaml`: one unique 5M-token wiring epoch.
 - `dolmino/pilot_2048/config.yaml`: the following unique 10M-token pilot epoch.
   It skips the full wiring slice and shares its separate 256-block validation
@@ -19,8 +25,5 @@ materialized dataset files are ignored.
 - `dolmino/stage_6_evaluation_2048/config.yaml`: an independent Stage-6
   evaluation stream placed after the complete long-run source range. Its
   materialized validation split must still pass the document-disjointness gate.
-- `dolmino/paper_1024/config.yaml`: ordinary packed 1,024-token blocks for the
-  recirculation-paper qualification and planned paper-era campaigns. It does
-  not impose document-contained packing; that view is intentionally deferred.
 Use `scripts/prepare_data.py` and `scripts/verify_data.py` rather than editing a
 generated artifact in place.
