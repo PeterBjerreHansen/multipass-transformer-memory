@@ -1,0 +1,10 @@
+output_dir: data/dolmino/paper_1024
+model_dir: checkpoints/TinyMistral-248M-v3
+sequence_length: 1024
+train_tokens: 100007936
+validation_tokens: 1048576
+train_skip_tokens: 0
+seed: 1337
+dataset_repo: allenai/dolmino-mix-1124
+revision: 1c2f43706986135c6799d9917e0d06ecef7fb1bb
+shuffle_buffer: 50000

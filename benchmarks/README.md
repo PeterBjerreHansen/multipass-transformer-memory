@@ -15,6 +15,10 @@ use `STUDY.yaml` to state the scientific question, runnable arms, and declared
 comparison differences without duplicating execution parameters from those
 configs. The schema and conventions are documented in `docs/STUDIES.md`.
 
+Paper-era candidates remain in `development/` while their BPTT/TBPTT,
+microbatch, and learning-rate choices are qualified. Moving a directory under
+`core/` means its manifest and runnable protocol are ready to be locked.
+
 For training studies, compact summaries and comparison tables are tracked under
 `results/`; each arm's generated run artifacts live directly under
 `results/<arm>/` and remain ignored. Efficiency JSON files are small retained

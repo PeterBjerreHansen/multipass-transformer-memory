@@ -35,6 +35,13 @@ def test_data_recipes_live_beside_materialized_artifacts():
         assert cfg.output_dir == f"data/dolmino/{name}"
         assert cfg.sequence_length == 2048
 
+    paper = load_data_config(
+        ROOT / "data" / "dolmino" / "paper_1024" / "config.yaml"
+    )
+    assert paper.output_dir == "data/dolmino/paper_1024"
+    assert paper.sequence_length == 1024
+    assert paper.train_tokens == 100_007_936
+
 
 def test_evaluation_suites_are_reusable_assets_not_data_recipes():
     suite_dir = ROOT / "evaluation" / "suites"

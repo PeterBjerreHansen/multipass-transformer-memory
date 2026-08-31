@@ -4,6 +4,13 @@ This directory is reserved for larger, predeclared experiments that test the
 project's central claims. Keep development protocols under `development/`
 until their evidence and CUDA qualification justify promotion.
 
+The proposed paper-era replacements currently live under
+`benchmarks/development/recirculation_forward_qualification/`,
+`benchmarks/development/frozen_backbone_curves/`, and
+`benchmarks/development/common_checkpoint_retrofit/`. They are intentionally
+not copied here while their hardware- and optimizer-facing settings remain
+unlocked.
+
 Before a core run, create a study directory containing:
 
 ```text

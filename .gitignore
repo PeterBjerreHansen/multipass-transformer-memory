@@ -36,6 +36,9 @@ data/dolmino/gpu_2048_long_2p5b/*
 !data/dolmino/stage_6_evaluation_2048/
 data/dolmino/stage_6_evaluation_2048/*
 !data/dolmino/stage_6_evaluation_2048/config.yaml
+!data/dolmino/paper_1024/
+data/dolmino/paper_1024/*
+!data/dolmino/paper_1024/config.yaml
 
 # Training outputs remain colocated with their study/control but are not source.
 # Keep the results README files visible, while ignoring every run directory or

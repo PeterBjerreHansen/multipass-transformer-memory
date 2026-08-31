@@ -1,0 +1,20 @@
+name: recirculation_forward_qualification
+status: planned
+question: >-
+  Does adaptive recirculation trained through the paper's token-diagonal BPTT
+  forward improve recurrent validation NLL relative to its initialized fixed
+  mixture and the existing whole-block parallel multipass training policy?
+arms:
+  - {id: adaptive_bptt_100_steps, config: adaptive_bptt_100_steps.yaml}
+  - {id: adaptive_parallel_100_steps, config: adaptive_parallel_100_steps.yaml}
+comparisons:
+  - name: token_diagonal_vs_whole_block_training
+    arms: [adaptive_bptt_100_steps, adaptive_parallel_100_steps]
+    experimental_axes:
+      - training_forward
+      - recirculation_activation_checkpointing
+      - pass_schedule
+      - ntp_pass_loss_weights
+    allowed_differences:
+      - validation_forward
+      - eval_passes

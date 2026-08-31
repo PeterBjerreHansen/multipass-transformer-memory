@@ -1,0 +1,44 @@
+name: common_checkpoint_retrofit
+status: planned
+question: From one pretrained checkpoint, do feedback mechanisms improve a continuously trained backbone when their added pathways receive a 5M-token frozen-backbone retrofit window?
+arms:
+  - {id: vanilla_100m, config: vanilla_100m.yaml}
+  - {id: recirculation_bptt_100m, config: recirculation_bptt_100m.yaml}
+  - {id: recirculation_parallel_100m, config: recirculation_parallel_100m.yaml}
+  - {id: dense_memory_attention_parallel_100m, config: dense_memory_attention_parallel_100m.yaml}
+comparisons:
+  - name: recirculation_training_policy
+    arms: [recirculation_bptt_100m, recirculation_parallel_100m]
+    experimental_axes:
+      - training_forward
+      - recirculation_activation_checkpointing
+      - pass_schedule
+      - ntp_pass_loss_weights_by_k
+    allowed_differences:
+      - added_learning_rate
+      - validation_forward
+      - eval_passes
+  - name: common_checkpoint_main_comparison
+    arms:
+      - vanilla_100m
+      - recirculation_bptt_100m
+      - recirculation_parallel_100m
+      - dense_memory_attention_parallel_100m
+    experimental_axes:
+      - variant
+      - training_forward
+      - recirculation_activation_checkpointing
+      - freeze_pretrained_until_tokens
+      - memory_write_mode
+      - memory_layers
+      - memory_position_encoding
+      - recirculation_source_layer
+      - recirculation_destination_layer
+      - recirculation_mode
+      - pass_schedule
+      - ntp_pass_loss_weights_by_k
+    allowed_differences:
+      - added_learning_rate
+      - added_weight_decay
+      - validation_forward
+      - eval_passes
