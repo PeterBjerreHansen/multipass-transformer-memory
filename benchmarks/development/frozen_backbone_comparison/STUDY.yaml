@@ -8,6 +8,8 @@ arms:
   - {id: recirculation_bptt_20m, config: recirculation_bptt_20m.yaml}
   - {id: recirculation_multipass_20m, config: recirculation_multipass_20m.yaml}
   - {id: dense_memory_attention_multipass_20m, config: dense_memory_attention_multipass_20m.yaml}
+  - {id: strided_memory_attention_multipass_20m, config: strided_memory_attention_multipass_20m.yaml}
+  - {id: multiscale_memory_attention_multipass_20m, config: multiscale_memory_attention_multipass_20m.yaml}
 comparisons:
   - name: recirculation_training_policy
     arms: [recirculation_bptt_20m, recirculation_multipass_20m]
@@ -15,7 +17,7 @@ comparisons:
       - training_forward
       - recirculation_activation_checkpointing
       - pass_schedule
-      - ntp_pass_loss_weights
+      - ntp_pass_loss_weights_by_k
     allowed_differences:
       - validation_forward
       - eval_passes
@@ -24,18 +26,25 @@ comparisons:
       - recirculation_bptt_20m
       - recirculation_multipass_20m
       - dense_memory_attention_multipass_20m
+      - strided_memory_attention_multipass_20m
+      - multiscale_memory_attention_multipass_20m
     experimental_axes:
       - variant
       - training_forward
       - recirculation_activation_checkpointing
+      - memory_window
       - memory_write_mode
+      - memory_write_stride
       - memory_layers
       - memory_position_encoding
+      - memory_dense_window
+      - memory_sparse_window
+      - memory_sparse_stride
       - recirculation_source_layer
       - recirculation_destination_layer
       - recirculation_mode
       - pass_schedule
-      - ntp_pass_loss_weights
+      - ntp_pass_loss_weights_by_k
     allowed_differences:
       - added_learning_rate
       - validation_forward

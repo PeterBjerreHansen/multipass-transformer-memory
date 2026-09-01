@@ -102,7 +102,6 @@ def test_active_studies_share_paper_data_and_effective_optimizer_batch():
             "fbt",
             "memory_add",
             "bank_add_hybrid",
-            "multiscale_memory_attention",
             "strided_attention",
             "recirculation_strided_memory_attention",
         }
@@ -132,6 +131,8 @@ def test_frozen_backbone_comparison_is_controller_only_for_20m_tokens():
         "recirculation_bptt_20m",
         "recirculation_multipass_20m",
         "dense_memory_attention_multipass_20m",
+        "strided_memory_attention_multipass_20m",
+        "multiscale_memory_attention_multipass_20m",
     }
     assert all(cfg.phase == "A" for cfg in configs.values())
     assert {(cfg.batch_size, cfg.grad_accum_steps) for cfg in configs.values()} == {
@@ -146,6 +147,29 @@ def test_frozen_backbone_comparison_is_controller_only_for_20m_tokens():
     assert {tuple(cfg.snapshot_at_tokens) for cfg in configs.values()} == {
         (3_276_800, 5_013_504, 10_027_008, 20_021_248)
     }
+    bptt = configs["recirculation_bptt_20m"]
+    assert bptt.normalized_pass_schedule()[0]["probabilities"] == {1: 1.0}
+    assert bptt.ntp_pass_loss_weights is None
+    assert bptt.ntp_pass_loss_weights_by_k is None
+    multipass = {
+        arm: cfg for arm, cfg in configs.items() if arm != "recirculation_bptt_20m"
+    }
+    assert all(
+        cfg.normalized_pass_schedule()[0]["probabilities"] == {2: 0.9, 3: 0.1}
+        for cfg in multipass.values()
+    )
+    assert all(
+        cfg.ntp_pass_loss_weights_by_k == {2: [0.0, 1.0], 3: [0.0, 0.0, 1.0]}
+        for cfg in multipass.values()
+    )
+    strided = configs["strided_memory_attention_multipass_20m"]
+    assert strided.variant == "strided_memory_attention"
+    assert strided.memory_write_mode == "strided"
+    assert strided.memory_write_stride == 32
+    multiscale = configs["multiscale_memory_attention_multipass_20m"]
+    assert multiscale.variant == "multiscale_memory_attention"
+    assert (multiscale.memory_dense_window, multiscale.memory_sparse_window) == (32, 32)
+    assert multiscale.memory_sparse_stride == 32
 
 
 def test_common_checkpoint_comparison_uses_integrated_retrofit_policy():

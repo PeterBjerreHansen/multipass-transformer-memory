@@ -42,6 +42,8 @@ def test_frozen_study_flop_report_uses_authoritative_arm_batching():
         "recirculation_bptt_20m",
         "recirculation_multipass_20m",
         "dense_memory_attention_multipass_20m",
+        "strided_memory_attention_multipass_20m",
+        "multiscale_memory_attention_multipass_20m",
     }
     assert {
         (row["batch_size"], row["grad_accum_steps"])
@@ -49,10 +51,9 @@ def test_frozen_study_flop_report_uses_authoritative_arm_batching():
     } == {(1, 32)}
     assert {row["optimizer_batch_tokens"] for row in rows.values()} == {32_768}
     assert all(row["estimated_training_flops_total"] > 0 for row in rows.values())
-    assert (
-        rows["recirculation_bptt_20m"]["estimated_training_flops_total"]
-        > rows["recirculation_multipass_20m"]["estimated_training_flops_total"]
-    )
+    assert rows["recirculation_bptt_20m"]["training_forward"] == "recirculation_bptt"
+    assert rows["recirculation_multipass_20m"]["training_forward"] == "parallel_multipass"
+    assert rows["recirculation_multipass_20m"]["relative_training_flops"] > 1.0
 
 
 def test_memory_token_layout_matches_packed_dataset_contract():

@@ -23,8 +23,10 @@ lr_schedule: {type: constant}
 weight_decay: 1.0e-4
 grad_clip: 1.0
 pass_schedule:
-  - probabilities: {2: 1.0}
-ntp_pass_loss_weights: [0.0, 1.0]
+  - probabilities: {2: 0.9, 3: 0.1}
+ntp_pass_loss_weights_by_k:
+  2: [0.0, 1.0]
+  3: [0.0, 0.0, 1.0]
 train_log_every_tokens: 327680
 validation_forward: parallel_multipass
 eval_every_tokens: 3276800

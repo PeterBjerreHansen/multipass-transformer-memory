@@ -6,7 +6,8 @@ paper contract:
 - `forward_policy_qualification/`: 100 optimizer steps comparing paper-style
   token-diagonal Recirculation BPTT with whole-block multipass training;
 - `frozen_backbone_comparison/`: 20M-token controller-only curves for BPTT
-  Recirculation, multipass Recirculation, and dense Memory Attention;
+  Recirculation, multipass Recirculation, dense Memory Attention, Strided Memory
+  Attention, and Multiscale Memory Attention;
 - `common_checkpoint_comparison/`: the proposed 100M main comparison from one
   pretrained checkpoint, with a 5M-token backbone freeze only for feedback
   arms.
