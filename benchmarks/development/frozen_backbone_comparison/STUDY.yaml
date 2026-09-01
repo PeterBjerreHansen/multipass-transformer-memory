@@ -1,6 +1,9 @@
 name: frozen_backbone_comparison
 status: planned
-question: With one common frozen TinyMistral checkpoint and equal data dose, how long do the added feedback mechanisms continue to reduce held-out NLL?
+question: >-
+  From one common frozen TinyMistral checkpoint and equal optimizer/data dose,
+  how long do the added feedback mechanisms reduce held-out NLL, and what are
+  their accelerator-time and estimated-compute costs?
 arms:
   - {id: recirculation_bptt_20m, config: recirculation_bptt_20m.yaml}
   - {id: recirculation_multipass_20m, config: recirculation_multipass_20m.yaml}

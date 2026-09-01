@@ -36,6 +36,11 @@ on the target GPU.
 `cloud_preflight.py` checks CUDA/model/data/source/run compatibility, persistent
 storage, free space, and memory-token-expanded batching before a paid run.
 
+`estimate_training_flops.py --study <STUDY.yaml>` derives one dominant-matmul
+estimate per arm directly from its authoritative experiment config and data
+recipe. The report identifies its conventional backward and frozen-parameter
+limitations; it is an algorithmic estimate, not measured accelerator work.
+
 ## Training and evaluation
 
 ```text

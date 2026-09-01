@@ -68,6 +68,7 @@ def test_end_to_end_vanilla_trainer_and_resume(tmp_path):
     first = Trainer(model=make_model(), config=first_cfg, train_data=train, validation_data=val, device=torch.device("cpu"))
     state1 = first.train(until_unique_tokens=32)
     assert state1.unique_tokens_seen == 32
+    assert state1.training_elapsed_seconds > 0
     checkpoint = candidate_checkpoint_paths(tmp_path / "run1")[0]
     assert checkpoint.exists()
     run_info = json.loads((tmp_path / "run1" / "run.json").read_text())
@@ -100,6 +101,7 @@ def test_end_to_end_vanilla_trainer_and_resume(tmp_path):
     assert state2.unique_tokens_seen == 64
     assert state2.optimizer_steps > state1.optimizer_steps
     assert state2.token_equivalent_compute == state2.unique_tokens_seen
+    assert state2.training_elapsed_seconds > state1.training_elapsed_seconds
 
 
 def test_trainer_can_finish_with_partial_gradient_accumulation(tmp_path):

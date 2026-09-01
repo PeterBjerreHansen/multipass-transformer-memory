@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 import os
 from pathlib import Path
@@ -89,6 +89,10 @@ class TrainState:
     unique_tokens_seen: int = 0  # linguistic/data tokens only
     model_positions_seen: int = 0  # includes input-only control positions
     token_equivalent_compute: int = 0  # physical positions * effective passes
+    training_elapsed_seconds: float = field(
+        default=0.0,
+        compare=False,
+    )  # synchronized optimizer-update time only
     phase: str = "B"
 
 
@@ -351,6 +355,7 @@ def save_checkpoint_generation(
         "unique_tokens_seen": int(train_state.unique_tokens_seen),
         "model_positions_seen": int(train_state.model_positions_seen),
         "optimizer_steps": int(train_state.optimizer_steps),
+        "training_elapsed_seconds": float(train_state.training_elapsed_seconds),
     }
     _durable_replace_bytes(
         directory / "latest.json",

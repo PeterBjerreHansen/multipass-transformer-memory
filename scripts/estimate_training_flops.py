@@ -13,7 +13,9 @@ import yaml
 
 from tiny_mistral.config import MistralConfig, tiny_mistral_248m_config
 from tiny_mistral_mptt.flops import estimate_recirculation_bptt, estimate_schedule
-from tiny_mistral_mptt.config import canonical_variant_name
+from tiny_mistral_mptt.config import canonical_variant_name, load_experiment_config
+from tiny_mistral_mptt.data.config import load_data_config
+from tiny_mistral_mptt.studies import verify_study
 
 
 ARCHITECTURE_FIELDS = (
@@ -92,6 +94,17 @@ def _config(path: str | None) -> MistralConfig:
     if path is None:
         return tiny_mistral_248m_config()
     return MistralConfig.from_json_file(path)
+
+
+def _estimator_metadata(config: MistralConfig) -> dict[str, Any]:
+    return {
+        "flops_per_matmul": 2,
+        "backward_multiplier": 3,
+        "model_config": config.to_dict(),
+        "scope": "dominant dense/matmul FLOPs; excludes elementwise, masking, and optimizer arithmetic",
+        "freeze_accounting": "conventional backward multiplier; not adjusted for frozen parameter gradients",
+        "activation_checkpointing": "Recirculation BPTT adds one forward recomputation",
+    }
 
 
 def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[int, float]):
@@ -192,33 +205,121 @@ def build_report(
     rows.sort(key=lambda row: (row["variant"], str(row["parameters"])))
     return {
         "estimator": {
-            "flops_per_matmul": 2,
-            "backward_multiplier": 3,
+            **_estimator_metadata(config),
             "schedule": {str(key): value for key, value in sorted(schedule.items())},
-            "model_config": config.to_dict(),
-            "scope": "dominant dense/matmul FLOPs; excludes elementwise, masking, and optimizer arithmetic",
         },
         "suite": str(suite_path),
         "results": rows,
     }
 
 
+def build_study_report(
+    *,
+    study_path: Path,
+    config_path: str | None,
+) -> dict[str, Any]:
+    """Estimate every arm directly from its authoritative study config."""
+    manifest_path = study_path / "STUDY.yaml" if study_path.is_dir() else study_path
+    verification = verify_study(manifest_path)
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    model_config = _config(config_path)
+    repository = Path(__file__).resolve().parents[1]
+    rows: list[dict[str, Any]] = []
+
+    for arm in manifest["arms"]:
+        experiment_path = manifest_path.parent / str(arm["config"])
+        experiment = load_experiment_config(experiment_path)
+        data_path = Path(experiment.data_dir)
+        if not data_path.is_absolute():
+            data_path = repository / data_path
+        data = load_data_config(data_path / "config.yaml")
+        schedule_stages = experiment.normalized_pass_schedule()
+        if len(schedule_stages) != 1 or schedule_stages[0]["until_tokens"] is not None:
+            raise ValueError(
+                f"study arm {arm['id']!r} uses a staged pass schedule; "
+                "estimate its stages separately"
+            )
+        schedule = {
+            int(passes): float(probability)
+            for passes, probability in schedule_stages[0]["probabilities"].items()
+        }
+        case = {
+            **experiment.to_dict(),
+            "sequence_length": data.sequence_length,
+            "passes": 1
+            if experiment.training_forward == "recirculation_bptt"
+            else min(schedule),
+        }
+        estimate = _estimate_case(model_config, case, schedule)
+        per_sequence = float(estimate.weighted_training_flops)
+        per_token = per_sequence / data.sequence_length
+        rows.append(
+            {
+                "arm": str(arm["id"]),
+                "config": str(arm["config"]),
+                "variant": experiment.variant,
+                "phase": experiment.phase,
+                "training_forward": experiment.training_forward,
+                "sequence_length": data.sequence_length,
+                "batch_size": experiment.batch_size,
+                "grad_accum_steps": experiment.grad_accum_steps,
+                "optimizer_batch_sequences": (
+                    experiment.batch_size * experiment.grad_accum_steps
+                ),
+                "optimizer_batch_tokens": (
+                    experiment.batch_size
+                    * experiment.grad_accum_steps
+                    * data.sequence_length
+                ),
+                "max_unique_tokens": experiment.max_unique_tokens,
+                "estimated_training_flops_per_sequence": per_sequence,
+                "estimated_training_flops_per_unique_token": per_token,
+                "estimated_training_flops_total": (
+                    per_token * experiment.max_unique_tokens
+                ),
+                "relative_training_flops": estimate.relative_training_flops,
+                "estimate": estimate.to_dict(),
+            }
+        )
+
+    return {
+        "estimator": _estimator_metadata(model_config),
+        "study": str(manifest_path),
+        "study_name": verification.name,
+        "results": rows,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
         "--suite",
         type=Path,
-        default=Path("benchmarks/efficiency/suites/forward_modes.yaml"),
+    )
+    source.add_argument(
+        "--study",
+        type=Path,
+        help="estimate arms directly from a STUDY.yaml or its directory",
     )
     parser.add_argument("--model-config", help="Optional model config.json; defaults to TinyMistral-248M-v3 fields")
     parser.add_argument("--schedule", default="2:1")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    report = build_report(
-        suite_path=args.suite,
-        config_path=args.model_config,
-        schedule=_parse_schedule(args.schedule),
-    )
+    if args.study is not None:
+        report = build_study_report(
+            study_path=args.study,
+            config_path=args.model_config,
+        )
+    else:
+        report = build_report(
+            suite_path=(
+                args.suite
+                or Path("benchmarks/efficiency/suites/forward_modes.yaml")
+            ),
+            config_path=args.model_config,
+            schedule=_parse_schedule(args.schedule),
+        )
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output is None:
         print(encoded, end="")
@@ -226,8 +327,9 @@ def main() -> None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(encoded, encoding="utf-8")
         for row in report["results"]:
+            label = row.get("arm", row["variant"])
             print(
-                f"{row['variant']}: "
+                f"{label}: "
                 f"{row['relative_training_flops']:.4f}x relative training FLOPs"
             )
 

@@ -1,3 +1,8 @@
+import json
+from pathlib import Path
+import subprocess
+import sys
+
 from tiny_mistral.config import tiny_mistral_248m_config
 from tiny_mistral_mptt.flops import (
     _bank_pairs,
@@ -7,6 +12,47 @@ from tiny_mistral_mptt.flops import (
     memory_token_layout,
     bank_write_positions,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_frozen_study_flop_report_uses_authoritative_arm_batching():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "estimate_training_flops.py"),
+            "--study",
+            str(
+                ROOT
+                / "benchmarks"
+                / "development"
+                / "frozen_backbone_comparison"
+                / "STUDY.yaml"
+            ),
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads(completed.stdout)
+    rows = {row["arm"]: row for row in report["results"]}
+    assert set(rows) == {
+        "recirculation_bptt_20m",
+        "recirculation_multipass_20m",
+        "dense_memory_attention_multipass_20m",
+    }
+    assert {
+        (row["batch_size"], row["grad_accum_steps"])
+        for row in rows.values()
+    } == {(1, 32)}
+    assert {row["optimizer_batch_tokens"] for row in rows.values()} == {32_768}
+    assert all(row["estimated_training_flops_total"] > 0 for row in rows.values())
+    assert (
+        rows["recirculation_bptt_20m"]["estimated_training_flops_total"]
+        > rows["recirculation_multipass_20m"]["estimated_training_flops_total"]
+    )
 
 
 def test_memory_token_layout_matches_packed_dataset_contract():

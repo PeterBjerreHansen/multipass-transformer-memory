@@ -301,6 +301,9 @@ def test_training_journal_can_aggregate_over_token_intervals(tmp_path):
     assert [record["log_interval_tokens"] for record in train_records] == [16, 16, 16, 16]
     assert [record["log_interval_updates"] for record in train_records] == [2, 2, 2, 2]
     assert all(record["unique_tokens_seen"] == (index + 1) * 16 for index, record in enumerate(train_records))
+    cumulative_times = [record["training_elapsed_seconds"] for record in train_records]
+    assert cumulative_times == sorted(cumulative_times)
+    assert all(value > 0 for value in cumulative_times)
 
 
 def test_mixed_k_telemetry_uses_conditional_metric_counts_and_total_throughput(

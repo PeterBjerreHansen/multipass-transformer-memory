@@ -35,6 +35,7 @@ def test_checkpoint_restores_model_optimizer_sampler_and_all_counters(tmp_path):
         unique_tokens_seen=64,
         model_positions_seen=72,
         token_equivalent_compute=144,
+        training_elapsed_seconds=12.5,
         phase="B",
     )
     path = save_checkpoint(
@@ -59,9 +60,36 @@ def test_checkpoint_restores_model_optimizer_sampler_and_all_counters(tmp_path):
     restored_sampler = StatefulBlockSampler(13, seed=0)
     restored_sampler.load_state_dict(sampler_state)
     assert loaded_state == state
+    assert loaded_state.training_elapsed_seconds == 12.5
     assert restored_sampler.next_indices(8) == expected_next
     for name, tensor in replacement.state_dict().items():
         torch.testing.assert_close(tensor, expected_parameters[name], atol=0, rtol=0)
+
+
+def test_current_checkpoint_without_elapsed_counter_resumes_at_zero(tmp_path):
+    model, optimizer = _objects()
+    sampler = StatefulBlockSampler(5, seed=3)
+    path = save_checkpoint(
+        tmp_path / "pre-timing-counter.pt",
+        model=model,
+        optimizer=optimizer,
+        sampler_state=sampler.state_dict(),
+        train_state=TrainState(unique_tokens_seen=8),
+        experiment_config={"variant": "vanilla"},
+        data_manifest_sha256="same",
+    )
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    payload["train_state"].pop("training_elapsed_seconds")
+    torch.save(payload, path)
+
+    replacement, replacement_optimizer = _objects()
+    state, _ = load_checkpoint(
+        path,
+        model=replacement,
+        optimizer=replacement_optimizer,
+        expected_manifest_sha256="same",
+    )
+    assert state.training_elapsed_seconds == 0.0
 
 
 def test_init_from_accepts_weights_only_snapshot_with_run_metadata(tmp_path):

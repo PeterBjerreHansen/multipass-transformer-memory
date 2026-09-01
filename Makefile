@@ -4,7 +4,7 @@
   efficiency-mps-context efficiency-mps-batch efficiency-cuda-training \
   efficiency-cuda-precision efficiency-cuda-context efficiency-cuda-batch \
   efficiency-cuda-forward-modes \
-  estimate-flops-forward-modes cloud-preflight
+  estimate-flops-forward-modes estimate-flops-frozen-backbone cloud-preflight
 
 test:
 	uv run pytest -q
@@ -113,6 +113,12 @@ estimate-flops-forward-modes:
 		--schedule 2:1 \
 		--model-config checkpoints/TinyMistral-248M-v3/config.json \
 		--output benchmarks/efficiency/results/forward_mode_training_flops.json
+
+estimate-flops-frozen-backbone:
+	uv run python scripts/estimate_training_flops.py \
+		--study benchmarks/development/frozen_backbone_comparison/STUDY.yaml \
+		--model-config checkpoints/TinyMistral-248M-v3/config.json \
+		--output benchmarks/development/frozen_backbone_comparison/results/training_flops.json
 
 # Usage: make cloud-preflight CONFIG=path/to/config.yaml
 cloud-preflight:

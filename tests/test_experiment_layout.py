@@ -134,6 +134,14 @@ def test_frozen_backbone_comparison_is_controller_only_for_20m_tokens():
         "dense_memory_attention_multipass_20m",
     }
     assert all(cfg.phase == "A" for cfg in configs.values())
+    assert {(cfg.batch_size, cfg.grad_accum_steps) for cfg in configs.values()} == {
+        (1, 32)
+    }
+    assert {
+        cfg.batch_size * cfg.grad_accum_steps * 1024
+        for cfg in configs.values()
+    } == {32_768}
+    assert {cfg.train_log_every_tokens for cfg in configs.values()} == {327_680}
     assert {cfg.max_unique_tokens for cfg in configs.values()} == {20_021_248}
     assert {tuple(cfg.snapshot_at_tokens) for cfg in configs.values()} == {
         (3_276_800, 5_013_504, 10_027_008, 20_021_248)

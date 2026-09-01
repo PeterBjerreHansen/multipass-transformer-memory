@@ -114,11 +114,13 @@ batch when accumulation is unchanged. It must not be treated as a harmless
 hardware default.
 
 The planned recirculation studies target 32 sequences per optimizer update. A
-target GPU may use microbatch 1 with accumulation 32, microbatch 2 with
-accumulation 16, and so on. Preserve `batch_size * grad_accum_steps` when the
-goal is only hardware fit. Learning rate still requires qualification for this
-model and optimizer batch; copying a paper value is a starting hypothesis, not
-evidence that it is optimal.
+protocol may use microbatch 1 with accumulation 32, microbatch 2 with
+accumulation 16, and so on, but it must state whether physical batching is
+fixed or hardware-tuned. The frozen-backbone comparison fixes microbatch 1 and
+accumulation 32 for every arm. Preserve `batch_size * grad_accum_steps` when a
+different study changes only hardware fit. Learning rate still requires
+qualification for this model and optimizer batch; copying a paper value is a
+starting hypothesis, not evidence that it is optimal.
 
 The trainer consumes whole packed blocks. An exact linguistic-token budget must
 be divisible by `batch_size * linguistic_tokens_per_block`; the final optimizer
@@ -192,7 +194,10 @@ Optional `snapshot_at_tokens` writes weights-only safetensors for scientific
 analysis. Snapshots never drive resume; resumable generation checkpoints remain
 the trajectory source of truth.
 
-Training logs already record input tokens, model positions, token-equivalent
-compute, elapsed time, and the realized pass schedule. Use one trajectory per
-arm, then rescale the x-axis for data, compute, or wall-time views during
-analysis. Do not rerun an arm solely to produce a different plot axis.
+Training logs record input tokens, model positions, token-equivalent compute,
+interval time, cumulative `training_elapsed_seconds`, and the realized pass
+schedule. The cumulative counter measures synchronized optimizer-update work
+and is checkpointed across resumes; validation and checkpoint I/O are excluded.
+Use one trajectory per arm, then rescale the x-axis for data, estimated compute,
+or training-time views during analysis. Do not rerun an arm solely to produce a
+different plot axis.

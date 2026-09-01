@@ -357,6 +357,7 @@ class Trainer:
                     "unique_tokens_seen": self.state.unique_tokens_seen,
                     "model_positions_seen": self.state.model_positions_seen,
                     "token_equivalent_compute": self.state.token_equivalent_compute,
+                    "training_elapsed_seconds": self.state.training_elapsed_seconds,
                     "metrics_repair": repair,
                 },
                 durable=True,
@@ -369,6 +370,7 @@ class Trainer:
                 "parent_checkpoint": str(selected_checkpoint) if selected_checkpoint else None,
                 "start_unique_tokens": self.state.unique_tokens_seen,
                 "start_model_positions": self.state.model_positions_seen,
+                "start_training_elapsed_seconds": self.state.training_elapsed_seconds,
                 "source": self.source,
                 "hardware": self.hardware,
             },
@@ -582,6 +584,7 @@ class Trainer:
             "model_positions_seen": self.state.model_positions_seen,
             "control_positions_seen": self.state.model_positions_seen - self.state.unique_tokens_seen,
             "token_equivalent_compute": self.state.token_equivalent_compute,
+            "training_elapsed_seconds": self.state.training_elapsed_seconds,
             **self._pass_schedule_metrics(),
         }
         if self.config.validation_forward == "paper_recirculation":
@@ -673,6 +676,7 @@ class Trainer:
                 "unique_tokens_seen": actual,
                 "model_positions_seen": self.state.model_positions_seen,
                 "optimizer_steps": self.state.optimizer_steps,
+                "training_elapsed_seconds": self.state.training_elapsed_seconds,
                 "source": self.source,
                 "data_manifest_sha256": self.manifest_sha256,
                 "variant": self.config.variant,
@@ -689,6 +693,7 @@ class Trainer:
                     "unique_tokens_seen": actual,
                     "model_positions_seen": self.state.model_positions_seen,
                     "optimizer_steps": self.state.optimizer_steps,
+                    "training_elapsed_seconds": self.state.training_elapsed_seconds,
                 },
             )
 
@@ -701,6 +706,7 @@ class Trainer:
                 "end_unique_tokens": self.state.unique_tokens_seen,
                 "end_model_positions": self.state.model_positions_seen,
                 "optimizer_steps": self.state.optimizer_steps,
+                "training_elapsed_seconds": self.state.training_elapsed_seconds,
                 "reason": reason,
             },
             durable=True,
@@ -893,6 +899,7 @@ class Trainer:
             synchronize(self.device)
             self.state.optimizer_steps += 1
             elapsed = max(time.perf_counter() - start, 1e-9)
+            self.state.training_elapsed_seconds += elapsed
             record = {
                 "event": "train",
                 "run_segment": self.segment_id,
@@ -905,6 +912,7 @@ class Trainer:
                 "model_positions_seen": self.state.model_positions_seen,
                 "control_positions_seen": self.state.model_positions_seen - self.state.unique_tokens_seen,
                 "token_equivalent_compute": self.state.token_equivalent_compute,
+                "training_elapsed_seconds": self.state.training_elapsed_seconds,
                 "loss": update_loss / accumulation_steps,
                 "grad_norm": float(grad_norm.detach().cpu()),
                 "tokens_per_second": (tokens_per_micro * accumulation_steps) / elapsed,

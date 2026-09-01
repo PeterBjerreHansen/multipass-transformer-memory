@@ -9,14 +9,16 @@ import gc
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 import torch
 import yaml
 
-from tiny_mistral.device import resolve_device
+from tiny_mistral.device import resolve_device, synchronize
 from tiny_mistral_mptt.config import load_experiment_config
 from tiny_mistral_mptt.data.packed_dataset import load_packed_dataset_for_experiment
 from tiny_mistral_mptt.model_factory import load_variant_from_config
+from tiny_mistral_mptt.precision import autocast_context
 from tiny_mistral_mptt.studies import StudyValidationError, verify_study
 from tiny_mistral_mptt.training.checkpoint import load_model_weights
 from tiny_mistral_mptt.training.phases import configure_phase
@@ -87,6 +89,7 @@ def _wire_arm(config_path: Path, *, wire_device: str | None) -> None:
         memory_write_stride=cfg.memory_write_stride,
     )
     configure_phase(model, cfg.phase)
+    model.train()
     pass_counts = sorted(
         {
             passes
@@ -97,15 +100,27 @@ def _wire_arm(config_path: Path, *, wire_device: str | None) -> None:
     input_ids = train_data.batch([0], device=device)
     for passes in pass_counts:
         model.zero_grad(set_to_none=True)
-        output = model.compute_loss(
-            input_ids,
-            phase=cfg.phase,
-            passes=passes,
-            loss_weights=cfg.ntp_loss_weights_for_passes(passes),
-        )
-        output.loss.backward()
+        if device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(device)
+        synchronize(device)
+        started = time.perf_counter()
+        with autocast_context(device, cfg.autocast_dtype):
+            output = model.compute_training_loss(
+                input_ids,
+                training_forward=cfg.training_forward,
+                phase=cfg.phase,
+                passes=passes,
+                loss_weights=cfg.ntp_loss_weights_for_passes(passes),
+                activation_checkpointing=cfg.recirculation_activation_checkpointing,
+            )
         if not bool(torch.isfinite(output.loss.detach()).item()):
-            raise RuntimeError(f"non-finite wiring loss for {config_path} K={passes}")
+            raise RuntimeError(
+                f"non-finite wiring loss for {config_path} "
+                f"forward={cfg.training_forward} K={passes}"
+            )
+        output.loss.backward()
+        synchronize(device)
+        elapsed_seconds = time.perf_counter() - started
         active_gradient_parameter_elements = sum(
             parameter.numel()
             for parameter in model.parameters()
@@ -114,11 +129,22 @@ def _wire_arm(config_path: Path, *, wire_device: str | None) -> None:
             and bool(parameter.grad.detach().ne(0).any().item())
         )
         if active_gradient_parameter_elements == 0:
-            raise RuntimeError(f"wiring produced no nonzero gradients for {config_path} K={passes}")
+            raise RuntimeError(
+                f"wiring produced no nonzero gradients for {config_path} "
+                f"forward={cfg.training_forward} K={passes}"
+            )
+        memory = ""
+        if device.type == "cuda":
+            memory = (
+                f" peak_allocated_gib={torch.cuda.max_memory_allocated(device) / 2**30:.3f}"
+                f" peak_reserved_gib={torch.cuda.max_memory_reserved(device) / 2**30:.3f}"
+            )
         print(
-            f"PASS: wired {config_path.stem} device={device} K={passes} "
+            f"PASS: wired {config_path.stem} device={device} "
+            f"forward={cfg.training_forward} K={passes} "
             f"loss={float(output.loss.detach().cpu()):.6f} "
-            f"active_gradient_parameter_elements={active_gradient_parameter_elements}"
+            f"active_gradient_parameter_elements={active_gradient_parameter_elements} "
+            f"elapsed_seconds={elapsed_seconds:.3f}{memory}"
         )
 
     del output, input_ids, train_data, model
