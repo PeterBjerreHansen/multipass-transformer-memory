@@ -5,9 +5,10 @@ paper contract:
 
 - `forward_policy_qualification/`: 100 optimizer steps comparing window-128
   token-diagonal Recirculation TBPTT with whole-block multipass training;
-- `frozen_backbone_comparison/`: 20M-token controller-only curves for TBPTT
-  Recirculation, multipass Recirculation, dense Memory Attention, Strided Memory
-  Attention, and Multiscale Memory Attention;
+- `frozen_backbone_comparison/`: 20M-token controller-only curves for multipass
+  Recirculation, dense Memory Attention, Strided Memory Attention, and
+  Multiscale Memory Attention. The token-diagonal TBPTT policy is kept as an
+  optional standalone configuration inside that directory;
 - `common_checkpoint_comparison/`: the proposed 100M main comparison from one
   pretrained checkpoint, with a 5M-token backbone freeze only for feedback
   arms.

@@ -39,7 +39,6 @@ def test_frozen_study_flop_report_uses_authoritative_arm_batching():
     report = json.loads(completed.stdout)
     rows = {row["arm"]: row for row in report["results"]}
     assert set(rows) == {
-        "recirculation_tbptt_w128_20m",
         "recirculation_multipass_20m",
         "dense_memory_attention_multipass_20m",
         "strided_memory_attention_multipass_20m",
@@ -51,7 +50,6 @@ def test_frozen_study_flop_report_uses_authoritative_arm_batching():
     } == {(16, 2)}
     assert {row["optimizer_batch_tokens"] for row in rows.values()} == {32_768}
     assert all(row["estimated_training_flops_total"] > 0 for row in rows.values())
-    assert rows["recirculation_tbptt_w128_20m"]["training_forward"] == "recirculation_bptt"
     assert rows["recirculation_multipass_20m"]["training_forward"] == "parallel_multipass"
     assert rows["recirculation_multipass_20m"]["relative_training_flops"] > 1.0
 

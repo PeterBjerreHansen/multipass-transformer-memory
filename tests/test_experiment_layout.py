@@ -127,10 +127,9 @@ def test_forward_policy_qualification_names_the_two_training_semantics():
     assert bptt.max_unique_tokens == multipass.max_unique_tokens == 3_276_800
 
 
-def test_frozen_backbone_comparison_is_controller_only_for_20m_tokens():
+def test_frozen_backbone_comparison_defaults_to_four_multipass_arms():
     configs = _study_configs("frozen_backbone_comparison")
     assert set(configs) == {
-        "recirculation_tbptt_w128_20m",
         "recirculation_multipass_20m",
         "dense_memory_attention_multipass_20m",
         "strided_memory_attention_multipass_20m",
@@ -149,18 +148,7 @@ def test_frozen_backbone_comparison_is_controller_only_for_20m_tokens():
     assert {tuple(cfg.snapshot_at_tokens) for cfg in configs.values()} == {
         (3_276_800, 5_013_504, 10_027_008, 20_021_248)
     }
-    bptt = configs["recirculation_tbptt_w128_20m"]
-    assert bptt.recirculation_bptt_truncate_tokens == 128
-    assert (bptt.batch_size, bptt.grad_accum_steps) == (16, 2)
-    assert bptt.attention_backend == "reference"
-    assert bptt.normalized_pass_schedule()[0]["probabilities"] == {1: 1.0}
-    assert bptt.ntp_pass_loss_weights is None
-    assert bptt.ntp_pass_loss_weights_by_k is None
-    multipass = {
-        arm: cfg
-        for arm, cfg in configs.items()
-        if arm != "recirculation_tbptt_w128_20m"
-    }
+    multipass = configs
     assert all(
         cfg.normalized_pass_schedule()[0]["probabilities"] == {2: 0.9, 3: 0.1}
         for cfg in multipass.values()
@@ -177,6 +165,24 @@ def test_frozen_backbone_comparison_is_controller_only_for_20m_tokens():
     assert multiscale.variant == "multiscale_memory_attention"
     assert (multiscale.memory_dense_window, multiscale.memory_sparse_window) == (32, 32)
     assert multiscale.memory_sparse_stride == 32
+
+
+def test_frozen_backbone_tbptt_is_optional_and_keeps_its_protocol():
+    path = (
+        ROOT
+        / "benchmarks"
+        / "development"
+        / "frozen_backbone_comparison"
+        / "optional"
+        / "recirculation_tbptt_w128_20m.yaml"
+    )
+    cfg = load_experiment_config(path)
+    assert cfg.training_forward == "recirculation_bptt"
+    assert cfg.recirculation_bptt_truncate_tokens == 128
+    assert (cfg.batch_size, cfg.grad_accum_steps) == (16, 2)
+    assert cfg.attention_backend == "reference"
+    assert cfg.validation_forward == "paper_recirculation"
+    assert cfg.eval_passes == 1
 
 
 def test_common_checkpoint_comparison_uses_integrated_retrofit_policy():
