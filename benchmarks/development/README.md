@@ -17,8 +17,10 @@ paper contract:
 
 Run the forward-policy and CUDA-memory qualification first. Active studies fix
 the effective optimizer batch at 32 sequences and use one physical batching
-policy across every arm in a study. The frozen-backbone and forward-policy
-studies use microbatch 16 with accumulation 2. The fully trainable
+policy across every arm in a study. The frozen-backbone study now prefers
+microbatch 8 with accumulation 4 on 2,048-token blocks; the forward-policy
+study remains on its existing microbatch-16/accumulation-2 1,024-token contract.
+The fully trainable
 common-checkpoint study uses microbatch 8 with accumulation 4. Learning rates
 remain protocol choices and must be qualified before either comparison is
 promoted to `core/`.

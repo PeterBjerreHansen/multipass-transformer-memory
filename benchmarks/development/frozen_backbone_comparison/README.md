@@ -1,22 +1,22 @@
 # Frozen-backbone comparison
 
-This is a planned core candidate, not a locked campaign. The four default
+This is a planned exploratory campaign, not a locked study. The four default
 trained arms keep the pretrained TinyMistral backbone frozen for the complete
-100,007,936-token trajectory. The initialized common checkpoint is the token-zero
+100,007,936-token trajectory on 2,048-token blocks from
+`data/dolmino/gpu_2048`. The initialized common checkpoint is the token-zero
 reference; it is evaluated but is not a fake training arm.
 
-The active 100M campaign uses the common `3e-4` added-module learning rate
-selected by the matched frozen-backbone qualification. The LR schedule remains
-constant because these curves measure controller adaptation under a fixed step
-size. The superseded 20M artifacts have been removed.
+The 100M campaign uses the per-mechanism added-module learning rates selected by
+the 2,048-token qualification. Until those results exist, the checked-in
+`3e-4` values are provisional. The LR schedule remains constant because these
+curves measure controller adaptation under a fixed step size.
 
 ## Effective batching and trajectory
 
-Every default arm uses `batch_size: 16` and `grad_accum_steps: 2`, consuming 32
-sequences and 32,768 linguistic tokens per optimizer update. This is the
-largest common physical batch qualified across all four default arms on the target
-A6000, so both optimizer batch and physical batch remain controlled. It also
-amortizes the work in the parallel multipass forwards.
+Every default arm uses `batch_size: 8` and `grad_accum_steps: 4`, consuming 32
+sequences and 65,536 linguistic tokens per nominal optimizer update. If a new
+hardware profile cannot fit batch 8, an explicit fallback may use 4x8, 2x16, or
+1x32 while preserving the nominal optimizer batch.
 
 The token-diagonal TBPTT policy is qualified separately by
 `forward_policy_qualification/` and is not part of this default study.
@@ -40,17 +40,19 @@ uv run python scripts/run_study.py \
   --skip-wire
 ```
 
-The retained snapshots land after optimizer updates 100, 153, 306, 611, 1526,
-and 3052:
+The retained snapshots remain defined by linguistic-token milestones. Because
+the block length and microbatch policy changed, the corresponding optimizer
+update counts differ; reports should use the checkpointed actual token and
+update counters rather than assuming the old update numbers:
 
-| Unique input tokens | Optimizer updates | Purpose |
+| Requested input tokens | Optimizer updates reached | Purpose |
 | ---: | ---: | --- |
-| 3,276,800 | 100 | Early snapshot |
-| 5,013,504 | 153 | Early continuation |
-| 10,027,008 | 306 | Midpoint |
-| 20,021,248 | 611 | Early long-run snapshot |
-| 50,003,968 | 1526 | Midpoint snapshot |
-| 100,007,936 | 3052 | Full frozen-backbone trajectory |
+| 3,276,800 | 50 | Early snapshot |
+| 5,013,504 | 77 | Early continuation |
+| 10,027,008 | 153 | Midpoint |
+| 20,021,248 | 306 | Early long-run snapshot |
+| 50,003,968 | 763 | Midpoint snapshot |
+| 100,007,936 | 1526 | Full frozen-backbone trajectory |
 
 Training records are emitted every 327,680 tokens, or ten full optimizer
 updates. `training_elapsed_seconds` is cumulative synchronized optimizer-update
@@ -62,9 +64,10 @@ The counter is checkpointed, so it remains monotonic across automatic resumes.
 
 The four default parallel multipass arms (recirculation, dense Memory
 Attention, Strided Memory Attention, and Multiscale Memory Attention) retain
-whole-block pass-depth validation as a diagnostic. Evaluate their snapshots
-under this applicable semantic view; K is a prefill/training axis, not a
-generation setting.
+whole-block K=4 validation as the headline training-distribution curve, with
+K=1 through K=4 values retained as diagnostics. K is a pass-depth axis, not a
+longer-context or generation setting. Online teacher-forced feedback remains
+an optional separate diagnostic; downstream generation is evaluated separately.
 
 Every parallel multipass wiring arm samples K=2 with probability 0.9 and K=3
 with probability 0.1, matching the continual-training schedule. Its NTP loss is
@@ -92,6 +95,10 @@ Use each arm's single trajectory to report held-out NLL against:
 Also report interval tokens/s, peak VRAM from the CUDA qualification, and total
 end-to-end wall time separately. Do not include validation or checkpoint time
 in the training-time curve.
+
+The `gpu_2048` artifact contains roughly 2M validation tokens. Routine training
+checks continue to use a small fixed validation sample; run the complete
+validation stream only at selected milestones when its cost is justified.
 
 Generate the study-specific FLOP report with:
 

@@ -97,7 +97,13 @@ def test_active_studies_share_paper_data_and_effective_optimizer_batch():
     assert configs
     for path in configs:
         cfg = load_experiment_config(path)
-        assert cfg.data_dir == "data/dolmino/paper_1024"
+        expected_data_dir = (
+            "data/dolmino/gpu_2048"
+            if path.parent.name
+            in {"frozen_backbone_lr_qualification", "frozen_backbone_comparison"}
+            else "data/dolmino/paper_1024"
+        )
+        assert cfg.data_dir == expected_data_dir
         assert cfg.batch_size * cfg.grad_accum_steps == 32
         assert cfg.variant not in {
             "fbt",
@@ -138,12 +144,12 @@ def test_frozen_backbone_comparison_defaults_to_four_multipass_arms():
     }
     assert all(cfg.phase == "A" for cfg in configs.values())
     assert {(cfg.batch_size, cfg.grad_accum_steps) for cfg in configs.values()} == {
-        (16, 2)
+        (8, 4)
     }
     assert {
-        cfg.batch_size * cfg.grad_accum_steps * 1024
+        cfg.batch_size * cfg.grad_accum_steps * 2048
         for cfg in configs.values()
-    } == {32_768}
+    } == {65_536}
     assert {cfg.train_log_every_tokens for cfg in configs.values()} == {327_680}
     assert {cfg.max_unique_tokens for cfg in configs.values()} == {100_007_936}
     assert {tuple(cfg.snapshot_at_tokens) for cfg in configs.values()} == {
@@ -167,6 +173,21 @@ def test_frozen_backbone_comparison_defaults_to_four_multipass_arms():
     assert (multiscale.memory_dense_window, multiscale.memory_sparse_window) == (32, 32)
     assert multiscale.memory_sparse_stride == 32
     assert {cfg.added_learning_rate for cfg in configs.values()} == {3.0e-4}
+
+
+def test_frozen_backbone_lr_qualification_uses_2048_sweep():
+    configs = _study_configs("frozen_backbone_lr_qualification")
+    assert len(configs) == 16
+    assert {cfg.data_dir for cfg in configs.values()} == {"data/dolmino/gpu_2048"}
+    assert {(cfg.batch_size, cfg.grad_accum_steps) for cfg in configs.values()} == {
+        (8, 4)
+    }
+    assert {cfg.added_learning_rate for cfg in configs.values()} == {
+        3.0e-5,
+        1.0e-4,
+        3.0e-4,
+        1.0e-3,
+    }
 
 
 def test_common_checkpoint_comparison_uses_integrated_retrofit_policy():
