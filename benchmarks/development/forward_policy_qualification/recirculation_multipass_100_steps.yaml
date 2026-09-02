@@ -16,8 +16,8 @@ attention_backend: auto
 seed: 1337
 architecture_seed: 4242
 
-batch_size: 1
-grad_accum_steps: 32
+batch_size: 16
+grad_accum_steps: 2
 max_unique_tokens: 3276800
 learning_rate: 3.0e-4
 added_learning_rate: 3.0e-4

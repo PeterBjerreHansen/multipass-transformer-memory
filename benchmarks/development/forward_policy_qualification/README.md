@@ -1,23 +1,23 @@
 # Forward-policy qualification
 
 This planned study qualifies the two Recirculation training policies before
-either can enter a core comparison. `recirculation_bptt` is the paper-style
-policy: each
+either can enter a core comparison. `recirculation_bptt` uses the paper-style
+token-diagonal forward: each
 token is read out normally, replayed from the source/destination mixture, and
 the replayed upper-layer KV state is used by the next token. It is not K=2.
 
-Both configs use microbatch 1 and accumulation 32 to reproduce
-the paper's effective batch of 32 sequences on smaller GPUs. Change those two
-fields together if hardware permits a larger microbatch. Preserve their product
-unless the optimizer-batch change and learning-rate retuning are explicitly
-treated as a new qualification.
+Both configs use microbatch 16 and accumulation 2, retaining an effective
+optimizer batch of 32 sequences. This is the largest common policy qualified
+for all frozen-backbone mechanisms on the target A6000. It amortizes much of
+the token-serial TBPTT launch overhead while keeping the physical batch
+controlled across the comparison.
 
-The checked-in BPTT arm uses full-sequence gradients and activation
-checkpointing. First run `benchmarks/efficiency/suites/forward_modes.yaml` on
-the target GPU. If full BPTT is impractical, qualify a finite
-`recirculation_bptt_truncate_tokens` value against full BPTT on shorter pilot
-runs. TBPTT preserves the forward KV trajectory but changes the gradient path,
-so record it as an experimental setting rather than a transparent memory flag.
+The checked-in token-diagonal arm uses window-128 TBPTT and activation
+checkpointing. Full BPTT remains the paper-faithful gradient reference, but it
+is not an active long-run arm: the audited implementation requires a serial
+1,024-token prefill and cannot complete the planned trajectories at a useful
+rate. TBPTT preserves the forward KV trajectory but changes the gradient path,
+so the window is part of the arm name and reported protocol.
 
 Run the initialized adaptive model before training as the fixed-mixture
 reference: its zero-initialized output projection yields alpha=0.1 and beta=0.9.

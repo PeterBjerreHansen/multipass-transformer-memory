@@ -72,8 +72,11 @@ def test_forward_mode_suite_keeps_bptt_separate_from_multipass_k():
     assert {case["sequence_length"] for case in bptt} == {1024}
     assert {
         case.get("recirculation_bptt_truncate_tokens") for case in bptt
-    } == {128, 256, 512, None}
+    } == {128, 256, 512}
     assert all(case["variant"] == "recirculation" for case in bptt)
     assert all(case["passes"] == 1 for case in bptt)
     assert all(case["phase"] == "A" for case in bptt)
     assert all(case["recirculation_activation_checkpointing"] for case in bptt)
+    assert all(case["attention_backend"] == "reference" for case in bptt)
+    assert all(case["batch_size"] == 16 for case in bptt)
+    assert all(case["grad_accum_steps"] == 2 for case in bptt)

@@ -22,6 +22,7 @@ from tiny_mistral_mptt.precision import autocast_context
 from tiny_mistral_mptt.studies import StudyValidationError, verify_study
 from tiny_mistral_mptt.training.checkpoint import load_model_weights
 from tiny_mistral_mptt.training.phases import configure_phase
+from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
 
 
 def _load_arm_configs(study_dir: Path) -> dict[str, Path]:
@@ -97,28 +98,57 @@ def _wire_arm(config_path: Path, *, wire_device: str | None) -> None:
             for passes in stage["probabilities"]
         }
     )
-    input_ids = train_data.batch([0], device=device)
+    input_ids = train_data.batch(range(cfg.batch_size), device=device)
     for passes in pass_counts:
         model.zero_grad(set_to_none=True)
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
         synchronize(device)
         started = time.perf_counter()
-        with autocast_context(device, cfg.autocast_dtype):
-            output = model.compute_training_loss(
-                input_ids,
-                training_forward=cfg.training_forward,
-                phase=cfg.phase,
-                passes=passes,
-                loss_weights=cfg.ntp_loss_weights_for_passes(passes),
-                activation_checkpointing=cfg.recirculation_activation_checkpointing,
+        if cfg.recirculation_bptt_truncate_tokens is not None:
+            if not isinstance(model, RecirculationVariant):
+                raise RuntimeError("TBPTT wiring requires a RecirculationVariant")
+            predicted_tokens = int(input_ids.shape[0] * (input_ids.shape[1] - 1))
+            chunks = iter(
+                model.iter_recirculation_tbptt_losses(
+                    input_ids,
+                    truncate_tokens=cfg.recirculation_bptt_truncate_tokens,
+                    activation_checkpointing=cfg.recirculation_activation_checkpointing,
+                )
             )
-        if not bool(torch.isfinite(output.loss.detach()).item()):
-            raise RuntimeError(
-                f"non-finite wiring loss for {config_path} "
-                f"forward={cfg.training_forward} K={passes}"
-            )
-        output.loss.backward()
+            wire_loss = 0.0
+            while True:
+                with autocast_context(device, cfg.autocast_dtype):
+                    try:
+                        chunk_loss, chunk_predictions = next(chunks)
+                    except StopIteration:
+                        break
+                if not bool(torch.isfinite(chunk_loss.detach()).item()):
+                    raise RuntimeError(
+                        f"non-finite wiring loss for {config_path} "
+                        f"forward={cfg.training_forward} K={passes}"
+                    )
+                chunk_weight = chunk_predictions / predicted_tokens
+                if chunk_loss.requires_grad:
+                    (chunk_loss * chunk_weight).backward()
+                wire_loss += float(chunk_loss.detach().cpu()) * chunk_weight
+        else:
+            with autocast_context(device, cfg.autocast_dtype):
+                output = model.compute_training_loss(
+                    input_ids,
+                    training_forward=cfg.training_forward,
+                    phase=cfg.phase,
+                    passes=passes,
+                    loss_weights=cfg.ntp_loss_weights_for_passes(passes),
+                    activation_checkpointing=cfg.recirculation_activation_checkpointing,
+                )
+            if not bool(torch.isfinite(output.loss.detach()).item()):
+                raise RuntimeError(
+                    f"non-finite wiring loss for {config_path} "
+                    f"forward={cfg.training_forward} K={passes}"
+                )
+            output.loss.backward()
+            wire_loss = float(output.loss.detach().cpu())
         synchronize(device)
         elapsed_seconds = time.perf_counter() - started
         active_gradient_parameter_elements = sum(
@@ -142,12 +172,14 @@ def _wire_arm(config_path: Path, *, wire_device: str | None) -> None:
         print(
             f"PASS: wired {config_path.stem} device={device} "
             f"forward={cfg.training_forward} K={passes} "
-            f"loss={float(output.loss.detach().cpu()):.6f} "
+            f"batch_size={cfg.batch_size} "
+            f"tbptt_window={cfg.recirculation_bptt_truncate_tokens} "
+            f"loss={wire_loss:.6f} "
             f"active_gradient_parameter_elements={active_gradient_parameter_elements} "
             f"elapsed_seconds={elapsed_seconds:.3f}{memory}"
         )
 
-    del output, input_ids, train_data, model
+    del input_ids, train_data, model
     gc.collect()
     if device.type == "mps" and hasattr(torch, "mps"):
         torch.mps.empty_cache()

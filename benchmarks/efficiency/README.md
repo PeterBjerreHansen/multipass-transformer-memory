@@ -10,7 +10,6 @@ uses the paper contract's 1,024-token blocks and compares:
 
 - vanilla one-pass training;
 - whole-block K=2 Recirculation;
-- token-diagonal Recirculation with full BPTT;
 - token-diagonal Recirculation with TBPTT windows 128, 256, and 512;
 - dense Memory Attention at K=2.
 
@@ -21,15 +20,16 @@ make efficiency-cuda-forward-modes
 make estimate-flops-forward-modes
 ```
 
-The checked-in cases use hardware microbatch 1. If a selected forward policy
-fits a larger microbatch, rerun that case at the candidate sizes and reduce
-gradient accumulation in the scientific config so `batch_size *
-grad_accum_steps` remains 32. A different effective optimizer batch or learning
-rate is a protocol change, not an invisible hardware adjustment.
+All cases use physical batch 16 and accumulation 2, the largest common policy
+qualified for the frozen-backbone study on the target A6000. TBPTT uses the
+reference cached-attention backend. `batch_size * grad_accum_steps` remains 32;
+a different effective optimizer batch or learning rate is a protocol change,
+not an invisible hardware adjustment.
 
-Full BPTT is the paper-faithful default. A finite TBPTT window preserves the
-forward KV trajectory but truncates the gradient path, so it must be reported
-and qualified against full BPTT on shorter runs.
+Full BPTT is the paper-faithful gradient reference but is not in the active CUDA
+suite because the serial implementation is operationally infeasible at length
+1,024. A finite TBPTT window preserves the forward KV trajectory but truncates
+the gradient path, so it remains an explicit experimental axis.
 
 For token-diagonal recurrence, `passes: 1` denotes one recurrent forward policy;
 it does not mean one ordinary backbone pass per token. Use measured runtime or

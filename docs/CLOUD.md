@@ -7,9 +7,10 @@ locked Python environment.
 ## Qualify the forward policy and batching first
 
 The active paper configs use 1,024-token blocks and an effective optimizer
-batch of 32 sequences. The checked-in microbatch 1 and accumulation 32 are a
-portable starting point; GPU capacity alone is not evidence for changing that
-effective batch.
+batch of 32 sequences. The A6000-qualified frozen-backbone studies use
+microbatch 16 with accumulation 2 for every arm. The fully trainable
+common-checkpoint study uses microbatch 8 with accumulation 4 because dense
+memory K=3 does not fit at batch 16.
 
 On the intended GPU:
 
@@ -19,7 +20,7 @@ make check
 make efficiency-cuda-forward-modes
 ```
 
-The suite compares full BPTT, candidate TBPTT windows, whole-block K=2
+The suite compares candidate TBPTT windows, whole-block K=2
 Recirculation, dense Memory Attention, and vanilla with BF16 autocast. Rerun the
 selected feasible policies at candidate microbatches on the target GPU, then
 reduce accumulation so the product remains 32. If that product or a learning

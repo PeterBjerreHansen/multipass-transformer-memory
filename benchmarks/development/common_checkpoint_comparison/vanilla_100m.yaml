@@ -11,8 +11,8 @@ autocast_dtype: bfloat16
 attention_backend: auto
 seed: 1337
 architecture_seed: 4242
-batch_size: 1
-grad_accum_steps: 32
+batch_size: 8
+grad_accum_steps: 4
 max_unique_tokens: 100007936
 learning_rate: 1.0e-6
 pretrained_learning_rate: 1.0e-6

@@ -39,8 +39,9 @@ pretraining recipe.
 The paper-forward implementation follows Michael C. Mozer et al.,
 *Recirculation*, arXiv:2608.17981v2. In particular, the same token is read out
 before its replayed upper-layer KV state becomes strict-past context for the
-next token. The checked-in paper-faithful training policy uses full BPTT;
-finite TBPTT windows are explicitly labeled repository approximations.
+next token. Full BPTT is the paper-faithful gradient reference; active long-run
+configs use explicitly named window-128 TBPTT because full BPTT is operationally
+infeasible in the audited token-serial implementation.
 
 ## Earlier MPTT research reference
 

@@ -110,13 +110,15 @@ def test_active_studies_share_paper_data_and_effective_optimizer_batch():
 def test_forward_policy_qualification_names_the_two_training_semantics():
     configs = _study_configs("forward_policy_qualification")
     assert set(configs) == {
-        "recirculation_bptt_100_steps",
+        "recirculation_tbptt_w128_100_steps",
         "recirculation_multipass_100_steps",
     }
-    bptt = configs["recirculation_bptt_100_steps"]
+    bptt = configs["recirculation_tbptt_w128_100_steps"]
     multipass = configs["recirculation_multipass_100_steps"]
     assert bptt.training_forward == "recirculation_bptt"
-    assert bptt.recirculation_bptt_truncate_tokens is None
+    assert bptt.recirculation_bptt_truncate_tokens == 128
+    assert (bptt.batch_size, bptt.grad_accum_steps) == (16, 2)
+    assert bptt.attention_backend == "reference"
     assert bptt.validation_forward == "paper_recirculation"
     assert bptt.eval_passes == 1
     assert multipass.training_forward == "parallel_multipass"
@@ -128,7 +130,7 @@ def test_forward_policy_qualification_names_the_two_training_semantics():
 def test_frozen_backbone_comparison_is_controller_only_for_20m_tokens():
     configs = _study_configs("frozen_backbone_comparison")
     assert set(configs) == {
-        "recirculation_bptt_20m",
+        "recirculation_tbptt_w128_20m",
         "recirculation_multipass_20m",
         "dense_memory_attention_multipass_20m",
         "strided_memory_attention_multipass_20m",
@@ -136,7 +138,7 @@ def test_frozen_backbone_comparison_is_controller_only_for_20m_tokens():
     }
     assert all(cfg.phase == "A" for cfg in configs.values())
     assert {(cfg.batch_size, cfg.grad_accum_steps) for cfg in configs.values()} == {
-        (1, 32)
+        (16, 2)
     }
     assert {
         cfg.batch_size * cfg.grad_accum_steps * 1024
@@ -147,12 +149,17 @@ def test_frozen_backbone_comparison_is_controller_only_for_20m_tokens():
     assert {tuple(cfg.snapshot_at_tokens) for cfg in configs.values()} == {
         (3_276_800, 5_013_504, 10_027_008, 20_021_248)
     }
-    bptt = configs["recirculation_bptt_20m"]
+    bptt = configs["recirculation_tbptt_w128_20m"]
+    assert bptt.recirculation_bptt_truncate_tokens == 128
+    assert (bptt.batch_size, bptt.grad_accum_steps) == (16, 2)
+    assert bptt.attention_backend == "reference"
     assert bptt.normalized_pass_schedule()[0]["probabilities"] == {1: 1.0}
     assert bptt.ntp_pass_loss_weights is None
     assert bptt.ntp_pass_loss_weights_by_k is None
     multipass = {
-        arm: cfg for arm, cfg in configs.items() if arm != "recirculation_bptt_20m"
+        arm: cfg
+        for arm, cfg in configs.items()
+        if arm != "recirculation_tbptt_w128_20m"
     }
     assert all(
         cfg.normalized_pass_schedule()[0]["probabilities"] == {2: 0.9, 3: 0.1}
@@ -176,7 +183,7 @@ def test_common_checkpoint_comparison_uses_integrated_retrofit_policy():
     configs = _study_configs("common_checkpoint_comparison")
     assert set(configs) == {
         "vanilla_100m",
-        "recirculation_bptt_100m",
+        "recirculation_tbptt_w128_100m",
         "recirculation_multipass_100m",
         "dense_memory_attention_multipass_100m",
     }
@@ -187,6 +194,13 @@ def test_common_checkpoint_comparison_uses_integrated_retrofit_policy():
     assert all(cfg.init_from is None for cfg in configs.values())
     assert all(cfg.phase == "B" for cfg in configs.values())
     assert {cfg.max_unique_tokens for cfg in configs.values()} == {100_007_936}
+    tbptt = configs["recirculation_tbptt_w128_100m"]
+    assert tbptt.recirculation_bptt_truncate_tokens == 128
+    assert {(cfg.batch_size, cfg.grad_accum_steps) for cfg in configs.values()} == {
+        (8, 4)
+    }
+    assert (tbptt.batch_size, tbptt.grad_accum_steps) == (8, 4)
+    assert tbptt.attention_backend == "reference"
 
 
 def test_historical_studies_are_preserved_but_not_discovered():

@@ -56,8 +56,9 @@ generate.py
 ```
 
 `run_study.py` is the common executor for colocated development/core studies.
-It validates the manifest, exercises every sampled pass depth with a one-batch
-forward/backward preflight, and then runs selected arms sequentially.
+It validates the manifest, exercises every sampled pass depth with a
+forward/backward preflight at the config's declared physical batch and TBPTT
+window, and then runs selected arms sequentially.
 
 `start-and-watch` is the unattended cloud wrapper. It starts a remote
 `train.py --resume-auto` process, waits for a durable completed segment,

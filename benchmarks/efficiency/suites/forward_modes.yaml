@@ -10,8 +10,8 @@ defaults:
   parameter_dtype: float32
   autocast_dtype: bfloat16
   attention_backend: auto
-  batch_size: 1
-  grad_accum_steps: 1
+  batch_size: 16
+  grad_accum_steps: 2
   warmup_steps: 1
   measure_steps: 2
   seed: 1337
@@ -40,6 +40,7 @@ cases:
     phase: A
     training_forward: recirculation_bptt
     recirculation_activation_checkpointing: true
+    attention_backend: reference
     passes: 1
     sequence_length: 1024
     recirculation_bptt_truncate_tokens: 128
@@ -53,6 +54,7 @@ cases:
     phase: A
     training_forward: recirculation_bptt
     recirculation_activation_checkpointing: true
+    attention_backend: reference
     passes: 1
     sequence_length: 1024
     recirculation_bptt_truncate_tokens: 256
@@ -66,21 +68,10 @@ cases:
     phase: A
     training_forward: recirculation_bptt
     recirculation_activation_checkpointing: true
+    attention_backend: reference
     passes: 1
     sequence_length: 1024
     recirculation_bptt_truncate_tokens: 512
-    recirculation_source_layer: 6
-    recirculation_destination_layer: 3
-    recirculation_alpha: 0.1
-    recirculation_mode: adaptive
-
-  - name: recirculation_bptt_t1024
-    variant: recirculation
-    phase: A
-    training_forward: recirculation_bptt
-    recirculation_activation_checkpointing: true
-    passes: 1
-    sequence_length: 1024
     recirculation_source_layer: 6
     recirculation_destination_layer: 3
     recirculation_alpha: 0.1

@@ -12,13 +12,13 @@ accumulates its normal optimizer history. At the boundary, the added group's
 moments and step count continue unchanged. The LR multiplier stays flat through
 the boundary and then decays on the same token-indexed schedule.
 
-All arms use 1,024-token ordinary packed blocks and an effective optimizer batch
-of 32 sequences. Microbatch 1 plus accumulation 32 is only the checked-in CUDA
-starting point: choose the largest reliable microbatch on the target GPU and
-reduce accumulation so their product stays 32. Learning rates and any TBPTT
-window must be qualified before this study is promoted to `benchmarks/core/`.
-Full BPTT (`recirculation_bptt_truncate_tokens: null`) is the paper-faithful
-default; a finite window is a separately reported approximation.
+All arms use 1,024-token ordinary packed blocks, microbatch 8, and accumulation
+4 for an effective optimizer batch of 32 sequences. Batch 16 does not fit the
+fully trainable dense-memory K=3 path on the target A6000; batch 8 is the common
+qualified policy. The token-diagonal arm uses window-128 TBPTT, activation
+checkpointing, and reference cached attention. Full BPTT is the paper-faithful
+gradient reference but is excluded from the active long run as operationally
+infeasible; the finite window remains a separately reported approximation.
 
 Run each arm once. Derive loss-vs-input-token, supervised-target-token,
 estimated-FLOP, and accelerator-time views from the same trajectory and retained

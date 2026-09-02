@@ -116,9 +116,11 @@ hardware default.
 The planned recirculation studies target 32 sequences per optimizer update. A
 protocol may use microbatch 1 with accumulation 32, microbatch 2 with
 accumulation 16, and so on, but it must state whether physical batching is
-fixed or hardware-tuned. The frozen-backbone comparison fixes microbatch 1 and
-accumulation 32 for every arm. Preserve `batch_size * grad_accum_steps` when a
-different study changes only hardware fit. Learning rate still requires
+fixed or hardware-tuned. The active frozen-backbone studies use the common
+A6000-qualified policy of microbatch 16 and accumulation 2. The fully trainable
+common-checkpoint study uses microbatch 8 and accumulation 4. Preserve
+`batch_size * grad_accum_steps` when a study changes only hardware fit. Learning
+rate still requires
 qualification for this model and optimizer batch; copying a paper value is a
 starting hypothesis, not evidence that it is optimal.
 
