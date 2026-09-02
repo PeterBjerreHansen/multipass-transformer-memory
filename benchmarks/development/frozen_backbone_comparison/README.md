@@ -2,8 +2,13 @@
 
 This is a planned core candidate, not a locked campaign. The four default
 trained arms keep the pretrained TinyMistral backbone frozen for the complete
-20,021,248-token trajectory. The initialized common checkpoint is the token-zero
+100,007,936-token trajectory. The initialized common checkpoint is the token-zero
 reference; it is evaluated but is not a fake training arm.
+
+The active 100M campaign uses the common `3e-4` added-module learning rate
+selected by the matched frozen-backbone qualification. The LR schedule remains
+constant because these curves measure controller adaptation under a fixed step
+size. The superseded 20M artifacts have been removed.
 
 ## Effective batching and trajectory
 
@@ -13,9 +18,8 @@ largest common physical batch qualified across all four default arms on the targ
 A6000, so both optimizer batch and physical batch remain controlled. It also
 amortizes the work in the parallel multipass forwards.
 
-The optional token-diagonal TBPTT configuration uses the reference attention
-backend because cached token recurrence already falls back to that audited
-path; it is not part of this default study.
+The token-diagonal TBPTT policy is qualified separately by
+`forward_policy_qualification/` and is not part of this default study.
 
 On the target CUDA host, validate all four default forward/backward paths before
 starting the trajectories:
@@ -36,38 +40,23 @@ uv run python scripts/run_study.py \
   --skip-wire
 ```
 
-The retained snapshots land after optimizer updates 100, 153, 306, and 611:
+The retained snapshots land after optimizer updates 100, 153, 306, 611, 1526,
+and 3052:
 
 | Unique input tokens | Optimizer updates | Purpose |
 | ---: | ---: | --- |
 | 3,276,800 | 100 | Early snapshot |
 | 5,013,504 | 153 | Early continuation |
 | 10,027,008 | 306 | Midpoint |
-| 20,021,248 | 611 | Full frozen-backbone trajectory |
+| 20,021,248 | 611 | Early long-run snapshot |
+| 50,003,968 | 1526 | Midpoint snapshot |
+| 100,007,936 | 3052 | Full frozen-backbone trajectory |
 
 Training records are emitted every 327,680 tokens, or ten full optimizer
 updates. `training_elapsed_seconds` is cumulative synchronized optimizer-update
 time. It includes data transfer, forward, backward, gradient clipping, and the
 optimizer step, but excludes validation, snapshot writing, and checkpoint I/O.
 The counter is checkpointed, so it remains monotonic across automatic resumes.
-
-## Optional TBPTT comparison
-
-The token-diagonal Recirculation TBPTT policy is retained as an explicitly
-optional run and is not listed in `STUDY.yaml`. Its standalone configuration is
-`optional/recirculation_tbptt_w128_20m.yaml`; run it directly when the separate
-training-policy comparison is wanted:
-
-```bash
-uv run python scripts/train.py \
-  --config benchmarks/development/frozen_backbone_comparison/optional/recirculation_tbptt_w128_20m.yaml \
-  --resume-auto
-```
-
-It remains a K=1 token-diagonal forward with a 128-token TBPTT window. The
-forward feedback trajectory is continuous, while gradients are detached at
-window boundaries. Its results must not be folded into the default
-`frozen_feedback_mechanisms` comparison without an explicit protocol decision.
 
 ## Evaluation and reporting
 
@@ -83,9 +72,9 @@ final-pass-only: `[0, 1]` for K=2 and `[0, 0, 1]` for K=3. The zero first-pass
 weight is intentional in Phase A because the pretrained backbone is frozen and
 only the added feedback mechanism is being wired. K=2/K=3 applies to
 prefill/training and validation diagnostics; generation is evaluated separately
-with the feedback continuation mechanism. The optional TBPTT run remains K=1
-and has no multipass loss weights because its recurrence is token-diagonal
-rather than a pass-depth axis.
+with the feedback continuation mechanism. TBPTT remains a separate training
+policy with K=1 and no multipass loss weights because its recurrence is
+token-diagonal rather than a pass-depth axis.
 
 The `strided_memory_attention` arm is learned Memory Attention with periodic
 stride-32 writes. It is distinct from the parameter-free `strided_attention`
@@ -122,5 +111,5 @@ time is the practical-efficiency result.
 
 Promote this directory to `benchmarks/core/` and set `status: locked` only after
 the forward-mode, CUDA-memory, and learning-rate qualifications for the four
-default arms are complete. Qualify the optional TBPTT policy separately if it
-is needed for the paper.
+default arms are complete. The separate TBPTT policy is promoted only if the
+paper explicitly includes that training-policy comparison.

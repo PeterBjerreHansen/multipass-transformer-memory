@@ -5,17 +5,17 @@ question: >-
   how long do the added feedback mechanisms reduce held-out NLL, and what are
   their accelerator-time and estimated-compute costs?
 arms:
-  - {id: recirculation_multipass_20m, config: recirculation_multipass_20m.yaml}
-  - {id: dense_memory_attention_multipass_20m, config: dense_memory_attention_multipass_20m.yaml}
-  - {id: strided_memory_attention_multipass_20m, config: strided_memory_attention_multipass_20m.yaml}
-  - {id: multiscale_memory_attention_multipass_20m, config: multiscale_memory_attention_multipass_20m.yaml}
+  - {id: recirculation_multipass_100m, config: recirculation_multipass_100m.yaml}
+  - {id: dense_memory_attention_multipass_100m, config: dense_memory_attention_multipass_100m.yaml}
+  - {id: strided_memory_attention_multipass_100m, config: strided_memory_attention_multipass_100m.yaml}
+  - {id: multiscale_memory_attention_multipass_100m, config: multiscale_memory_attention_multipass_100m.yaml}
 comparisons:
   - name: frozen_feedback_mechanisms
     arms:
-      - recirculation_multipass_20m
-      - dense_memory_attention_multipass_20m
-      - strided_memory_attention_multipass_20m
-      - multiscale_memory_attention_multipass_20m
+      - recirculation_multipass_100m
+      - dense_memory_attention_multipass_100m
+      - strided_memory_attention_multipass_100m
+      - multiscale_memory_attention_multipass_100m
     experimental_axes:
       - variant
       - memory_window
@@ -32,7 +32,6 @@ comparisons:
       - pass_schedule
       - ntp_pass_loss_weights_by_k
     allowed_differences:
-      - added_learning_rate
       - attention_backend
       - validation_forward
       - eval_passes

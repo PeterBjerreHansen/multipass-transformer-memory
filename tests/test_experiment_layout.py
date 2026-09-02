@@ -83,6 +83,7 @@ def test_active_study_surface_matches_the_paper_contract():
     development = ROOT / "benchmarks" / "development"
     expected = {
         "forward_policy_qualification",
+        "frozen_backbone_lr_qualification",
         "frozen_backbone_comparison",
         "common_checkpoint_comparison",
     }
@@ -130,10 +131,10 @@ def test_forward_policy_qualification_names_the_two_training_semantics():
 def test_frozen_backbone_comparison_defaults_to_four_multipass_arms():
     configs = _study_configs("frozen_backbone_comparison")
     assert set(configs) == {
-        "recirculation_multipass_20m",
-        "dense_memory_attention_multipass_20m",
-        "strided_memory_attention_multipass_20m",
-        "multiscale_memory_attention_multipass_20m",
+        "recirculation_multipass_100m",
+        "dense_memory_attention_multipass_100m",
+        "strided_memory_attention_multipass_100m",
+        "multiscale_memory_attention_multipass_100m",
     }
     assert all(cfg.phase == "A" for cfg in configs.values())
     assert {(cfg.batch_size, cfg.grad_accum_steps) for cfg in configs.values()} == {
@@ -144,9 +145,9 @@ def test_frozen_backbone_comparison_defaults_to_four_multipass_arms():
         for cfg in configs.values()
     } == {32_768}
     assert {cfg.train_log_every_tokens for cfg in configs.values()} == {327_680}
-    assert {cfg.max_unique_tokens for cfg in configs.values()} == {20_021_248}
+    assert {cfg.max_unique_tokens for cfg in configs.values()} == {100_007_936}
     assert {tuple(cfg.snapshot_at_tokens) for cfg in configs.values()} == {
-        (3_276_800, 5_013_504, 10_027_008, 20_021_248)
+        (3_276_800, 5_013_504, 10_027_008, 20_021_248, 50_003_968, 100_007_936)
     }
     multipass = configs
     assert all(
@@ -157,32 +158,15 @@ def test_frozen_backbone_comparison_defaults_to_four_multipass_arms():
         cfg.ntp_pass_loss_weights_by_k == {2: [0.0, 1.0], 3: [0.0, 0.0, 1.0]}
         for cfg in multipass.values()
     )
-    strided = configs["strided_memory_attention_multipass_20m"]
+    strided = configs["strided_memory_attention_multipass_100m"]
     assert strided.variant == "strided_memory_attention"
     assert strided.memory_write_mode == "strided"
     assert strided.memory_write_stride == 32
-    multiscale = configs["multiscale_memory_attention_multipass_20m"]
+    multiscale = configs["multiscale_memory_attention_multipass_100m"]
     assert multiscale.variant == "multiscale_memory_attention"
     assert (multiscale.memory_dense_window, multiscale.memory_sparse_window) == (32, 32)
     assert multiscale.memory_sparse_stride == 32
-
-
-def test_frozen_backbone_tbptt_is_optional_and_keeps_its_protocol():
-    path = (
-        ROOT
-        / "benchmarks"
-        / "development"
-        / "frozen_backbone_comparison"
-        / "optional"
-        / "recirculation_tbptt_w128_20m.yaml"
-    )
-    cfg = load_experiment_config(path)
-    assert cfg.training_forward == "recirculation_bptt"
-    assert cfg.recirculation_bptt_truncate_tokens == 128
-    assert (cfg.batch_size, cfg.grad_accum_steps) == (16, 2)
-    assert cfg.attention_backend == "reference"
-    assert cfg.validation_forward == "paper_recirculation"
-    assert cfg.eval_passes == 1
+    assert {cfg.added_learning_rate for cfg in configs.values()} == {3.0e-4}
 
 
 def test_common_checkpoint_comparison_uses_integrated_retrofit_policy():
