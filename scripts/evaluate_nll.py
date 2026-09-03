@@ -16,6 +16,7 @@ from tiny_mistral_mptt.evaluation.provenance import (
     seed_evaluation,
 )
 from tiny_mistral_mptt.model_factory import load_variant_from_config
+from tiny_mistral_mptt.evaluation.settings import add_execution_arguments, resolve_evaluation_settings
 
 
 def main() -> None:
@@ -24,23 +25,30 @@ def main() -> None:
     )
     parser.add_argument("--config", required=True)
     add_checkpoint_arguments(parser)
+    add_execution_arguments(parser)
     parser.add_argument("--evaluation-data-dir", default=None)
-    parser.add_argument("--passes", type=int, required=True)
+    parser.add_argument("--passes", type=int, default=None,
+                        help="default: experiment eval_passes for parallel NLL; 1 for BOS feedback")
     parser.add_argument(
         "--forward",
-        choices=("parallel_multipass", "paper_recirculation"),
+        choices=("parallel_multipass", "feedback"),
         default=None,
-        help="default: validation_forward from the experiment config",
+        help="default: experiment validation_forward; feedback uses BOS-only K=1 prefill over full blocks",
     )
-    parser.add_argument("--max-blocks", type=int, default=None)
+    parser.add_argument("--max-blocks", type=int, default=None,
+                        help="complete prefix blocks; default: full split; start with 1 for feedback")
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
     seed_evaluation(args.seed)
     cfg = load_experiment_config(args.config)
-    device = resolve_device(cfg.device)
+    device = resolve_device(cfg.device if args.device is None else args.device)
     model = load_variant_from_config(cfg, device=device)
+    settings = resolve_evaluation_settings(
+        cfg, model, passes=args.passes, autocast_dtype=args.autocast_dtype,
+        forward_mode=args.forward,
+    )
     weights = load_evaluation_weights(
         model=model,
         config=cfg,
@@ -54,23 +62,26 @@ def main() -> None:
         memory_write_mode=cfg.memory_write_mode,
         memory_write_stride=cfg.memory_write_stride,
     )
-    forward_mode = cfg.validation_forward if args.forward is None else args.forward
+    forward_mode = settings.forward_mode
     result = evaluate_nll(
         model,
         dataset,
         device=device,
-        passes=args.passes,
+        passes=settings.passes,
         forward_mode=forward_mode,
         max_blocks=args.max_blocks,
+        autocast_dtype=settings.autocast_dtype,
     )
     document = {
+        "schema_version": 2,
         "evaluation_kind": "full_sequence_validation_nll",
         "semantics": {
             "forward": forward_mode,
-            "passes": args.passes,
+            "passes": settings.passes,
             "teacher_forced": True,
             "generation": False,
         },
+        "resolved_settings": asdict(settings),
         "provenance": evaluation_provenance(
             config_path=args.config,
             config=cfg,

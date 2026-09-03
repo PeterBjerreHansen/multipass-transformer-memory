@@ -16,6 +16,7 @@ from tiny_mistral_mptt.evaluation.provenance import (
 )
 from tiny_mistral_mptt.evaluation.recurrent import evaluate_recurrent_continuation
 from tiny_mistral_mptt.model_factory import load_variant_from_config
+from tiny_mistral_mptt.evaluation.settings import add_execution_arguments, resolve_evaluation_settings
 from tiny_mistral_mptt.variants.multipass import MultiPassVariant
 
 
@@ -28,13 +29,14 @@ def main() -> None:
     )
     parser.add_argument("--config", required=True)
     add_checkpoint_arguments(parser)
+    add_execution_arguments(parser)
     parser.add_argument("--evaluation-data-dir", default=None)
     parser.add_argument(
         "--prefill-passes",
         type=int,
         nargs="+",
-        default=[2],
-        help="one or more positive prompt-refinement depths K",
+        default=None,
+        help="prompt-refinement depths; default: experiment eval_prefill_passes or eval_passes",
     )
     parser.add_argument("--prompt-tokens", type=int, default=256)
     parser.add_argument("--continuation-tokens", type=int, default=256)
@@ -50,16 +52,18 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1234)
     args = parser.parse_args()
 
-    if any(passes < 1 for passes in args.prefill_passes):
+    if args.prefill_passes is not None and any(passes < 1 for passes in args.prefill_passes):
         raise SystemExit("--prefill-passes values must be positive")
 
     seed_evaluation(args.seed)
     cfg = load_experiment_config(args.config)
-    device = resolve_device(cfg.device)
+    device = resolve_device(cfg.device if args.device is None else args.device)
     model = load_variant_from_config(cfg, device=device)
     if not isinstance(model, MultiPassVariant) or not model.supports_cached_feedback:
         raise SystemExit("loaded variant does not implement recurrent memory inference")
 
+    settings = resolve_evaluation_settings(cfg, model, autocast_dtype=args.autocast_dtype)
+    prefill_depths = args.prefill_passes or [settings.prefill_passes]
     weights = load_evaluation_weights(
         model=model,
         config=cfg,
@@ -76,7 +80,7 @@ def main() -> None:
         memory_write_stride=cfg.memory_write_stride,
     )
     results = []
-    for passes in args.prefill_passes:
+    for passes in prefill_depths:
         result = evaluate_recurrent_continuation(
             model,
             dataset,
@@ -86,13 +90,15 @@ def main() -> None:
             continuation_tokens=args.continuation_tokens,
             max_blocks=args.max_blocks,
             horizons=args.horizons,
+            autocast_dtype=settings.autocast_dtype,
         )
         results.append(asdict(result))
 
     document = {
+        "schema_version": 2,
         "evaluation_kind": "exact_vs_feedback_continuation_diagnostic",
         "variant": cfg.variant,
-        "prefill_passes": list(args.prefill_passes),
+        "prefill_passes": list(prefill_depths),
         "provenance": evaluation_provenance(
             config_path=args.config,
             config=cfg,

@@ -80,7 +80,7 @@ def test_recurrent_eval_k1_uses_feedback_after_the_shared_prompt_prediction():
     )
     torch.testing.assert_close(
         torch.tensor(result.exact_nll_by_offset),
-        torch.tensor(result.vanilla_nll_by_offset),
+        torch.tensor(result.standard_k1_nll_by_offset),
         atol=0,
         rtol=0,
     )
@@ -121,7 +121,7 @@ def test_recurrent_eval_exercises_strided_memory_attention_after_prefill():
     assert all(torch.isfinite(torch.tensor(values)).all() for values in (
         result.exact_nll_by_offset,
         result.recurrent_nll_by_offset,
-        result.vanilla_nll_by_offset,
+        result.standard_k1_nll_by_offset,
     ))
     # Offset zero and the first processed token still share the exact handoff;
     # later tokens exercise the collapsed recurrent stream.

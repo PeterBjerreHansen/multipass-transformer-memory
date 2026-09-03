@@ -4,31 +4,34 @@ Cloud execution is provider-agnostic. A serious run assumes a Linux CUDA host,
 a persistent filesystem, the pinned model/data inputs, and this repository's
 locked Python environment.
 
-## Qualify the forward policy and batching first
+## Check the active protocol and hardware fit
 
-The active paper configs use 1,024-token blocks and an effective optimizer
-batch of 32 sequences. The A6000-qualified frozen-backbone studies use
-microbatch 16 with accumulation 2 for every arm. The fully trainable
-common-checkpoint study uses microbatch 8 with accumulation 4 because dense
-memory K=3 does not fit at batch 16.
+The active frozen studies use 2048-token blocks with microbatch 8 and
+accumulation 4. Hardware tuning is optional: preserve 32 sequences per optimizer
+update and record the selected pair. The old 1024-token paper-policy suite and
+its Makefile targets are retired; paper replay/BPTT execution is deleted.
 
-On the intended GPU:
+On the intended GPU, use the existing checks and optional engineering suites:
 
 ```bash
 uv sync --extra data --extra eval
 make check
-make efficiency-cuda-forward-modes
+# Optional training-cost characterization; not a scientific arm:
+make efficiency-cuda-training
 ```
 
-The suite compares candidate TBPTT windows, whole-block K=2
-Recirculation, dense Memory Attention, and vanilla with BF16 autocast. Rerun the
-selected feasible policies at candidate microbatches on the target GPU, then
-reduce accumulation so the product remains 32. If that product or a learning
-rate changes, qualify it as a scientific protocol change before locking a core
-study.
+The general engineering grid includes historical shifted recirculation; it does
+not certify the two new recurrent mergers. Use the actual arm config for a
+forward/backward preflight. Memory-token benchmarks distinguish linguistic
+length from physical model positions.
 
-For memory-token models, benchmark output distinguishes linguistic sequence
-length from expanded physical model positions.
+[A6000 measurements](../benchmarks/development/inference_efficiency/README.md)
+support routine K=4 checks at the existing cadence. Optional feedback validation
+runs only at selected durable snapshots, initially one full block per arm. It
+pauses training outside measured optimizer time, not at every routine check.
+Evaluation inherits and records experiment precision;
+use an explicit override for a matched FP32 diagnostic. Pending snapshot work
+recovers before training advances; see [TRAINING.md](TRAINING.md).
 
 ## Paid-run preflight
 
@@ -125,10 +128,12 @@ Resumable checkpoints are operational and only the newest configured generations
 are retained. Optional `snapshot_at_tokens` writes weights-only safetensors to
 `<output_dir>/snapshots/` for analysis. They are never used by auto-resume.
 
-For a locked campaign, Phase-A initialization and Phase-B training should use
-the same pinned core data artifact as the reported validation split. Keep the
-entire run directory on persistent storage and back it up separately
-from an ephemeral instance.
+The fresh unfrozen comparison must not initialize from the frozen trajectory.
+Pin and verify its training/evaluation artifacts explicitly. Keep the entire run
+directory on persistent storage, including snapshots and `evaluations/` reports,
+and back it up separately from an ephemeral instance. New snapshots carry
+weights and identity together; resume drains pending publication/selected
+feedback work before training advances. See [TRAINING.md](TRAINING.md).
 
 ## Unattended start, transfer, and cleanup
 

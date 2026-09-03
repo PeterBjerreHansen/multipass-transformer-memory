@@ -18,7 +18,6 @@ def test_efficiency_suites_are_explicit_and_non_scientific():
         "batch_scaling.yaml",
         "precision_mps.yaml",
         "precision_cuda.yaml",
-        "forward_modes.yaml",
     }
     assert {path.name for path in SUITES.glob("*.yaml")} == expected
     assert (ROOT / "benchmarks" / "efficiency" / "README.md").exists()
@@ -62,21 +61,3 @@ def test_precision_suites_compare_fp32_and_bfloat16_on_each_backend():
         assert modes == {None, "bfloat16"}
         pairs = {(case["variant"], case["passes"]) for case in raw["cases"]}
     assert pairs == {("swa_transformer", 1), ("recirculation", 2), ("memory_attention", 3)}
-
-
-def test_forward_mode_suite_keeps_bptt_separate_from_multipass_k():
-    raw = _suite(SUITES / "forward_modes.yaml")
-    merged = [{**raw["defaults"], **case} for case in raw["cases"]]
-    bptt = [case for case in merged if case["training_forward"] == "recirculation_bptt"]
-
-    assert {case["sequence_length"] for case in bptt} == {1024}
-    assert {
-        case.get("recirculation_bptt_truncate_tokens") for case in bptt
-    } == {128, 256, 512}
-    assert all(case["variant"] == "recirculation" for case in bptt)
-    assert all(case["passes"] == 1 for case in bptt)
-    assert all(case["phase"] == "A" for case in bptt)
-    assert all(case["recirculation_activation_checkpointing"] for case in bptt)
-    assert all(case["attention_backend"] == "reference" for case in bptt)
-    assert all(case["batch_size"] == 16 for case in bptt)
-    assert all(case["grad_accum_steps"] == 2 for case in bptt)

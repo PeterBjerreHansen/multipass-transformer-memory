@@ -3,6 +3,7 @@ from .fbt import FBTVariant
 from .memory_add import MemoryAddVariant
 from .multipass import HiddenRun, MultiPassResult, MultiPassVariant, PassResult, shift_previous_hidden
 from .recirculation import RecirculationVariant
+from .recurrent_memory import RecurrentMemoryVariant
 from .bank import (
     BankBatch,
     BankReader,
@@ -37,6 +38,7 @@ __all__ = [
     "MultiPassVariant",
     "PassResult",
     "RecirculationVariant",
+    "RecurrentMemoryVariant",
     "BankAddHybridVariant",
     "BankBatch",
     "BankReader",

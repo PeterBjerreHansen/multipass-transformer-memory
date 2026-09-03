@@ -23,15 +23,22 @@ smoke_mps.py
 
 ```text
 benchmark_training_efficiency.py
+benchmark_inference_efficiency.py
 estimate_training_flops.py
 cloud_preflight.py
 ```
 
 The efficiency runner performs real optimizer steps and reports linguistic-token
 and physical-position throughput when they differ. Memory Attention cases must
-state their write policy explicitly. The active `forward_modes.yaml` suite
-qualifies full BPTT, candidate TBPTT windows, and whole-block multipass training
-on the target GPU.
+state their write policy explicitly. The paper-policy `forward_modes.yaml`
+suite and its Makefile targets are retired. The general training/precision/
+scaling suites remain; they are optional engineering measurements, not new
+scientific arms or qualification of unmeasured merger architectures.
+
+`benchmark_inference_efficiency.py` measures full-block K-pass validation and
+cached standard, feedback, exact, and diagnostic continuation costs on CUDA.
+Its synthetic timing protocol is documented in
+`benchmarks/development/inference_efficiency/README.md`.
 
 `cloud_preflight.py` checks CUDA/model/data/source/run compatibility, persistent
 storage, free space, and memory-token-expanded batching before a paid run.
@@ -57,8 +64,8 @@ generate.py
 
 `run_study.py` is the common executor for colocated development/core studies.
 It validates the manifest, exercises every sampled pass depth with a
-forward/backward preflight at the config's declared physical batch and TBPTT
-window, and then runs selected arms sequentially.
+forward/backward preflight at the config's declared physical batch, and then
+runs selected arms sequentially. Paper replay/BPTT execution is removed.
 
 `start-and-watch` is the unattended cloud wrapper. It starts a remote
 `train.py --resume-auto` process, waits for a durable completed segment,
@@ -75,7 +82,7 @@ controllers from using the same VM concurrently.
 
 ```bash
 uv run python scripts/run_study.py \
-  --study-dir benchmarks/development/forward_policy_qualification \
+  --study-dir benchmarks/development/frozen_backbone_comparison \
   --wire-only --wire-device cuda
 ```
 
@@ -85,12 +92,14 @@ data remain ordinary linguistic IDs; the view inserts input-only control ID V at
 load time.
 
 Evaluation commands require either `--checkpoint` or the explicit
-`--initialized-baseline` time-zero mode. `evaluate_nll.py` requires one pass
-depth. `evaluate_pass_depth.py` reports exact full-sequence K=1 through K=8 by
-default. Both accept an independent `--evaluation-data-dir`.
+`--initialized-baseline` time-zero mode. `evaluate_nll.py` reports the final
+parallel pass; `evaluate_pass_depth.py` reports every pass through the experiment's
+`eval_passes` (or an explicit `--passes` override). Both accept an independent
+`--evaluation-data-dir`.
 
-`evaluate_lm_harness.py` requires prompt `--prefill-passes K` and an independent
-`--decode-mode standard|feedback`. Candidate suites retain answer scores and
+`evaluate_lm_harness.py` accepts independent `--prefill-passes K` and
+`--decode-mode standard|feedback` overrides, with experiment defaults described
+below. Candidate suites retain answer scores and
 margins; generation suites retain generated samples. `evaluate_parameter_drift.py`
 separates backbone and added-module movement from an architecture-compatible
 reference. `verify_data_disjointness.py` rejects shared complete tokenized
@@ -99,10 +108,27 @@ documents between the evaluation split and each training/wiring artifact.
 Pass-depth, memory interventions, and exact-vs-feedback continuation scripts
 are reusable checkpoint diagnostics.
 `evaluate_memory_interventions.py` measures one feedback transition and can
-independently intervene on the active Recirculation–Memory Attention hybrid's
+independently intervene on the historical Recirculation–Memory Attention hybrid's
 recurrent source and slow memory source. It requires at least two validation blocks for a
 genuine mismatch condition.
 
 Public `generate.py`/model generation remain ordinary language generation. The
 low-level recurrent API can consume explicit MEM control steps, but no sampler
 silently schedules architecture control positions.
+
+## Evaluation defaults
+
+The evaluation commands now share precision and scoring. Parallel depth defaults
+to `eval_passes`; downstream prompt depth defaults to `eval_prefill_passes` or
+`eval_passes`, independently of `eval_decode_mode`. Explicit flags override these
+values. `--autocast-dtype config|float32|bfloat16` records actual evaluation
+precision without changing checkpoint compatibility settings. Standalone
+`--max-blocks` is a prefix limit; omit it for the full split, or use 64 to match
+the active routine check. See [the evaluation contract](../evaluation/README.md).
+
+Snapshot publication and recovery are documented in
+[docs/TRAINING.md](../docs/TRAINING.md). Use `evaluate_nll.py --forward feedback
+--max-blocks 1` for full-block BOS-only feedback; it fixes prefill to K=1 and
+reports full and aligned target scores. The trainer can run the same evaluator
+at selected `feedback_eval_at_tokens` snapshot thresholds. This adds no new
+inference algorithm and does not change routine K=4 checks.

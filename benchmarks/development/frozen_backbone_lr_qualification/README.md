@@ -1,9 +1,11 @@
 # Frozen-backbone learning-rate qualification
 
-This planned qualification selects the Phase-A learning rate for all four
+This planned qualification selects the Phase-A learning rate for all five
 feedback mechanisms before interpreting the frozen-backbone wiring comparison.
-The backbone remains frozen throughout each run; only the added controller or
-Memory Attention parameters are optimized. This qualification uses the same
+The backbone remains frozen throughout each run; only the added writer and
+merger or Memory Attention parameters are optimized. The recurrent arms use
+late emitted memory with projected-residual and adaptive-recirculation mergers.
+This qualification uses the same
 2,048-token `gpu_2048` artifact and 8x4 default optimizer batching as the
 comparison study.
 
@@ -29,7 +31,7 @@ reject unstable rates and identify large optimization differences, but it is
 not evidence that the selected rate is globally optimal. If candidates remain
 close, extend the finalists before locking the 100M wiring study.
 
-Run all sixteen arms sequentially on the target CUDA host:
+Run all twenty arms sequentially on the target CUDA host:
 
 ```bash
 uv run python scripts/run_study.py \
@@ -40,7 +42,7 @@ uv run python scripts/run_study.py \
 Choose each mechanism's rate using final-pass K=4 validation NLL plus the
 minimal finite-loss/no-catastrophic-instability guardrail. The long comparison
 may use different selected rates per mechanism; retain `added_learning_rate` as
-an explicit experimental axis and report the qualification budget.
+an explicit allowed difference in the long comparison and report the qualification budget.
 
 The 2,048-token qualification supersedes the earlier 1,024-token rate sweep.
 The checked-in 100M rates remain provisional until the new qualification is

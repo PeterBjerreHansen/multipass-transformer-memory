@@ -39,43 +39,18 @@ L = sum_k w_k L_k
 `pass_schedule` independently controls the sampled pass count. Its RNG/state is
 checkpointed, so fixed or mixed K schedules resume exactly.
 
-The original multipass study samples K=2 on 90% of batches and K=3 on 10%.
-K-specific loss weights make Phase A estimate `0.9 L2 + 0.1 L3` with 2.1
-average passes. Phase B also retains a first-pass loss. One-pass controls such
-as Strided Attention use K=1. Runnable protocols live under `benchmarks/development/`.
+The active frozen comparison samples K=2 on 90% of batches and K=3 on 10%,
+with final-pass-only loss and 2.1 average passes. K=4 validation retains per-pass
+results. Historical Phase-B objectives must not silently define the future
+unfrozen study; its loss weights remain to be specified.
 
-## Recirculation training forwards
+## Supported training execution
 
-`training_forward: parallel_multipass` is the existing whole-block objective.
-It computes K complete sequence passes, and `pass_schedule` plus the NTP loss
-weights define the training objective.
-
-`training_forward: recirculation_bptt` is a different computation, not K=2.
-For each token it:
-
-1. performs the ordinary first iteration and reads out its logits;
-2. mixes the source and destination residuals;
-3. replays the token above the destination layer and replaces those KV entries;
-4. lets the next token attend to the replayed strict-past cache.
-
-The `pass_schedule` must therefore be K=1 and multipass loss weights are
-invalid. `recirculation_activation_checkpointing: true` recomputes token steps
-during backward to reduce saved activations without changing gradients.
-
-By default, `recirculation_bptt_truncate_tokens: null` propagates gradients
-through the complete packed sequence. This is the paper-faithful BPTT policy.
-A positive value selects explicit TBPTT: the forward KV values continue across
-the complete sequence, but the cache is detached every N input positions. The
-trainer backpropagates each chunk before computing the next one, so completed
-graphs can be released. A finite window changes the gradient estimator and must
-be qualified and reported; it is not a harmless hardware switch.
-
-The legacy `effective_passes` and `token_equivalent_compute` counters record two
-recurrence iterations for this forward. The second iteration replays only the
-layers above the destination, not the full backbone. Training records therefore
-also include the replayed-layer count and fraction. Use those fields with the
-FLOP estimator—or measured accelerator time—instead of interpreting the legacy
-2x counter as a FLOP ratio.
+`training_forward: parallel_multipass` computes complete sequence passes;
+`pass_schedule` and NTP loss weights define the objective. Paper readout/replay
+and its BPTT/TBPTT implementation have been removed, along with their truncation
+and activation-checkpointing settings. Ordinary preceding-token feedback and
+the adaptive recirculation merger remain supported.
 
 ## Parameter groups and schedules
 
@@ -113,16 +88,11 @@ A larger hardware microbatch can therefore change the scientific optimizer
 batch when accumulation is unchanged. It must not be treated as a harmless
 hardware default.
 
-The planned recirculation studies target 32 sequences per optimizer update. A
-protocol may use microbatch 1 with accumulation 32, microbatch 2 with
-accumulation 16, and so on, but it must state whether physical batching is
-fixed or hardware-tuned. The active frozen-backbone studies use the common
-A6000-qualified policy of microbatch 16 and accumulation 2. The fully trainable
-common-checkpoint study uses microbatch 8 and accumulation 4. Preserve
-`batch_size * grad_accum_steps` when a study changes only hardware fit. Learning
-rate still requires
-qualification for this model and optimizer batch; copying a paper value is a
-starting hypothesis, not evidence that it is optimal.
+The active frozen studies use 2048-token blocks, microbatch 8 and accumulation
+4, for 32 sequences per nominal optimizer update. Optional hardware tuning can
+use 4x8, 2x16 or 1x32 when needed. Preserve the effective batch and record the
+resolved config. Each mechanism selects its own LR from the common qualification
+budget. No replacement unfrozen protocol is active yet.
 
 The trainer consumes whole packed blocks. An exact linguistic-token budget must
 be divisible by `batch_size * linguistic_tokens_per_block`; the final optimizer
@@ -193,8 +163,23 @@ if that file later becomes unreadable. Keep the default value `2` for cloud or
 other interruption-sensitive runs.
 
 Optional `snapshot_at_tokens` writes weights-only safetensors for scientific
-analysis. Snapshots never drive resume; resumable generation checkpoints remain
-the trajectory source of truth.
+analysis. A threshold is served at the first completed optimizer update that
+reaches it. Thresholds crossed in the same update share one snapshot, with all
+requested thresholds and the actual token count recorded.
+
+The trainer first commits a resumable checkpoint with pending snapshot work.
+It then writes and fsyncs a temporary safetensors file containing both weights
+and metadata, atomically replaces the destination, and fsyncs the directory.
+The JSON sidecar is a repairable mirror, not a completion marker. On restart,
+pending work finishes at the recovered model state before training advances.
+Retries verify existing committed weights and identity rather than overwrite
+a different model at the same path.
+
+New snapshots contain their experiment config and can be loaded without their
+original run directory or sidecar. Legacy snapshots still require their
+sidecar and parent `run.json`. Planned snapshots are never pruned by rolling
+checkpoint retention. Snapshots never drive resume: generation checkpoints
+remain the optimizer/data/RNG trajectory source of truth.
 
 Training logs record input tokens, model positions, token-equivalent compute,
 interval time, cumulative `training_elapsed_seconds`, and the realized pass
@@ -203,3 +188,57 @@ and is checkpointed across resumes; validation and checkpoint I/O are excluded.
 Use one trajectory per arm, then rescale the x-axis for data, estimated compute,
 or training-time views during analysis. Do not rerun an arm solely to produce a
 different plot axis.
+
+## Evaluation
+
+Trainer validation and standalone NLL now call the same parallel evaluator,
+with explicit experiment autocast, model-owned labels, token-weighted per-pass
+and per-source losses, and subset/precision metadata. Routine block limits and
+training cadence are unchanged. See [the evaluation contract](../evaluation/README.md).
+
+The active frozen study uses 64 blocks per routine check. Standalone evaluation
+defaults to the full split, so specify the same block limit when comparing it
+with trainer results. Expensive feedback diagnostics do not define the routine
+validation metric or its early-stopping decisions.
+
+## Selected-checkpoint feedback validation
+
+Feedback NLL is disabled unless `feedback_eval_at_tokens` is nonempty. These
+thresholds must be a subset of `snapshot_at_tokens`. For example, add these
+fields to an active frozen arm's config; keep its other snapshot thresholds:
+
+```yaml
+feedback_eval_at_tokens: [3276800, 100007936]
+feedback_eval_max_blocks: 1
+feedback_eval_autocast_dtype: float32
+```
+
+This example explicitly chooses FP32 feedback even if routine validation uses
+BF16. The precision field defaults to `config`; `bfloat16` is also accepted.
+The A6000 qualification motivates testing FP32 cached decoding, but does not
+establish a universal speed advantage.
+
+After crossing a selected threshold, the trainer commits resumable state,
+publishes the durable snapshot, then evaluates full-block BOS-only feedback NLL
+before the next optimizer update. This is a synchronous validation pause, not a
+background worker. It is outside measured optimizer time and does not change
+routine K=4 cadence, LR selection metrics or early stopping. Several selected
+thresholds crossed by one update share one report.
+
+Reports live in `evaluations/feedback_model_<actual-tokens>_<request-hash>.json`.
+They identify snapshot bytes, evaluator source/runtime, precision, data prefix, BOS
+initialization and target coverage. `feedback_validation` journal events are
+separate from routine `validation` events. Full and aligned NLL report 2048 and
+2047 targets per ordinary block respectively; see [evaluation](../evaluation/README.md).
+
+Pending snapshot work includes its selected feedback check. A graceful signal
+during decoding returns without a partial metric; an interrupted check reruns
+from the block start on resume, before training advances. A complete matching
+report is reused, and a missing journal event is repaired without decoding
+again. Changed precision, subset or evaluator source/runtime produces a separate report.
+Rolling checkpoint retention never removes snapshots or feedback reports.
+
+Schedule edits apply to future thresholds and work still pending in the resumed
+checkpoint. They do not scan older snapshots retroactively. Use the standalone
+command for an older snapshot. Existing study YAMLs remain opt-in: this change
+does not select milestones or launch new runs on their behalf.

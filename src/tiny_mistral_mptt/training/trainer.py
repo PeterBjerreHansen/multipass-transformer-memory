@@ -2,26 +2,25 @@ from __future__ import annotations
 
 from collections import defaultdict
 import json
-import os
 from pathlib import Path
 import random
 import time
 from typing import Callable
 
 import torch
-from safetensors.torch import save_file as save_safetensors
 
 from tiny_mistral.device import synchronize
 
 from ..config import ExperimentConfig
 from ..data.manifest import file_sha256, verify_artifact
 from ..data.packed_dataset import MemoryTokenPackedDataset, PackedTokenDataset, StatefulBlockSampler
-from ..evaluation.nll import evaluate_nll
 from ..evaluation.pass_depth import evaluate_pass_depth
+from ..evaluation.common import block_limit, precision_metadata
+from ..evaluation.feedback import feedback_evaluation_metadata
+from ..evaluation.settings import resolve_evaluation_settings
 from ..precision import autocast_context
 from ..variants.base import ExperimentalVariant
 from ..variants.multipass import MultiPassVariant
-from ..variants.recirculation import RecirculationVariant
 from .checkpoint import (
     TrainState,
     inspect_checkpoint,
@@ -30,7 +29,10 @@ from .checkpoint import (
     load_model_weights,
     save_checkpoint_generation,
 )
-from .journal import append_jsonl, repair_metrics_to_checkpoint
+from .journal import append_jsonl, event_recorded, repair_metrics_to_checkpoint
+from .feedback_validation import evaluate_snapshot_feedback
+from .durable import atomic_write_json as _atomic_write_json
+from .snapshots import publish_snapshot
 from .pass_schedule import PassScheduler
 from .phases import configure_trainability
 from .provenance import hardware_provenance, source_provenance
@@ -49,23 +51,6 @@ def _set_seed(seed: int) -> None:
 
 def _parameter_count(parameters) -> int:
     return sum(parameter.numel() for parameter in parameters)
-
-
-def _atomic_write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, path)
-    if os.name != "nt":
-        fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
 
 
 def _next_segment_id(path: Path) -> int:
@@ -158,6 +143,14 @@ class Trainer:
             )
         if train_data.manifest.vocab_size != int(model.config.vocab_size):
             raise ValueError("data base vocabulary differs from model output vocabulary")
+        if config.feedback_eval_at_tokens:
+            settings = resolve_evaluation_settings(
+                config, model, forward_mode="feedback", autocast_dtype=config.feedback_eval_autocast_dtype,
+            )
+            feedback_evaluation_metadata(
+                model, validation_data, device=device, max_blocks=config.feedback_eval_max_blocks,
+                autocast_dtype=settings.autocast_dtype,
+            )
 
         self.model = model
         self.config = config
@@ -303,6 +296,7 @@ class Trainer:
         selected_checkpoint: Path | None = None
         fallback_used = False
         self._pending_validation_recovery = False
+        self._pending_snapshot_thresholds: list[int] = []
         if resume_auto and self.run_info_path.exists():
             try:
                 selected_checkpoint, self.state, sampler_state, fallback_used = (
@@ -340,6 +334,7 @@ class Trainer:
         if selected_checkpoint is not None:
             repair = repair_metrics_to_checkpoint(self.metrics_path, self.state)
             metadata = inspect_checkpoint(selected_checkpoint)
+            self._pending_snapshot_thresholds = list(metadata.get("checkpoint_metadata", {}).get("pending_snapshots", []))
             pending_validation = bool(
                 metadata.get("checkpoint_metadata", {}).get("pending_validation")
             )
@@ -404,8 +399,17 @@ class Trainer:
         )
 
     def _validation_record_exists_at_current_state(self) -> bool:
+        return self._validation_record_at_current_state() is not None
+
+    def _validation_record_at_current_state(self) -> dict | None:
         if not self.metrics_path.exists():
-            return False
+            return None
+        settings = resolve_evaluation_settings(self.config, self.model)
+        expected_precision = precision_metadata(
+            self.model, device=self.device, autocast_dtype=settings.autocast_dtype,
+        )
+        expected_blocks = block_limit(self.validation_data, self.config.eval_batches or None)
+        matching = None
         with self.metrics_path.open("r", encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 try:
@@ -417,29 +421,18 @@ class Trainer:
                     and int(record.get("optimizer_steps", -1)) == self.state.optimizer_steps
                     and int(record.get("unique_tokens_seen", -1)) == self.state.unique_tokens_seen
                     and int(record.get("model_positions_seen", -1)) == self.state.model_positions_seen
+                    and record.get("eval_passes") == settings.passes
+                    and record.get("validation_forward") == settings.forward_mode
+                    and record.get("validation_blocks") == expected_blocks
+                    and record.get("evaluation", {}).get("precision") == expected_precision
                 ):
-                    return True
-        return False
+                    matching = record
+        return matching
 
     def _validation_stop_satisfied_at_current_state(self) -> bool:
-        if self.config.early_stop is None or not self.metrics_path.exists():
+        if self.config.early_stop is None:
             return False
-        matching_record = None
-        with self.metrics_path.open("r", encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if (
-                    record.get("event") == "validation"
-                    and int(record.get("optimizer_steps", -1)) == self.state.optimizer_steps
-                    and int(record.get("unique_tokens_seen", -1))
-                    == self.state.unique_tokens_seen
-                    and int(record.get("model_positions_seen", -1))
-                    == self.state.model_positions_seen
-                ):
-                    matching_record = record
+        matching_record = self._validation_record_at_current_state()
         if matching_record is None or "nll_by_pass" not in matching_record:
             return False
         return bool(
@@ -541,7 +534,10 @@ class Trainer:
             experiment_config=self.config.to_dict(),
             data_manifest_sha256=self.manifest_sha256,
             source_provenance=self.source,
-            checkpoint_metadata={"pending_validation": bool(pending_validation)},
+            checkpoint_metadata={
+                "pending_validation": bool(pending_validation),
+                "pending_snapshots": self._pending_snapshot_thresholds,
+            },
             keep_last=self.config.checkpoint_keep_last,
         )
         self._last_checkpoint_tokens = self.state.unique_tokens_seen
@@ -572,10 +568,6 @@ class Trainer:
         }
 
     def _evaluate(self) -> dict:
-        with autocast_context(self.device, self.config.autocast_dtype):
-            return self._evaluate_with_precision()
-
-    def _evaluate_with_precision(self) -> dict:
         common = {
             "event": "validation",
             "run_segment": self.segment_id,
@@ -587,64 +579,39 @@ class Trainer:
             "training_elapsed_seconds": self.state.training_elapsed_seconds,
             **self._pass_schedule_metrics(),
         }
-        if self.config.validation_forward == "paper_recirculation":
-            result = evaluate_nll(
-                self.model,
-                self.validation_data,
-                device=self.device,
-                forward_mode="paper_recirculation",
-                max_blocks=self.config.eval_batches or None,
+        settings = resolve_evaluation_settings(self.config, self.model)
+        result = evaluate_pass_depth(
+            self.model, self.validation_data, device=self.device,
+            passes=settings.passes, max_blocks=self.config.eval_batches or None,
+            autocast_dtype=settings.autocast_dtype,
+        )
+        record = {
+            **common,
+            "nll": result.final_nll,
+            "perplexity": result.final_perplexity,
+            "predicted_tokens": result.predicted_tokens,
+            "predicted_tokens_by_source": result.predicted_tokens_by_source,
+            "validation_blocks": result.blocks,
+            "validation_forward": settings.forward_mode,
+            "eval_passes": result.passes,
+            "evaluation": result.evaluation,
+            "weights": {
+                "kind": "live_training_state",
+                "run_dir": str(self.run_dir.resolve()),
+                "run_segment": self.segment_id,
+                "optimizer_steps": self.state.optimizer_steps,
+                "unique_tokens_seen": self.state.unique_tokens_seen,
+            },
+        }
+        if result.passes > 1:
+            record.update(
+                nll_by_pass=list(result.nll_by_pass),
+                perplexity_by_pass=list(result.perplexity_by_pass),
+                hidden_delta_rms=list(result.hidden_delta_rms),
+                nll_by_source_by_pass=list(result.nll_by_source_by_pass),
             )
-            record = {
-                **common,
-                "nll": result.nll,
-                "perplexity": result.perplexity,
-                "predicted_tokens": result.predicted_tokens,
-                "nll_by_source": result.nll_by_source,
-                "validation_blocks": result.blocks,
-                "validation_forward": result.forward_mode,
-                "eval_passes": result.passes,
-            }
-        elif self.config.eval_passes > 1:
-            if not isinstance(self.model, MultiPassVariant):
-                raise ValueError("eval_passes>1 requires a multipass variant")
-            result = evaluate_pass_depth(
-                self.model,
-                self.validation_data,
-                device=self.device,
-                passes=self.config.eval_passes,
-                max_blocks=self.config.eval_batches or None,
-            )
-            record = {
-                **common,
-                "nll": result.final_nll,
-                "perplexity": result.final_perplexity,
-                "predicted_tokens": result.predicted_tokens,
-                "nll_by_pass": list(result.nll_by_pass),
-                "perplexity_by_pass": list(result.perplexity_by_pass),
-                "hidden_delta_rms": list(result.hidden_delta_rms),
-                "nll_by_source_by_pass": list(result.nll_by_source_by_pass),
-                "validation_blocks": result.blocks,
-                "validation_forward": "parallel_multipass",
-                "eval_passes": result.passes,
-            }
         else:
-            result = evaluate_nll(
-                self.model,
-                self.validation_data,
-                device=self.device,
-                max_blocks=self.config.eval_batches or None,
-            )
-            record = {
-                **common,
-                "nll": result.nll,
-                "perplexity": result.perplexity,
-                "predicted_tokens": result.predicted_tokens,
-                "nll_by_source": result.nll_by_source,
-                "validation_blocks": result.blocks,
-                "validation_forward": result.forward_mode,
-                "eval_passes": result.passes,
-            }
+            record["nll_by_source"] = result.nll_by_source_by_pass[0]
         if self.config.early_stop is not None:
             record["early_stop"] = _validation_stop_status(
                 record, self.config.early_stop
@@ -652,50 +619,68 @@ class Trainer:
         append_jsonl(self.metrics_path, record)
         return record
 
-    def _snapshot_crossed(self, previous_tokens: int) -> None:
-        for threshold in self.config.snapshot_at_tokens or []:
-            if not previous_tokens < threshold <= self.state.unique_tokens_seen:
-                continue
-            snapshot_dir = self.run_dir / "snapshots"
-            snapshot_dir.mkdir(parents=True, exist_ok=True)
-            actual = self.state.unique_tokens_seen
-            path = snapshot_dir / f"model_{actual:012d}.safetensors"
-            if path.exists():
-                continue
-            tensors = {
-                name: tensor.detach().cpu().contiguous()
-                for name, tensor in self.model.state_dict().items()
-            }
-            temporary = path.with_name(path.name + ".tmp")
-            save_safetensors(tensors, str(temporary))
-            with temporary.open("rb") as handle:
-                os.fsync(handle.fileno())
-            os.replace(temporary, path)
-            metadata = {
-                "requested_threshold": threshold,
-                "unique_tokens_seen": actual,
-                "model_positions_seen": self.state.model_positions_seen,
-                "optimizer_steps": self.state.optimizer_steps,
-                "training_elapsed_seconds": self.state.training_elapsed_seconds,
-                "source": self.source,
-                "data_manifest_sha256": self.manifest_sha256,
-                "variant": self.config.variant,
-                "phase": self.config.phase,
-            }
-            _atomic_write_json(path.with_suffix(".json"), metadata)
-            append_jsonl(
-                self.metrics_path,
-                {
-                    "event": "snapshot",
-                    "run_segment": self.segment_id,
-                    "path": str(path),
-                    "requested_threshold": threshold,
-                    "unique_tokens_seen": actual,
-                    "model_positions_seen": self.state.model_positions_seen,
-                    "optimizer_steps": self.state.optimizer_steps,
-                    "training_elapsed_seconds": self.state.training_elapsed_seconds,
-                },
+    def _publish_pending_snapshots(self) -> None:
+        thresholds = self._pending_snapshot_thresholds
+        if not thresholds:
+            return
+        actual = self.state.unique_tokens_seen
+        path = self.run_dir / "snapshots" / f"model_{actual:012d}.safetensors"
+        metadata = publish_snapshot(path, model=self.model, metadata={
+            "requested_threshold": thresholds[0],
+            "requested_thresholds": thresholds,
+            "unique_tokens_seen": actual,
+            "model_positions_seen": self.state.model_positions_seen,
+            "optimizer_steps": self.state.optimizer_steps,
+            "training_elapsed_seconds": self.state.training_elapsed_seconds,
+            "source": self.source,
+            "data_manifest_sha256": self.manifest_sha256,
+            "variant": self.config.variant,
+            "phase": self.config.phase,
+            "experiment_config": self.config.to_dict(),
+        })
+        recorded = set()
+        if self.metrics_path.exists():
+            for line in self.metrics_path.read_text().splitlines():
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if row.get("event") == "snapshot" and row.get("unique_tokens_seen") == actual:
+                    recorded.update(row.get("requested_thresholds", [row.get("requested_threshold")]))
+        if not set(thresholds) <= recorded:
+            append_jsonl(self.metrics_path, {
+                "event": "snapshot", "run_segment": self.segment_id, "path": str(path),
+                **{key: metadata[key] for key in (
+                    "requested_threshold", "requested_thresholds", "unique_tokens_seen",
+                    "model_positions_seen", "optimizer_steps", "training_elapsed_seconds",
+                )},
+            }, durable=True)
+        selected = sorted(set(thresholds) & set(self.config.feedback_eval_at_tokens or []))
+        if selected:
+            report = evaluate_snapshot_feedback(
+                self.model, self.validation_data, snapshot=path, config=self.config,
+                device=self.device, source=self.source, stop_requested=self.stop_requested,
             )
+            if not event_recorded(self.metrics_path, "feedback_validation", report_id=report["report_id"]):
+                append_jsonl(self.metrics_path, {
+                    "event": "feedback_validation", "run_segment": self.segment_id,
+                    "unique_tokens_seen": actual, "optimizer_steps": self.state.optimizer_steps,
+                    "model_positions_seen": self.state.model_positions_seen,
+                    "training_elapsed_seconds": self.state.training_elapsed_seconds,
+                    "requested_thresholds": selected,
+                    **report,
+                }, durable=True)
+        self._pending_snapshot_thresholds = []
+
+    def _finish_pending_snapshot_work(self) -> bool:
+        try:
+            self._publish_pending_snapshots()
+        except InterruptedError:
+            # The checkpoint already records this job. No partial feedback
+            # metric is published and no subsequent optimizer update runs.
+            self._end_segment("signal")
+            return False
+        return True
 
     def _end_segment(self, reason: str) -> None:
         append_jsonl(
@@ -723,6 +708,8 @@ class Trainer:
             raise ValueError(
                 "token budget must be divisible by batch_size * linguistic_tokens_per_block so the run ends exactly"
             )
+        if not self._finish_pending_snapshot_work():
+            return self.state
         if self._early_stop_satisfied:
             self._end_segment("validation_gates")
             return self.state
@@ -824,66 +811,23 @@ class Trainer:
                 if int(ids.numel()) != positions_per_micro:
                     raise RuntimeError("physical packed sequence length changed across microbatches")
                 passes = self.pass_scheduler.sample(self.state.unique_tokens_seen)
-                if cfg.recirculation_bptt_truncate_tokens is not None:
-                    if not isinstance(self.model, RecirculationVariant):
-                        raise RuntimeError("TBPTT requires a RecirculationVariant")
-                    chunks = iter(
-                        self.model.iter_recirculation_tbptt_losses(
-                            ids,
-                            truncate_tokens=cfg.recirculation_bptt_truncate_tokens,
-                            activation_checkpointing=cfg.recirculation_activation_checkpointing,
-                        )
+                with autocast_context(self.device, cfg.autocast_dtype):
+                    output = self.model.compute_training_loss(
+                        ids,
+                        training_forward=cfg.training_forward,
+                        phase="A" if backbone_frozen else cfg.phase,
+                        passes=passes,
+                        loss_weights=cfg.ntp_loss_weights_for_passes(passes),
                     )
-                    predicted_tokens = int(ids.shape[0] * (ids.shape[1] - 1))
-                    micro_loss = 0.0
-                    while True:
-                        with autocast_context(self.device, cfg.autocast_dtype):
-                            try:
-                                chunk_loss, chunk_predictions = next(chunks)
-                            except StopIteration:
-                                break
-                        if not bool(torch.isfinite(chunk_loss).item()):
-                            raise RuntimeError("non-finite training loss")
-                        chunk_weight = chunk_predictions / predicted_tokens
-                        if chunk_loss.requires_grad:
-                            (
-                                chunk_loss * chunk_weight / accumulation_steps
-                            ).backward()
-                        micro_loss += float(chunk_loss.detach().cpu()) * chunk_weight
-                    update_loss += micro_loss
-                    micro_effective_passes = 2
-                    update_passes += micro_effective_passes
-                    chunk_metrics = self.model.recirculation_compute_metrics()
-                    chunk_metrics.update(
-                        {
-                            "recirculation_bptt_loss": micro_loss,
-                            "recirculation_bptt_truncate_tokens": float(
-                                cfg.recirculation_bptt_truncate_tokens
-                            ),
-                        }
-                    )
-                    for key, value in chunk_metrics.items():
-                        update_metrics[key] += value
-                        update_metric_counts[key] += 1
-                else:
-                    with autocast_context(self.device, cfg.autocast_dtype):
-                        output = self.model.compute_training_loss(
-                            ids,
-                            training_forward=cfg.training_forward,
-                            phase="A" if backbone_frozen else cfg.phase,
-                            passes=passes,
-                            loss_weights=cfg.ntp_loss_weights_for_passes(passes),
-                            activation_checkpointing=cfg.recirculation_activation_checkpointing,
-                        )
-                    if not bool(torch.isfinite(output.loss).item()):
-                        raise RuntimeError("non-finite training loss")
-                    (output.loss / accumulation_steps).backward()
-                    update_loss += float(output.loss.detach().cpu())
-                    micro_effective_passes = output.effective_passes
-                    update_passes += micro_effective_passes
-                    for key, value in output.metrics.items():
-                        update_metrics[key] += float(value)
-                        update_metric_counts[key] += 1
+                if not bool(torch.isfinite(output.loss).item()):
+                    raise RuntimeError("non-finite training loss")
+                (output.loss / accumulation_steps).backward()
+                update_loss += float(output.loss.detach().cpu())
+                micro_effective_passes = output.effective_passes
+                update_passes += micro_effective_passes
+                for key, value in output.metrics.items():
+                    update_metrics[key] += float(value)
+                    update_metric_counts[key] += 1
                 self.state.micro_steps += 1
                 self.state.unique_tokens_seen += tokens_per_micro
                 self.state.model_positions_seen += positions_per_micro
@@ -961,15 +905,22 @@ class Trainer:
                 if next_train_log is not None:
                     while next_train_log <= self.state.unique_tokens_seen:
                         next_train_log += cfg.train_log_every_tokens
-            self._snapshot_crossed(previous_tokens)
+            self._pending_snapshot_thresholds = [
+                threshold for threshold in cfg.snapshot_at_tokens or []
+                if previous_tokens < threshold <= self.state.unique_tokens_seen
+            ]
 
             eval_due = next_eval is not None and self.state.unique_tokens_seen >= next_eval
             # Save trained state before an expensive read-only evaluation. A
             # hard VM loss inside evaluation therefore loses no optimizer work.
-            if self._checkpoint_due() or (
+            if self._pending_snapshot_thresholds or self._checkpoint_due() or (
                 eval_due and self.state.unique_tokens_seen > self._last_checkpoint_tokens
             ):
                 self._checkpoint(pending_validation=bool(eval_due))
+            if not self._finish_pending_snapshot_work():
+                if cfg.train_log_every_tokens:
+                    flush_train_log(record, partial=True)
+                return self.state
 
             if eval_due:
                 validation = self._evaluate()
@@ -993,13 +944,13 @@ class Trainer:
                 self._end_segment("signal")
                 return self.state
 
-        if self.state.unique_tokens_seen > self._last_checkpoint_tokens:
-            self._checkpoint()
-        final_validation = self._evaluate() if cfg.eval_batches else None
-        self._early_stop_satisfied = bool(
-            final_validation
-            and final_validation.get("early_stop", {}).get("all_passed", False)
-        )
+        final_validation = self._validation_record_at_current_state() if cfg.eval_batches else None
+        final_eval_due = bool(cfg.eval_batches and final_validation is None)
+        if self.state.unique_tokens_seen > self._last_checkpoint_tokens or final_eval_due:
+            self._checkpoint(pending_validation=final_eval_due)
+        if final_eval_due:
+            self._evaluate()
+        self._early_stop_satisfied = self._validation_stop_satisfied_at_current_state()
         self._end_segment(
             "validation_gates" if self._early_stop_satisfied else "completed"
         )

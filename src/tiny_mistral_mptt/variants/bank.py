@@ -23,6 +23,8 @@ from ..attention.memory_local import (
 from ..feedback import MemoryAttentionState
 from ..config import canonical_memory_write_mode
 from .multipass import MultiPassVariant
+from .memory_modules import MemoryWriter as MemoryAttentionWriter
+from .decoder import DecoderRun as MemoryAttentionCoreRun, run_memory_decoder
 
 
 MEMORY_WRITE_MODES = {"dense", "strided", "periodic", "memory_token"}
@@ -382,33 +384,6 @@ class MemoryAttentionBatch:
             raise ValueError("MemoryAttentionBatch query positions must be non-negative")
 
 
-@dataclass(frozen=True)
-class MemoryAttentionCoreRun:
-    """Decoder result with an optional internal-layer recurrence source."""
-
-    hidden_states: torch.Tensor
-    past_key_values: tuple[LayerKVCache, ...] | None
-    captured_hidden: torch.Tensor | None = None
-
-
-class MemoryAttentionWriter(nn.Module):
-    """Minimal learned D->D memory-record transform, identity-initialized."""
-
-    def __init__(self, hidden_size: int):
-        super().__init__()
-        # Linear's constructor consumes RNG before overwrite. Forking prevents
-        # architecture construction from perturbing experiment/data RNG state.
-        with torch.random.fork_rng(devices=[]):
-            self.proj = nn.Linear(hidden_size, hidden_size, bias=False)
-            with torch.no_grad():
-                nn.init.eye_(self.proj.weight)
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        if hidden_states.ndim != 3:
-            raise ValueError("writer input must be [B,T,D]")
-        return self.proj(hidden_states)
-
-
 class MemoryAttentionVariant(MultiPassVariant):
     """Memory Attention with dense, strided, or explicit-memory-token writes.
 
@@ -753,10 +728,6 @@ class MemoryAttentionVariant(MultiPassVariant):
             raise ValueError("past_key_values must contain one cache per layer")
 
         bsz, seq_len, _ = token_embeddings.shape
-        start = 0 if past_key_values is None else self._cache_next_position(past_key_values)
-        position_ids = torch.arange(
-            start, start + seq_len, device=token_embeddings.device, dtype=torch.long
-        )[None, :].expand(bsz, -1)
         if isinstance(bank, MemoryAttentionBatch):
             memory_query_positions = bank.query_positions
         elif isinstance(bank, MemoryAttentionState):
@@ -768,27 +739,7 @@ class MemoryAttentionVariant(MultiPassVariant):
         else:
             memory_query_positions = None
 
-        hidden_states = token_embeddings
-        new_caches: list[LayerKVCache] | None = [] if use_cache else None
-        captured_hidden: torch.Tensor | None = None
-        for layer_index, layer in enumerate(self.backbone.model.layers):
-            residual = hidden_states
-            x = layer.input_layernorm(hidden_states)
-            past = None if past_key_values is None else past_key_values[layer_index]
-            x, cache = layer.self_attn(
-                x,
-                attention_mask=self_attention_mask,
-                position_ids=position_ids,
-                past_key_value=past,
-                use_cache=use_cache,
-                fast_attention_compatible=(past_key_values is None),
-            )
-            hidden_states = residual + x
-            if new_caches is not None:
-                if cache is None:
-                    raise RuntimeError("cached Memory Attention layer did not return KV state")
-                new_caches.append(cache)
-
+        def read_memory(layer_index: int, hidden_states: torch.Tensor) -> torch.Tensor:
             reader_key = str(layer_index)
             if bank is not None and reader_key in self.memory_readers:
                 memory_reader = self.memory_readers[reader_key]
@@ -822,21 +773,17 @@ class MemoryAttentionVariant(MultiPassVariant):
                         query_position_ids=memory_query_positions,
                     )
                 hidden_states = hidden_states + memory_delta
-            residual = hidden_states
-            x = layer.post_attention_layernorm(hidden_states)
-            hidden_states = residual + layer.mlp(x)
-            if post_layer is not None:
-                hidden_states = post_layer(layer_index, hidden_states)
-            if layer_index == capture_layer:
-                captured_hidden = hidden_states
+            return hidden_states
 
-        hidden_states = self.backbone.model.norm(hidden_states)
-        if capture_layer is not None and captured_hidden is None:
-            raise RuntimeError("requested recurrence source layer was not reached")
-        return MemoryAttentionCoreRun(
-            hidden_states=hidden_states,
-            past_key_values=(tuple(new_caches) if new_caches is not None else None),
-            captured_hidden=captured_hidden,
+        return run_memory_decoder(
+            self.backbone,
+            token_embeddings,
+            after_attention=read_memory,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            attention_mask=self_attention_mask,
+            post_layer=post_layer,
+            capture_layer=capture_layer,
         )
 
     def _full_bank_memory_delta(

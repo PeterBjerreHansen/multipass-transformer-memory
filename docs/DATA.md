@@ -8,7 +8,6 @@ order.
 Checked-in preparation recipes live beside their local generated artifacts:
 
 ```text
-data/dolmino/paper_1024/config.yaml
 data/dolmino/wiring_2048/config.yaml
 data/dolmino/pilot_2048/config.yaml
 data/dolmino/gpu_2048/config.yaml
@@ -17,9 +16,20 @@ data/dolmino/gpu_2048_long_2p5b/config.yaml
 data/dolmino/stage_6_evaluation_2048/config.yaml
 ```
 
-`paper_1024` is the active paper-contract artifact. The 2,048-token recipes are
-retained to reproduce the historical staged pipeline and its evaluation
-provenance.
+`gpu_2048` is the active frozen-study artifact: 2048-token blocks, approximately
+100M training tokens and 2M validation tokens. The 1024-token studies and their
+preparation recipe have been deleted. Other
+2048-token recipes retain their separate wiring, staged and evaluation roles.
+
+Evaluation now records the selected prefix blocks, split and manifest identity,
+physical/linguistic lengths, control cadence and target counts. Do not assume
+that the training monitoring split is the independent evaluation artifact, or
+that adding BOS leaves scored-token coverage unchanged. See
+[the evaluation contract](../evaluation/README.md).
+
+BOS-only feedback prepends a context BOS without altering packed data or MEM
+insertion cadence. It scores all data tokens and separately reports the aligned
+score excluding the first token; it does not replace a block's first token with BOS.
 
 Generated binaries and manifests remain local/ignored.
 

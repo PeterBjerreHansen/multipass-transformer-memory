@@ -15,11 +15,11 @@ def _control_configs() -> list[Path]:
 
 def _development_configs() -> list[Path]:
     return sorted(
-        path
-        for path in (ROOT / "benchmarks" / "development").glob("**/*.yaml")
-        if path.name != "STUDY.yaml"
+        manifest.parent / arm["config"]
+        for manifest in discover_studies(ROOT)
+        if ROOT / "benchmarks" / "development" in manifest.parents
+        for arm in yaml.safe_load(manifest.read_text())["arms"]
     )
-
 
 def test_default_experiment_config_uses_active_2048_context_and_local_output():
     cfg = ExperimentConfig()
@@ -34,13 +34,6 @@ def test_data_recipes_live_beside_materialized_artifacts():
         cfg = load_data_config(path)
         assert cfg.output_dir == f"data/dolmino/{name}"
         assert cfg.sequence_length == 2048
-
-    paper = load_data_config(
-        ROOT / "data" / "dolmino" / "paper_1024" / "config.yaml"
-    )
-    assert paper.output_dir == "data/dolmino/paper_1024"
-    assert paper.sequence_length == 1024
-    assert paper.train_tokens == 100_007_936
 
 
 def test_evaluation_suites_are_reusable_assets_not_data_recipes():
@@ -79,31 +72,23 @@ def _study_configs(name: str) -> dict[str, ExperimentConfig]:
     }
 
 
-def test_active_study_surface_matches_the_paper_contract():
+def test_active_study_surface_tracks_manifests_not_diagnostic_directories():
     development = ROOT / "benchmarks" / "development"
     expected = {
-        "forward_policy_qualification",
         "frozen_backbone_lr_qualification",
         "frozen_backbone_comparison",
-        "common_checkpoint_comparison",
     }
-    assert {path.name for path in development.iterdir() if path.is_dir()} == expected
+    assert {path.parent.name for path in development.rglob("STUDY.yaml")} == expected
     assert {path.parent.name for path in discover_studies(ROOT)} == expected
     assert list((ROOT / "benchmarks" / "core").glob("*/STUDY.yaml")) == []
 
 
-def test_active_studies_share_paper_data_and_effective_optimizer_batch():
+def test_active_studies_share_2048_data_and_effective_optimizer_batch():
     configs = _development_configs()
     assert configs
     for path in configs:
         cfg = load_experiment_config(path)
-        expected_data_dir = (
-            "data/dolmino/gpu_2048"
-            if path.parent.name
-            in {"frozen_backbone_lr_qualification", "frozen_backbone_comparison"}
-            else "data/dolmino/paper_1024"
-        )
-        assert cfg.data_dir == expected_data_dir
+        assert cfg.data_dir == "data/dolmino/gpu_2048"
         assert cfg.batch_size * cfg.grad_accum_steps == 32
         assert cfg.variant not in {
             "fbt",
@@ -114,30 +99,11 @@ def test_active_studies_share_paper_data_and_effective_optimizer_batch():
         }
 
 
-def test_forward_policy_qualification_names_the_two_training_semantics():
-    configs = _study_configs("forward_policy_qualification")
-    assert set(configs) == {
-        "recirculation_tbptt_w128_100_steps",
-        "recirculation_multipass_100_steps",
-    }
-    bptt = configs["recirculation_tbptt_w128_100_steps"]
-    multipass = configs["recirculation_multipass_100_steps"]
-    assert bptt.training_forward == "recirculation_bptt"
-    assert bptt.recirculation_bptt_truncate_tokens == 128
-    assert (bptt.batch_size, bptt.grad_accum_steps) == (16, 2)
-    assert bptt.attention_backend == "reference"
-    assert bptt.validation_forward == "paper_recirculation"
-    assert bptt.eval_passes == 1
-    assert multipass.training_forward == "parallel_multipass"
-    assert multipass.normalized_pass_schedule()[0]["probabilities"] == {2: 1.0}
-    assert multipass.validation_forward == "parallel_multipass"
-    assert bptt.max_unique_tokens == multipass.max_unique_tokens == 3_276_800
-
-
-def test_frozen_backbone_comparison_defaults_to_four_multipass_arms():
+def test_frozen_backbone_comparison_has_two_recurrent_mergers_and_three_attention_arms():
     configs = _study_configs("frozen_backbone_comparison")
     assert set(configs) == {
-        "recirculation_multipass_100m",
+        "recurrent_recirculation_multipass_100m",
+        "recurrent_projected_residual_multipass_100m",
         "dense_memory_attention_multipass_100m",
         "strided_memory_attention_multipass_100m",
         "multiscale_memory_attention_multipass_100m",
@@ -173,11 +139,17 @@ def test_frozen_backbone_comparison_defaults_to_four_multipass_arms():
     assert (multiscale.memory_dense_window, multiscale.memory_sparse_window) == (32, 32)
     assert multiscale.memory_sparse_stride == 32
     assert {cfg.added_learning_rate for cfg in configs.values()} == {3.0e-4}
+    recurrent = [cfg for cfg in configs.values() if cfg.variant == "recurrent_memory"]
+    assert {cfg.recurrent_merger for cfg in recurrent} == {"recirculation", "projected_residual"}
+    assert all(cfg.memory_layers == [3] and cfg.memory_window == 1 for cfg in recurrent)
+    assert all(cfg.recirculation_source_layer is None for cfg in recurrent)
 
 
 def test_frozen_backbone_lr_qualification_uses_2048_sweep():
     configs = _study_configs("frozen_backbone_lr_qualification")
-    assert len(configs) == 16
+    assert len(configs) == 20
+    for merger in ("recirculation", "projected_residual"):
+        assert sum(cfg.recurrent_merger == merger for cfg in configs.values()) == 4
     assert {cfg.data_dir for cfg in configs.values()} == {"data/dolmino/gpu_2048"}
     assert {(cfg.batch_size, cfg.grad_accum_steps) for cfg in configs.values()} == {
         (8, 4)
@@ -188,30 +160,6 @@ def test_frozen_backbone_lr_qualification_uses_2048_sweep():
         3.0e-4,
         1.0e-3,
     }
-
-
-def test_common_checkpoint_comparison_uses_integrated_retrofit_policy():
-    configs = _study_configs("common_checkpoint_comparison")
-    assert set(configs) == {
-        "vanilla_100m",
-        "recirculation_tbptt_w128_100m",
-        "recirculation_multipass_100m",
-        "dense_memory_attention_multipass_100m",
-    }
-    vanilla = configs["vanilla_100m"]
-    feedback = [cfg for arm, cfg in configs.items() if arm != "vanilla_100m"]
-    assert vanilla.freeze_pretrained_until_tokens == 0
-    assert all(cfg.freeze_pretrained_until_tokens == 5_013_504 for cfg in feedback)
-    assert all(cfg.init_from is None for cfg in configs.values())
-    assert all(cfg.phase == "B" for cfg in configs.values())
-    assert {cfg.max_unique_tokens for cfg in configs.values()} == {100_007_936}
-    tbptt = configs["recirculation_tbptt_w128_100m"]
-    assert tbptt.recirculation_bptt_truncate_tokens == 128
-    assert {(cfg.batch_size, cfg.grad_accum_steps) for cfg in configs.values()} == {
-        (8, 4)
-    }
-    assert (tbptt.batch_size, tbptt.grad_accum_steps) == (8, 4)
-    assert tbptt.attention_backend == "reference"
 
 
 def test_historical_studies_are_preserved_but_not_discovered():
@@ -308,3 +256,11 @@ def test_stage6_evaluation_stream_starts_after_the_long_training_range():
 def test_ci_runs_canonical_check_gate():
     workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
     assert "- run: make check" in workflow
+
+
+def test_1024_study_configs_and_recipe_are_removed():
+    assert not (ROOT / "data/dolmino/paper_1024/config.yaml").exists()
+    for path in (ROOT / "benchmarks").rglob("*.yaml"):
+        assert "paper_1024" not in path.read_text()
+    assert not (ROOT / "benchmarks/historical/retired_1024").exists()
+    assert not (ROOT / "benchmarks/historical/exploratory/frozen_backbone_comparison").exists()

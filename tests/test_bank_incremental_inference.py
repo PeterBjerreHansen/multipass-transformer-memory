@@ -9,6 +9,7 @@ from tiny_mistral_mptt.inference import (
     prefill_exact,
     prefill_recurrent,
     recurrent_decode_step,
+    recurrent_from_exact,
 )
 from tiny_mistral_mptt.variants.bank import BankVariant
 from tiny_mistral_mptt.variants.bank_add_hybrid import BankAddHybridVariant
@@ -43,6 +44,25 @@ def sequence(model, mode):
         V = model.config.vocab_size
         return torch.tensor([[1, 2, V, 3, 14, V, 9, 31, V, 51, 12]])
     return torch.tensor([[1, 7, 3, 14, 22, 9, 31, 4, 51, 12, 6]])
+
+
+@pytest.mark.parametrize("mode,visibility", [
+    ("dense", "visible"), ("periodic", "visible"), ("memory_token", "write_only"),
+])
+def test_k1_conversion_preserves_attention_memory_after_incremental_extension(mode, visibility):
+    model = make_model(mode=mode, visibility=visibility)
+    ids = sequence(model, mode)
+    state = prefill_exact(model, ids[:, :1], passes=1)
+    for position in range(1, 9):
+        state = exact_decode_step(model, state, ids[:, position:position + 1])
+        converted = recurrent_from_exact(state, decode_mode="feedback")
+        fresh = prefill_recurrent(model, ids[:, :position + 1], passes=1, decode_mode="feedback")
+        token = ids[:, position + 1:position + 2]
+        torch.testing.assert_close(
+            recurrent_decode_step(model, converted, token).next_token_logits,
+            recurrent_decode_step(model, fresh, token).next_token_logits,
+            atol=8e-5, rtol=8e-5,
+        )
 
 
 @pytest.mark.parametrize("hybrid", [False, True])

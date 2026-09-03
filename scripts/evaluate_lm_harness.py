@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 from numbers import Real
 import os
@@ -23,6 +24,8 @@ from tiny_mistral_mptt.evaluation.provenance import (
     seed_evaluation,
 )
 from tiny_mistral_mptt.model_factory import load_variant_from_config
+from tiny_mistral_mptt.evaluation.settings import add_execution_arguments, resolve_evaluation_settings
+from tiny_mistral_mptt.evaluation.common import precision_metadata
 
 
 def _scalar_response(value: Any) -> float | None:
@@ -94,25 +97,20 @@ def main() -> None:
     parser.add_argument("--config", required=True)
     parser.add_argument("--suite", default="evaluation/suites/quick.yaml")
     add_checkpoint_arguments(parser)
+    add_execution_arguments(parser)
     parser.add_argument("--limit", type=float, default=None)
     parser.add_argument("--output", default=None)
     parser.add_argument(
-        "--device",
-        choices=("cpu", "mps", "cuda", "auto"),
-        default=None,
-        help="override the device declared by the experiment config",
-    )
-    parser.add_argument(
         "--decode-mode",
-        choices=("standard", "feedback", "paper_recirculation"),
-        required=True,
-        help="continuation mechanism; independent of prompt prefill depth K",
+        choices=("standard", "feedback"),
+        default=None,
+        help="continuation mechanism; default: experiment eval_decode_mode or model capability",
     )
     parser.add_argument(
         "--prefill-passes",
         type=int,
-        required=True,
-        help="number of full prompt passes; this does not select decode mode",
+        default=None,
+        help="full prompt passes; default: experiment eval_prefill_passes or eval_passes",
     )
     parser.add_argument("--max-gen-tokens", type=int, default=256)
     parser.add_argument("--random-seed", type=int, default=0)
@@ -125,13 +123,8 @@ def main() -> None:
         help="required by code-generation tasks that execute generated programs",
     )
     args = parser.parse_args()
-    if args.prefill_passes < 1:
+    if args.prefill_passes is not None and args.prefill_passes < 1:
         raise SystemExit("--prefill-passes must be positive")
-    if args.decode_mode == "paper_recirculation" and args.prefill_passes != 1:
-        raise SystemExit(
-            "paper_recirculation has no prompt K axis; use --prefill-passes 1"
-        )
-
     try:
         import lm_eval
     except ImportError as exc:
@@ -149,6 +142,10 @@ def main() -> None:
     cfg = load_experiment_config(args.config)
     device = resolve_device(cfg.device if args.device is None else args.device)
     model = load_variant_from_config(cfg, device=device)
+    settings = resolve_evaluation_settings(
+        cfg, model, prefill_passes=args.prefill_passes, decode_mode=args.decode_mode,
+        autocast_dtype=args.autocast_dtype,
+    )
     weights = load_evaluation_weights(
         model=model,
         config=cfg,
@@ -160,8 +157,9 @@ def main() -> None:
         tokenizer_path=Path(cfg.model_dir) / "tokenizer.json",
         device=device,
         max_gen_toks=args.max_gen_tokens,
-        decode_mode=args.decode_mode,
-        prefill_passes=args.prefill_passes,
+        decode_mode=settings.decode_mode,
+        prefill_passes=settings.prefill_passes,
+        autocast_dtype=settings.autocast_dtype,
     )
 
     suite_path = Path(args.suite)
@@ -175,6 +173,7 @@ def main() -> None:
     tasks: dict[str, Any] = {}
     for task in suite["tasks"]:
         name = task["name"]
+        before_scoring = dict(adapter.scoring_stats)
         result = lm_eval.simple_evaluate(
             model=adapter,
             tasks=[name],
@@ -193,6 +192,7 @@ def main() -> None:
         }
         tasks[name] = {
             "metrics": result["results"],
+            "scoring": {key: value - before_scoring[key] for key, value in adapter.scoring_stats.items()},
             "samples": task_samples,
             "task_configs": result.get("configs", {}),
             "task_versions": result.get("versions", {}),
@@ -205,17 +205,24 @@ def main() -> None:
         )
 
     document = {
+        "schema_version": 2,
         "evaluation_kind": suite_kind,
         "semantics": {
-            "prefill_passes": args.prefill_passes,
-            "decode_mode": args.decode_mode,
+            "prefill_passes": settings.prefill_passes,
+            "decode_mode": settings.decode_mode,
             "candidate_scoring": (
-                "teacher_forced_observed_tokens_with_live_"
-                + args.decode_mode
+                "teacher_forced_observed_tokens"
                 if suite_kind == "candidate_loglikelihood"
-                and args.decode_mode != "standard"
                 else None
             ),
+        },
+        "resolved_settings": asdict(settings),
+        "precision": precision_metadata(model, device=device, autocast_dtype=settings.autocast_dtype),
+        "scoring": {
+            **adapter.scoring_stats,
+            "target_coverage": "continuation_only_after_left_truncation; BOS_for_empty_context",
+            "aggregation": "summed_token_loglikelihood_per_request",
+            "note": "counts are actual scoring operations, including repeated candidate contexts",
         },
         "limit": args.limit,
         "provenance": evaluation_provenance(
@@ -225,6 +232,7 @@ def main() -> None:
             device=device,
             seeds=seeds,
             suite_path=suite_path,
+            tokenizer_path=Path(cfg.model_dir) / "tokenizer.json",
         ),
         "tasks": tasks,
     }

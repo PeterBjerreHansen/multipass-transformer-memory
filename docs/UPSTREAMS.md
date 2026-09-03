@@ -16,9 +16,9 @@ Baseline tests, HF-comparison scripts, and `VANILLA_SOURCE.sha256` are the
 guardrails.
 
 The local cache API additionally accepts `detach_cache`. Its default remains
-`true`, preserving ordinary inference and multipass behavior. Paper-style BPTT
-sets it to `false` only for differentiable recurrent caches; the vanilla
-numerical-equivalence tests remain authoritative for the default path.
+`true`, preserving ordinary inference and multipass behavior. This generic
+substrate capability remains unchanged; the paper replay/BPTT caller has been
+deleted. Vanilla numerical-equivalence tests remain authoritative.
 
 Memory Attention and Strided Attention add two tested substrate capabilities. Self-attention K/V
 entries can carry a validity mask, and selected layers can use a bounded
@@ -36,12 +36,12 @@ pretraining recipe.
 
 ## Recirculation architecture reference
 
-The paper-forward implementation follows Michael C. Mozer et al.,
-*Recirculation*, arXiv:2608.17981v2. In particular, the same token is read out
-before its replayed upper-layer KV state becomes strict-past context for the
-next token. Full BPTT is the paper-faithful gradient reference; active long-run
-configs use explicitly named window-128 TBPTT because full BPTT is operationally
-infeasible in the audited token-serial implementation.
+The adaptive mixing rule is based on Michael C. Mozer et al., *Recirculation*,
+arXiv:2608.17981v2. The active retrofit uses preceding-token, previous-pass
+feedback and a late emitted memory. It does not reproduce the paper
+readout/replay computation. That execution policy and its BPTT/TBPTT training
+implementation have been deleted. The source-indexing research note and
+retired protocol records remain provenance, not executable specifications.
 
 ## Earlier MPTT research reference
 

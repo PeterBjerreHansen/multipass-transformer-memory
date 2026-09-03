@@ -4,11 +4,8 @@ Dataset preparation recipes live beside the generated artifacts they define.
 Only the small source recipes are tracked; token binaries, manifests, and other
 materialized dataset files are ignored.
 
-- `dolmino/paper_1024/config.yaml`: the active ordinary packed 1,024-token
-  artifact for forward-policy qualification and the proposed paper comparisons.
-  It does not impose document-contained packing.
-
-The remaining recipes are retained for the historical staged pipeline:
+The 1024-token study recipe has been deleted. `gpu_2048` serves the active
+frozen comparison and LR sweep; the other recipes retain their separate roles:
 
 - `dolmino/wiring_2048/config.yaml`: one unique 5M-token wiring epoch.
 - `dolmino/pilot_2048/config.yaml`: the following unique 10M-token pilot epoch.

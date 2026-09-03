@@ -17,24 +17,32 @@ study.
 
 The active scientific program is intentionally small:
 
-1. `development/forward_policy_qualification/` qualifies paper-style
-   token-diagonal BPTT/TBPTT against whole-block multipass Recirculation.
-2. `development/frozen_backbone_comparison/` compares 20M-token learning curves
-   while the pretrained backbone remains frozen throughout.
-3. `development/common_checkpoint_comparison/` is the proposed main 100M-token
-   comparison. Every arm starts from one pretrained checkpoint; feedback arms
-   freeze the pretrained backbone for the first 5M input tokens, while vanilla
-   trains it from token zero.
+1. `development/frozen_backbone_lr_qualification/` gives each of five feedback
+   mechanisms a four-value LR sweep under an equal 5M-token budget.
+2. `development/frozen_backbone_comparison/` compares 100M-token learning curves
+   while the pretrained backbone remains frozen. Both recurrent mergers use the
+   same late memory emission rule as the three attention variants.
 
-The first study selects feasible BPTT/TBPTT and hardware settings. The latter
-two remain planned until their microbatch, gradient-accumulation, learning-rate,
-and truncation choices have been qualified. Promotion means moving an unchanged
+These studies use 2048-token blocks and parallel K=4 validation. Downstream
+tasks use K=4 context prefill followed by ordinary feedback decoding. Paper
+replay/BPTT execution is deleted. The old 1024-token studies and their associated
+efficiency suite have been deleted rather than archived in the repo.
+A future unfrozen study must start fresh and qualify per-model learning rates.
+
+The active studies remain planned until hardware and learning-rate qualification
+is complete. Promotion means moving an unchanged
 study directory to `core/` and setting `status: locked` after review.
 
 Each development or core study owns a `STUDY.yaml`, runnable arm configs, and
-its `results/` directory. Arm names use `bptt` for token-diagonal recurrence and
-`multipass` for whole-block parallel passes. The schema and comparison rules are
+its `results/` directory. Active feedback arms use whole-block parallel
+multipass training. The schema and comparison rules are
 documented in `docs/STUDIES.md`.
 
 Raw checkpoints and run telemetry remain ignored under `results/<arm>/`.
 Compact summaries may be tracked beside them when they are needed for a paper.
+
+Inference/evaluation rules and durable snapshot recovery are shared across
+studies. Remaining additions are in [the cleanup tracker](../docs/CLEANUP_STATUS.md). The
+[A6000 timing report](development/inference_efficiency/README.md) supports keeping
+routine K=4 checks and limiting optional feedback evaluation to selected durable
+snapshots, initially one full block per arm.

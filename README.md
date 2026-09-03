@@ -1,11 +1,58 @@
 # Attention vs. Recurrence in Multi-Pass Transformers
 
+This repository compares ways to feed previous-pass memory into a pretrained
+TinyMistral transformer. Tokens read strictly preceding-token memory, never
+their own same-position state.
+
+## Active experiment
+
+The frozen-backbone comparison has five arms: dense, strided and multiscale
+Memory Attention, plus two recurrent models with a shared late-layer writer.
+The recurrent arms differ only in their merger: gated projected residual or
+adaptive recirculation. Paper replay and BPTT/TBPTT are removed; the
+recirculation merger remains.
+
+- Data: 2048-token blocks; the 1024-token studies and recipe are deleted.
+- Training: K=2 on 90% of batches, K=3 on 10%, final-pass loss. Each model
+  selects its own learning rate from the frozen qualification sweep.
+- Routine validation: parallel K=4 with per-pass scores, every 3,276,800
+  linguistic tokens. Precision and target/subset identity are recorded.
+- Downstream evaluation: actual context with K=4 prefill, then ordinary
+  feedback decoding. Exact cached K-pass decoding is a diagnostic reference.
+- Optional checkpoint validation: full-block feedback NLL from a single BOS
+  token, at explicitly selected snapshot thresholds. Disabled by default.
+- Recovery: rolling resumable checkpoints are separate from durable planned
+  weights snapshots. New snapshots include their config and identity in the
+  weights file; interrupted publication resumes before training advances.
+
+The future unfrozen experiment must start a fresh trajectory from the common
+pretrained checkpoint, optionally with a brief frozen warmup. Its per-model LR
+sweeps and objective still need to be specified; it is not a continuation of
+the frozen experiment.
+
+Start with the [study contract](benchmarks/README.md),
+[architectures](docs/RECURRENT_MEMORY.md), [evaluation contract](evaluation/README.md),
+and [training/recovery contract](docs/TRAINING.md).
+[Cleanup status](docs/CLEANUP_STATUS.md) tracks completed work and remaining additions.
+
+## Historical architecture screen
+
 **tl;dr:** Recent work such as the [full bandwidth transformer](https://arxiv.org/abs/2608.08888) and [recirculation](https://arxiv.org/abs/2608.17981) suggests that recurrently feeding intermediate representations back through a transformer can improve performance. In this exploratory, equal-token experiment, attention over previous-pass states produced lower same-stream validation NLL than the recurrent controls. The result is not an equal-compute comparison and does not yet establish downstream capability gains.
 
 The results below are the completed historical architecture screen. Its exact
 protocol and artifacts are preserved under
 `benchmarks/historical/staged_pipeline/`; they do not define the current paper
 experiment contract.
+The recirculation entries describe this repository's preceding-token retrofit,
+not a reproduction of the paper's removed same-token replay/training policy.
+
+The active frozen comparison now uses a shared late-memory writer for recurrent
+and attention variants. Its two recurrent arms compare an identity-initialized
+gated projected residual with adaptive recirculation mixing, both reading only
+the preceding token's emitted memory. Dense, strided and multiscale Memory
+Attention complete the five-arm comparison. See
+[the recurrent-memory contract](docs/RECURRENT_MEMORY.md); the historical results
+below do not measure these restructured recurrent arms.
 
 The idea behind [multi-pass training](https://github.com/PeterBjerreHansen/multi-pass-transformer-training) goes something like this: Pass 1 is an ordinary transformer pass. Pass 2 runs the same transformer again, but can use additional hidden states produced on pass 1. The question is if that information should arrive through a recurrent connection or through cross-pass attention over previous-pass states. To test this I first retrofitted [a TinyMistral model](https://huggingface.co/M4-ai/TinyMistral-248M-v3) into doing feedback inference by training it with multi-pass Jacobi-style updates. The new parameters were first wired into the frozen backbone for 5 million tokens, then the whole models were trained on 100M tokens from the [OLMo2 annealing mixture](https://huggingface.co/datasets/allenai/dolmino-mix-1124).
 
@@ -77,7 +124,7 @@ memory_layers: [3, 7]
 memory_position_encoding: rope
 ```
 
-Strided and memory-token Memory Attention additionally set `memory_write_stride`. In memory-token mode, `<MEM>` is input-only: it is not part of the LM output vocabulary and receives no direct LM loss. In the `write_only` configuration used in the main comparison, later tokens can access its state only through Memory Attention.
+Strided and memory-token Memory Attention additionally set `memory_write_stride`. In memory-token mode, `<MEM>` is input-only: it is not part of the LM output vocabulary and receives no direct LM loss. With `write_only`, later tokens can access its state only through Memory Attention. Memory-token attention is supported but is not one of the active five arms.
 
 See `docs/MEMORY_ATTENTION.md` for the conceptual vocabulary and `docs/BANK_MEMORY.md` for the exact implementation-level attention masks, retention/write timing, cached-inference behavior, and hybrid contracts. See `docs/ARCHITECTURES.md` for the two attention-control architectures.
 
@@ -129,17 +176,21 @@ Learning-rate schedules and run token budgets use linguistic tokens. Throughput 
 
 ## Current research status
 
-The active contract is documented in `benchmarks/README.md` and contains three
-studies under `benchmarks/development/`: forward-policy qualification,
-frozen-backbone comparison, and common-checkpoint comparison. The proposed main
-experiment starts every arm from the same pretrained checkpoint. Feedback arms
-freeze the pretrained backbone for their first 5M input tokens; vanilla trains
-it from token zero. Paper-style token-diagonal BPTT/TBPTT and whole-block
-multipass Recirculation are named and measured as separate training policies.
+The active studies are the five-arm frozen-backbone comparison and its per-model
+LR qualification, both on 2048-token blocks. Their contract is in
+[benchmarks/README.md](benchmarks/README.md). Paper readout/replay and its
+BPTT/TBPTT training implementation have been removed; the older 1024-token
+studies and their data recipe are deleted. Adaptive recirculation
+mixing and ordinary preceding-token feedback inference remain supported.
 
-No paper-era study is in `benchmarks/core/` yet. Hardware-facing microbatch,
-gradient-accumulation, BPTT/TBPTT window, and learning-rate choices must be
-qualified before a study is moved there and locked.
+The fresh unfrozen comparison has not been configured yet. It will start from
+the common pretrained checkpoint, optionally with a brief frozen warmup, and
+will need its own per-model LR sweeps. No study is in benchmarks/core/ yet.
+
+Cleanup steps 1–6 are implemented: K=1 decoding preserves projected feedback
+memory, evaluation shares precision, scoring and result identity, and planned
+snapshots recover interrupted publication. Remaining additions are tracked in
+[docs/CLEANUP_STATUS.md](docs/CLEANUP_STATUS.md).
 
 The completed eight-arm 100M architecture screen and the later Stage-6 work are
 under `benchmarks/historical/staged_pipeline/`. Their original configs and
@@ -166,12 +217,12 @@ Without dependency installation, the source tree can also be tested in an enviro
 PYTHONPATH=src pytest -q
 ```
 
-Prepare and verify the active 1,024-token paper artifact with:
+Prepare and verify the active 2048-token frozen-study artifact with:
 
 ```bash
-uv run python scripts/prepare_data.py --config data/dolmino/paper_1024/config.yaml
+uv run python scripts/prepare_data.py --config data/dolmino/gpu_2048/config.yaml
 
-uv run python scripts/verify_data.py data/dolmino/paper_1024
+uv run python scripts/verify_data.py data/dolmino/gpu_2048
 ```
 
-Before paid CUDA training, qualify batching using `benchmarks/efficiency/`, then run the provider-agnostic preflight described in `docs/CLOUD.md`.
+For optional hardware batching checks, use `benchmarks/efficiency/`, and use the provider-agnostic preflight described in `docs/CLOUD.md`.

@@ -5,14 +5,16 @@ question: >-
   how long do the added feedback mechanisms reduce held-out NLL, and what are
   their accelerator-time and estimated-compute costs?
 arms:
-  - {id: recirculation_multipass_100m, config: recirculation_multipass_100m.yaml}
+  - {id: recurrent_projected_residual_multipass_100m, config: recurrent_projected_residual_multipass_100m.yaml}
+  - {id: recurrent_recirculation_multipass_100m, config: recurrent_recirculation_multipass_100m.yaml}
   - {id: dense_memory_attention_multipass_100m, config: dense_memory_attention_multipass_100m.yaml}
   - {id: strided_memory_attention_multipass_100m, config: strided_memory_attention_multipass_100m.yaml}
   - {id: multiscale_memory_attention_multipass_100m, config: multiscale_memory_attention_multipass_100m.yaml}
 comparisons:
   - name: frozen_feedback_mechanisms
     arms:
-      - recirculation_multipass_100m
+      - recurrent_projected_residual_multipass_100m
+      - recurrent_recirculation_multipass_100m
       - dense_memory_attention_multipass_100m
       - strided_memory_attention_multipass_100m
       - multiscale_memory_attention_multipass_100m
@@ -26,12 +28,11 @@ comparisons:
       - memory_dense_window
       - memory_sparse_window
       - memory_sparse_stride
-      - recirculation_source_layer
-      - recirculation_destination_layer
-      - recirculation_mode
-      - pass_schedule
-      - ntp_pass_loss_weights_by_k
+      - recurrent_merger
     allowed_differences:
       - attention_backend
-      - validation_forward
-      - eval_passes
+      - added_learning_rate
+  - name: recurrent_mergers
+    arms: [recurrent_recirculation_multipass_100m, recurrent_projected_residual_multipass_100m]
+    experimental_axes: [recurrent_merger]
+    allowed_differences: [added_learning_rate]

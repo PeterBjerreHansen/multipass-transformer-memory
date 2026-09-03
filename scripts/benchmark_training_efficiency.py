@@ -16,6 +16,7 @@ from tiny_mistral.device import resolve_device, synchronize
 from tiny_mistral_mptt.data.packed_dataset import insert_memory_tokens
 from tiny_mistral_mptt.model_factory import load_variant
 from tiny_mistral_mptt.config import (
+    reject_removed_paper_policy,
     MEMORY_ATTENTION_VARIANTS,
     MULTISCALE_MEMORY_ATTENTION_VARIANTS,
     canonical_memory_write_mode,
@@ -23,7 +24,6 @@ from tiny_mistral_mptt.config import (
 )
 from tiny_mistral_mptt.precision import PrecisionNotSupportedError, autocast_context
 from tiny_mistral_mptt.training.phases import configure_phase
-from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
 
 
 DEFAULT_MODEL_DIR = "checkpoints/TinyMistral-248M-v3"
@@ -172,17 +172,12 @@ def _precision_error(text: str, autocast_dtype: str | None) -> bool:
 
 
 def _run_case(case: dict[str, Any]) -> dict[str, Any]:
+    reject_removed_paper_policy(case)
     device = resolve_device(str(case.get("device", "auto")))
     variant = str(case["variant"])
     implementation_variant = canonical_variant_name(variant)
     passes = int(case["passes"])
     training_forward = str(case.get("training_forward", "parallel_multipass"))
-    activation_checkpointing = bool(
-        case.get("recirculation_activation_checkpointing", False)
-    )
-    truncate_tokens = case.get("recirculation_bptt_truncate_tokens")
-    if truncate_tokens is not None:
-        truncate_tokens = int(truncate_tokens)
     phase = str(case.get("phase", "B"))
     if phase not in {"A", "B"}:
         raise ValueError("efficiency phase must be A or B")
@@ -232,6 +227,7 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
         recirculation_destination_layer = int(recirculation_destination_layer)
     recirculation_alpha = float(case.get("recirculation_alpha", 0.1))
     recirculation_mode = str(case.get("recirculation_mode", "fixed"))
+    recurrent_merger = case.get("recurrent_merger")
 
     is_bank = variant in MEMORY_ATTENTION_VARIANTS
     if variant in MULTISCALE_MEMORY_ATTENTION_VARIANTS:
@@ -268,12 +264,7 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
     if passes not in WEIGHTS_BY_K:
         raise ValueError("efficiency benchmark currently supports K=1,2,3")
     single_pass = implementation_variant in {"vanilla", "sparse_swa"}
-    if training_forward == "recirculation_bptt":
-        if implementation_variant != "recirculation" or passes != 1:
-            raise ValueError(
-                "recirculation_bptt efficiency cases require recirculation with passes=1"
-            )
-    elif training_forward != "parallel_multipass":
+    if training_forward != "parallel_multipass":
         raise ValueError("unknown efficiency training_forward")
     elif single_pass and passes != 1:
         raise ValueError(f"{variant} efficiency cases require passes=1")
@@ -283,19 +274,6 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
         and passes < 2
     ):
         raise ValueError("multipass efficiency cases require passes>=2")
-    if activation_checkpointing and training_forward != "recirculation_bptt":
-        raise ValueError(
-            "recirculation activation checkpointing requires recirculation_bptt"
-        )
-    if truncate_tokens is not None:
-        if training_forward != "recirculation_bptt":
-            raise ValueError(
-                "recirculation BPTT truncation requires recirculation_bptt"
-            )
-        if truncate_tokens < 2 or truncate_tokens > sequence_length:
-            raise ValueError(
-                "recirculation_bptt_truncate_tokens must be in [2, sequence_length]"
-            )
     if implementation_variant == "sparse_swa" and (
         sparse_attention_stride is None
         or sparse_attention_stride <= 0
@@ -318,8 +296,6 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
         "variant": variant,
         "passes": passes,
         "training_forward": training_forward,
-        "recirculation_activation_checkpointing": activation_checkpointing,
-        "recirculation_bptt_truncate_tokens": truncate_tokens,
         "phase": phase,
         "sequence_length": sequence_length,
         "linguistic_sequence_length": sequence_length,
@@ -346,6 +322,7 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
         "recirculation_destination_layer": recirculation_destination_layer,
         "recirculation_alpha": recirculation_alpha,
         "recirculation_mode": recirculation_mode,
+        "recurrent_merger": recurrent_merger,
         "warmup_steps": warmup_steps,
         "measure_steps": measure_steps,
         "status": "running",
@@ -378,6 +355,7 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
             recirculation_destination_layer=recirculation_destination_layer,
             recirculation_alpha=recirculation_alpha,
             recirculation_mode=recirculation_mode,
+            recurrent_merger=recurrent_merger,
         )
         configure_phase(model, phase)
         model.train()
@@ -413,55 +391,26 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
         result["optimizer_batch_model_positions"] = (
             batch_size * model_sequence_length * grad_accum_steps
         )
-        weights = None if training_forward == "recirculation_bptt" else WEIGHTS_BY_K[passes]
-        stack_iterations = 2 if training_forward == "recirculation_bptt" else passes
+        weights = WEIGHTS_BY_K[passes]
+        stack_iterations = passes
 
         def step() -> tuple[float, float]:
             assert model is not None and optimizer is not None
             optimizer.zero_grad(set_to_none=True)
             accumulated_loss = 0.0
             for _ in range(grad_accum_steps):
-                if truncate_tokens is not None:
-                    if not isinstance(model, RecirculationVariant):
-                        raise RuntimeError("TBPTT requires a RecirculationVariant")
-                    chunks = iter(
-                        model.iter_recirculation_tbptt_losses(
-                            ids,
-                            truncate_tokens=truncate_tokens,
-                            activation_checkpointing=activation_checkpointing,
-                        )
+                with autocast_context(device, autocast_dtype):
+                    output = model.compute_training_loss(
+                        ids,
+                        training_forward=training_forward,
+                        phase=phase,
+                        passes=passes,
+                        loss_weights=weights,
                     )
-                    predicted_tokens = int(ids.shape[0] * (ids.shape[1] - 1))
-                    while True:
-                        with autocast_context(device, autocast_dtype):
-                            try:
-                                chunk_loss, chunk_predictions = next(chunks)
-                            except StopIteration:
-                                break
-                        if not bool(torch.isfinite(chunk_loss).item()):
-                            raise RuntimeError("non-finite loss")
-                        chunk_weight = chunk_predictions / predicted_tokens
-                        if chunk_loss.requires_grad:
-                            (
-                                chunk_loss * chunk_weight / grad_accum_steps
-                            ).backward()
-                        accumulated_loss += (
-                            float(chunk_loss.detach().cpu()) * chunk_weight
-                        )
-                else:
-                    with autocast_context(device, autocast_dtype):
-                        output = model.compute_training_loss(
-                            ids,
-                            training_forward=training_forward,
-                            phase=phase,
-                            passes=passes,
-                            loss_weights=weights,
-                            activation_checkpointing=activation_checkpointing,
-                        )
-                    if not bool(torch.isfinite(output.loss).item()):
-                        raise RuntimeError("non-finite loss")
-                    (output.loss / grad_accum_steps).backward()
-                    accumulated_loss += float(output.loss.detach().cpu())
+                if not bool(torch.isfinite(output.loss).item()):
+                    raise RuntimeError("non-finite loss")
+                (output.loss / grad_accum_steps).backward()
+                accumulated_loss += float(output.loss.detach().cpu())
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             if not bool(torch.isfinite(grad_norm).item()):
                 raise RuntimeError("non-finite gradient norm")
@@ -499,12 +448,7 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
                 "model_positions_per_second": model_positions / elapsed,
                 "pass_positions_per_second": iteration_positions / elapsed,
                 "stack_iterations_per_token": stack_iterations,
-                "iteration_accounting_note": (
-                    "recirculation counts one ordinary readout plus one optimized "
-                    "upper-stack replay; it is not two complete backbone passes"
-                    if training_forward == "recirculation_bptt"
-                    else "complete whole-sequence backbone passes"
-                ),
+                "iteration_accounting_note": "complete whole-sequence backbone passes",
                 "estimated_hours_per_100m_unique_tokens": 100_000_000.0
                 / unique_tokens_per_second
                 / 3600.0,

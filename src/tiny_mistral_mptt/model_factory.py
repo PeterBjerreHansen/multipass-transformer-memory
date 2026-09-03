@@ -14,6 +14,7 @@ from .variants import (
     FBTVariant,
     MemoryAddVariant,
     RecirculationVariant,
+    RecurrentMemoryVariant,
     MemoryAttentionAddHybridVariant,
     RecirculationStridedMemoryAttentionVariant,
     MultiscaleMemoryAttentionVariant,
@@ -50,6 +51,7 @@ def build_variant(
     recirculation_destination_layer: int | None = None,
     recirculation_alpha: float = 0.1,
     recirculation_mode: str = "fixed",
+    recurrent_merger: str | None = None,
 ) -> ExperimentalVariant:
     requested_name = str(name)
     name = canonical_variant_name(requested_name)
@@ -78,6 +80,13 @@ def build_variant(
         )
     elif name == "memory_add":
         variant = MemoryAddVariant(backbone)
+    elif name == "recurrent_memory":
+        variant = RecurrentMemoryVariant(
+            backbone,
+            memory_layers=memory_layers,
+            merger=recurrent_merger,
+            initialization_seed=architecture_seed,
+        )
     elif name == "recirculation":
         if recirculation_source_layer is None or recirculation_destination_layer is None:
             raise ValueError(
@@ -203,6 +212,7 @@ def load_variant(
     recirculation_destination_layer: int | None = None,
     recirculation_alpha: float = 0.1,
     recirculation_mode: str = "fixed",
+    recurrent_merger: str | None = None,
 ) -> ExperimentalVariant:
     backbone = load_model(
         model_dir,
@@ -234,6 +244,7 @@ def load_variant(
         recirculation_destination_layer=recirculation_destination_layer,
         recirculation_alpha=recirculation_alpha,
         recirculation_mode=recirculation_mode,
+        recurrent_merger=recurrent_merger,
     )
 
 
@@ -280,4 +291,5 @@ def load_variant_from_config(
         recirculation_destination_layer=cfg.recirculation_destination_layer,
         recirculation_alpha=cfg.recirculation_alpha,
         recirculation_mode=cfg.recirculation_mode,
+        recurrent_merger=cfg.recurrent_merger,
     )

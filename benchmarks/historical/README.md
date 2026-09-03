@@ -20,3 +20,10 @@ layout; copy it into a new active study if a follow-up experiment is needed.
 Large `results/<arm>/` payloads remain ignored by Git but are kept locally in
 this tree. Moving them here does not make them suitable for source control or a
 paper artifact release.
+
+## Deleted 1024-token studies
+
+The former forward-policy, common-checkpoint and 1024-token frozen studies
+have been deleted at the user's request. They are no longer archived in this
+tree. The separate 2048-token historical protocols remain unchanged. Paper
+readout/replay and its BPTT/TBPTT implementation are also deleted.

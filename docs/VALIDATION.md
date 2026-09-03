@@ -27,8 +27,9 @@ The suite must enforce:
 - FBT exact cached inference matches full-prefix multipass recomputation;
 - retired checkpoint controls retain their focused compatibility tests;
 - adaptive recirculation starts at the configured fixed mixture;
-- adaptive recirculation Phase A freezes the TinyMistral backbone and trains
-  only its coefficient controller;
+- legacy middle-layer recirculation Phase A trains only its coefficient
+  controller; active recurrent-memory Phase A trains its late writer and merger,
+  while both keep the TinyMistral backbone frozen;
 - dense Memory Attention and strided C1 are identical with matching weights;
 - multiscale Memory Attention reduces to Dense Memory Attention when `S=0` and Strided Memory Attention when
   `D=0`, and uses one softmax over a non-overlapping union otherwise;
@@ -58,12 +59,30 @@ For `A <MEM> B`:
   used as self-attention K/V;
 - cached write-only key validity preserves the MEM physical position.
 
+## Evaluation consistency and remaining cleanup
+
+Paper replay/BPTT tests were removed with that implementation. Removal guards
+now reject its configs and checkpoints while retaining neutral legacy metadata
+compatibility. Cleanup 3–4 adds tests for K=1 state conversion with non-identity
+writers, BOS/context feedback, shared trainer/standalone precision and loss
+aggregation, per-source/control-token accounting, subset identity, and common
+downstream truncation. BF16 dispatch is exercised locally without claiming
+CUDA/MPS numerical or speed qualification.
+
+Snapshot tests cover interruption before/after atomic publication, sidecar
+repair, portable loading, idempotent retries, conflicting weights and retention.
+Packed BOS feedback tests cover all active mechanisms, both target sets,
+model-owned MEM labels, full 2048-position decoding, selected-only scheduling,
+interrupted recovery and unchanged training weights/optimizer/sampler state.
+Batching and depth-aligned K=4 interventions remain later work. See
+[CLEANUP_STATUS.md](CLEANUP_STATUS.md).
+
 ## Cached/recurrent gates
 
 - exact incremental K-pass equals full-prefix recomputation for multiple K;
 - snapshot-before-update prevents same-position feedback leakage;
 - recurrent prefill starts from the exact K-pass boundary;
-- the first recurrent continuation transition equals exact K-pass;
+- for K>1, the first recurrent continuation transition equals exact K-pass;
 - Memory Attention state remains chronological and bounded;
 - write-only cache validity persists across decode;
 - exact K=1 and K=1 standard decode remain the SWA Transformer cached boundary;
@@ -96,8 +115,8 @@ settings, avoid overlapping training slices, and match their declared budgets.
 `git diff --check` when Git metadata is available. On Apple hardware also run
 `scripts/smoke_mps.py`.
 
-Before a serious CUDA campaign, run the K=2 batch qualification with
-`grad_accum_steps=1`. A larger selected microbatch changes optimizer-batch size
-unless accumulation is adjusted and therefore requires scientific qualification.
+Before a serious CUDA campaign, preflight the actual arms and resolved configs.
+Hardware batch qualification is optional; adjust accumulation to preserve the
+optimizer batch when changing the microbatch, and record the resolved config.
 For write-only MEM, CUDA FlexAttention/reference parity must remain green before
 paid quality runs.

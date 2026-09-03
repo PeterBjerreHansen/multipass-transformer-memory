@@ -8,9 +8,57 @@ from tiny_mistral_mptt.inference import (
     prefill_exact,
     prefill_recurrent,
     recurrent_decode_step,
+    recurrent_from_exact,
 )
 from tiny_mistral_mptt.variants.fbt import FBTVariant
 from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
+from tiny_mistral_mptt.variants.recurrent_memory import RecurrentMemoryVariant
+
+
+@pytest.mark.parametrize("merger", ["projected_residual", "recirculation"])
+@pytest.mark.parametrize("prompt_length", [1, 5])
+def test_k1_extension_preserves_projected_memory_before_feedback_conversion(merger, prompt_length):
+    torch.manual_seed(36)
+    model = RecurrentMemoryVariant(
+        MistralForCausalLM(micro_config(sliding_window=4), attention_backend="reference"),
+        memory_layers=[1], merger=merger,
+    ).eval()
+    with torch.no_grad():
+        model.writer.proj.weight.copy_(0.3 * torch.eye(model.config.hidden_size))
+    ids = sample_ids()
+    state = prefill_exact(model, ids[:, :prompt_length], passes=1)
+    for position in range(prompt_length, prompt_length + 3):
+        state = exact_decode_step(model, state, ids[:, position:position + 1])
+        fresh = prefill_exact(model, ids[:, :position + 1], passes=1)
+        torch.testing.assert_close(
+            state.streams[0].feedback_memory, fresh.streams[0].feedback_memory,
+            atol=4e-5, rtol=4e-5,
+        )
+        converted = recurrent_from_exact(state, decode_mode="feedback")
+        reference = recurrent_from_exact(fresh, decode_mode="feedback")
+        token = ids[:, position + 1:position + 2]
+        torch.testing.assert_close(
+            recurrent_decode_step(model, converted, token).next_token_logits,
+            recurrent_decode_step(model, reference, token).next_token_logits,
+            atol=4e-5, rtol=4e-5,
+        )
+
+
+@pytest.mark.parametrize("variant_name", ["memory_add", "fbt"])
+def test_bos_only_is_an_ordinary_feedback_prefill_and_remains_causal(variant_name):
+    model = make_variant(variant_name)
+    bos = torch.tensor([[model.config.bos_token_id]])
+    one = prefill_recurrent(model, bos, passes=1, decode_mode="feedback")
+    four = prefill_recurrent(model, bos, passes=4, decode_mode="feedback")
+    torch.testing.assert_close(one.next_token_logits, four.next_token_logits)
+    assert one.feedback_enabled and four.feedback_enabled
+    # A different observed token can affect subsequent predictions, never the
+    # logits that predicted that token from the common BOS state.
+    initial = one.next_token_logits.clone()
+    left = recurrent_decode_step(model, one, torch.tensor([[7]]))
+    right = recurrent_decode_step(model, one, torch.tensor([[8]]))
+    torch.testing.assert_close(one.next_token_logits, initial, atol=0, rtol=0)
+    assert not torch.equal(left.next_token_logits, right.next_token_logits)
 
 
 def make_variant(name: str):

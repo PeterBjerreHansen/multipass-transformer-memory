@@ -11,7 +11,6 @@ from tiny_mistral_mptt.data.recipes import DOLMINO_50B_SOURCES
 from tiny_mistral_mptt.evaluation.nll import evaluate_nll
 from tiny_mistral_mptt.evaluation.pass_depth import evaluate_pass_depth
 from tiny_mistral_mptt.variants.fbt import FBTVariant
-from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
 
 
 def fake_docs(offset: int):
@@ -97,37 +96,3 @@ def test_nll_records_explicit_multipass_depth(tmp_path):
     result = evaluate_nll(model, dataset, device="cpu", passes=2, max_blocks=1)
     assert result.passes == 2
     assert result.forward_mode == "parallel_multipass"
-
-
-def test_nll_can_use_paper_recirculation_without_conflating_it_with_k(tmp_path):
-    data_dir = tmp_path / "data-recirculation-nll"
-    make_artifact(data_dir)
-    dataset = PackedTokenDataset(data_dir, "validation")
-    model = RecirculationVariant(
-        MistralForCausalLM(micro_config(), attention_backend="reference"),
-        source_layer=1,
-        destination_layer=0,
-        mode="adaptive",
-    )
-
-    result = evaluate_nll(
-        model,
-        dataset,
-        device="cpu",
-        passes=1,
-        forward_mode="paper_recirculation",
-        max_blocks=2,
-    )
-
-    assert result.forward_mode == "paper_recirculation"
-    assert result.passes == 1
-    assert result.predicted_tokens == 2 * 7
-    with pytest.raises(ValueError, match="no multipass K axis"):
-        evaluate_nll(
-            model,
-            dataset,
-            device="cpu",
-            passes=2,
-            forward_mode="paper_recirculation",
-            max_blocks=1,
-        )

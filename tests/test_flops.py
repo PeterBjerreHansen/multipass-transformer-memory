@@ -7,7 +7,6 @@ from tiny_mistral.config import tiny_mistral_248m_config
 from tiny_mistral_mptt.flops import (
     _bank_pairs,
     estimate_pass,
-    estimate_recirculation_bptt,
     estimate_schedule,
     memory_token_layout,
     bank_write_positions,
@@ -39,7 +38,8 @@ def test_frozen_study_flop_report_uses_authoritative_arm_batching():
     report = json.loads(completed.stdout)
     rows = {row["arm"]: row for row in report["results"]}
     assert set(rows) == {
-        "recirculation_multipass_100m",
+        "recurrent_recirculation_multipass_100m",
+        "recurrent_projected_residual_multipass_100m",
         "dense_memory_attention_multipass_100m",
         "strided_memory_attention_multipass_100m",
         "multiscale_memory_attention_multipass_100m",
@@ -50,8 +50,24 @@ def test_frozen_study_flop_report_uses_authoritative_arm_batching():
     } == {(8, 4)}
     assert {row["optimizer_batch_tokens"] for row in rows.values()} == {65_536}
     assert all(row["estimated_training_flops_total"] > 0 for row in rows.values())
-    assert rows["recirculation_multipass_100m"]["training_forward"] == "parallel_multipass"
-    assert rows["recirculation_multipass_100m"]["relative_training_flops"] > 1.0
+    assert rows["recurrent_recirculation_multipass_100m"]["training_forward"] == "parallel_multipass"
+    assert rows["recurrent_recirculation_multipass_100m"]["relative_training_flops"] > 1.0
+
+
+def test_recurrent_memory_counts_shared_writer_and_each_merger():
+    config = tiny_mistral_248m_config()
+    linear = 2 * 128 * config.hidden_size ** 2
+    for merger, controller_factor, projection_factor in (
+        ("recirculation", 5, 0), ("projected_residual", 2, 1)
+    ):
+        estimate = estimate_pass(
+            config, variant="recurrent_memory", passes=3,
+            linguistic_sequence_length=128, memory_layers=[3, 7],
+            recurrent_merger=merger,
+        )
+        assert estimate.forward.bank_writer == 2 * linear
+        assert estimate.forward.recurrent_controller == 2 * 2 * controller_factor * linear
+        assert estimate.forward.recurrent_projection == 2 * 2 * projection_factor * linear
 
 
 def test_memory_token_layout_matches_packed_dataset_contract():
@@ -139,38 +155,6 @@ def test_fixed_recursion_does_not_charge_adaptive_controller():
     )
     assert fixed.forward.recurrent_controller == 0
     assert adaptive.forward.recurrent_controller > 0
-
-
-def test_paper_recirculation_flops_count_partial_replay_and_checkpointing():
-    config = tiny_mistral_248m_config()
-    plain = estimate_recirculation_bptt(
-        config,
-        linguistic_sequence_length=1024,
-        source_layer=6,
-        destination_layer=3,
-        recirculation_mode="adaptive",
-    )
-    checkpointed = estimate_recirculation_bptt(
-        config,
-        linguistic_sequence_length=1024,
-        source_layer=6,
-        destination_layer=3,
-        recirculation_mode="adaptive",
-        activation_checkpointing=True,
-    )
-    k2 = estimate_schedule(
-        config,
-        variant="recirculation",
-        pass_probabilities={2: 1.0},
-        linguistic_sequence_length=1024,
-        recirculation_mode="adaptive",
-    )
-
-    paper_pass = plain.pass_estimates[1]
-    assert paper_pass.training_forward == "recirculation_bptt"
-    assert paper_pass.forward.lm_head < k2.pass_estimates[2].forward.lm_head
-    assert plain.relative_training_flops < k2.relative_training_flops
-    assert checkpointed.weighted_training_flops > plain.weighted_training_flops
 
 
 def test_sparse_swa_adds_only_sparse_attention_products():

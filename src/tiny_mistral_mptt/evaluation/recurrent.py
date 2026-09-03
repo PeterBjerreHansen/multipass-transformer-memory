@@ -14,6 +14,9 @@ from ..inference import (
     recurrent_from_exact,
 )
 from ..variants.multipass import MultiPassVariant
+from .common import (
+    NLLAccumulator, block_limit, evaluation_context, packed_evaluation_metadata, source_name,
+)
 
 
 @dataclass(frozen=True)
@@ -21,9 +24,10 @@ class RecurrentHorizonResult:
     horizon: int
     exact_nll: float
     recurrent_nll: float
-    vanilla_nll: float
+    standard_k1_nll: float
     recurrent_minus_exact: float
-    recurrent_minus_vanilla: float
+    recurrent_minus_standard_k1: float
+    predicted_tokens: int
     hidden_delta_rms: float
     hidden_cosine: float
 
@@ -38,9 +42,13 @@ class RecurrentEvaluationResult:
     horizons: tuple[RecurrentHorizonResult, ...]
     exact_nll_by_offset: tuple[float, ...]
     recurrent_nll_by_offset: tuple[float, ...]
-    vanilla_nll_by_offset: tuple[float, ...]
+    standard_k1_nll_by_offset: tuple[float, ...]
     hidden_delta_rms_by_step: tuple[float, ...]
     hidden_cosine_by_step: tuple[float, ...]
+    predicted_tokens_by_offset: tuple[int, ...]
+    nll_by_source_by_mode: dict[str, dict[str, float]]
+    predicted_tokens_by_source: dict[str, int]
+    evaluation: dict
 
 
 def default_horizons(continuation_tokens: int) -> tuple[int, ...]:
@@ -68,21 +76,6 @@ def _normalize_horizons(
     return result
 
 
-def _token_nll(logits: torch.Tensor, target: torch.Tensor, valid: torch.Tensor | None = None) -> tuple[float, int]:
-    if logits.ndim != 2 or target.ndim != 2 or target.shape[1] != 1:
-        raise ValueError("logits must be [B,V] and target [B,1]")
-    if logits.shape[0] != target.shape[0]:
-        raise ValueError("logits and target batch sizes differ")
-    if valid is None:
-        valid = torch.ones(target.shape[0], dtype=torch.bool, device=target.device)
-    if valid.shape != (target.shape[0],):
-        raise ValueError("valid must be bool [B]")
-    if not bool(valid.any()):
-        return 0.0, 0
-    loss = F.cross_entropy(logits[valid].float(), target[valid, 0], reduction="sum")
-    return float(loss.detach().cpu()), int(valid.sum().item())
-
-
 @torch.no_grad()
 def evaluate_recurrent_continuation(
     model: MultiPassVariant,
@@ -94,13 +87,14 @@ def evaluate_recurrent_continuation(
     continuation_tokens: int,
     max_blocks: int | None = None,
     horizons: tuple[int, ...] | list[int] | None = None,
+    autocast_dtype: str | None = None,
 ) -> RecurrentEvaluationResult:
     """Compare exact K-stream and collapsed recurrent teacher-forced decoding.
 
     A pass-1 cached stream from the same checkpoint is evaluated alongside the
-    two memory modes as the no-memory control.  Exact and recurrent states share
-    one K-pass prefill, so their initial logits and the first processed-token
-    transition are identical by construction; later differences measure the
+    two memory modes as the no-feedback control. Exact and recurrent states share
+    one K-pass prefill, so their initial logits (and, for K>1, the first
+    processed-token transition) match; later differences measure the
     recurrent train/inference shift directly.
     """
     if prefill_passes < 1:
@@ -109,27 +103,21 @@ def evaluate_recurrent_continuation(
         raise ValueError("prompt_tokens and continuation_tokens must be positive")
     if prompt_tokens + continuation_tokens > dataset.sequence_length:
         raise ValueError("prompt + continuation exceeds packed sequence length")
-    if len(dataset) == 0:
-        raise ValueError("validation dataset is empty")
-    limit = len(dataset) if max_blocks is None else min(len(dataset), int(max_blocks))
-    if limit <= 0:
-        raise ValueError("max_blocks leaves no validation blocks")
+    limit = block_limit(dataset, max_blocks)
     report_horizons = _normalize_horizons(horizons, continuation_tokens)
-
-    exact_loss_by_offset = [0.0] * continuation_tokens
-    recurrent_loss_by_offset = [0.0] * continuation_tokens
-    vanilla_loss_by_offset = [0.0] * continuation_tokens
-    prediction_count_by_offset = [0] * continuation_tokens
+    scores = {
+        name: [NLLAccumulator() for _ in range(continuation_tokens)]
+        for name in ("exact", "recurrent", "standard_k1")
+    }
     delta_sq_by_step = [0.0] * continuation_tokens
     delta_count_by_step = [0] * continuation_tokens
     cosine_sum_by_step = [0.0] * continuation_tokens
     cosine_count_by_step = [0] * continuation_tokens
 
-    was_training = model.training
-    model.eval()
-    try:
+    with evaluation_context(model, device=device, autocast_dtype=autocast_dtype):
         for block_index in range(limit):
             ids = dataset.batch([block_index], device=device)
+            source = source_name(dataset, block_index) if hasattr(dataset, "manifest") else None
             prompt = ids[:, :prompt_tokens]
             continuation = ids[
                 :, prompt_tokens : prompt_tokens + continuation_tokens
@@ -137,24 +125,22 @@ def evaluate_recurrent_continuation(
 
             exact = prefill_exact(model, prompt, passes=prefill_passes)
             recurrent = recurrent_from_exact(exact, decode_mode="feedback")
-            vanilla = prefill_exact(model, prompt, passes=1)
+            standard_k1 = prefill_exact(model, prompt, passes=1)
 
             for offset in range(continuation_tokens):
                 target = continuation[:, offset : offset + 1]
                 valid_target = ~model.control_token_mask(target)[:, 0]
-                exact_loss, count = _token_nll(exact.next_token_logits, target, valid_target)
-                recurrent_loss, _ = _token_nll(recurrent.next_token_logits, target, valid_target)
-                vanilla_loss, _ = _token_nll(vanilla.next_token_logits, target, valid_target)
-                exact_loss_by_offset[offset] += exact_loss
-                recurrent_loss_by_offset[offset] += recurrent_loss
-                vanilla_loss_by_offset[offset] += vanilla_loss
-                prediction_count_by_offset[offset] += count
+                labels = target[:, 0].masked_fill(~valid_target, -100)
+                for name, state in (
+                    ("exact", exact), ("recurrent", recurrent), ("standard_k1", standard_k1)
+                ):
+                    scores[name][offset].add(state.next_token_logits, labels, source=source)
 
                 # Process the observed target even at the last offset so the
                 # latent drift after every continuation token is measured.
                 exact = exact_decode_step(model, exact, target)
                 recurrent = recurrent_decode_step(model, recurrent, target)
-                vanilla = exact_decode_step(model, vanilla, target)
+                standard_k1 = exact_decode_step(model, standard_k1, target)
 
                 delta = recurrent.last_hidden.float() - exact.last_hidden.float()
                 delta_sq_by_step[offset] += float(delta.square().sum().cpu())
@@ -168,18 +154,14 @@ def evaluate_recurrent_continuation(
                 cosine = torch.where(identical, torch.ones_like(cosine), cosine)
                 cosine_sum_by_step[offset] += float(cosine.sum().cpu())
                 cosine_count_by_step[offset] += cosine.numel()
-    finally:
-        model.train(was_training)
+    prediction_count_by_offset = [total.tokens for total in scores["exact"]]
 
-    def _offset_means(values: list[float]) -> tuple[float, ...]:
-        return tuple(
-            value / count if count else float("nan")
-            for value, count in zip(values, prediction_count_by_offset, strict=True)
-        )
+    def offset_means(name: str) -> tuple[float, ...]:
+        return tuple(total.mean if total.tokens else float("nan") for total in scores[name])
 
-    exact_offset = _offset_means(exact_loss_by_offset)
-    recurrent_offset = _offset_means(recurrent_loss_by_offset)
-    vanilla_offset = _offset_means(vanilla_loss_by_offset)
+    exact_offset = offset_means("exact")
+    recurrent_offset = offset_means("recurrent")
+    standard_k1_offset = offset_means("standard_k1")
     hidden_rms = tuple(
         math.sqrt(total / count)
         for total, count in zip(delta_sq_by_step, delta_count_by_step, strict=True)
@@ -196,21 +178,29 @@ def evaluate_recurrent_continuation(
         count = sum(prediction_count_by_offset[:horizon])
         if count <= 0:
             raise ValueError("selected horizon contains no linguistic prediction targets")
-        exact_nll = sum(exact_loss_by_offset[:horizon]) / count
-        recurrent_nll = sum(recurrent_loss_by_offset[:horizon]) / count
-        vanilla_nll = sum(vanilla_loss_by_offset[:horizon]) / count
+        exact_nll = sum(total.loss for total in scores["exact"][:horizon]) / count
+        recurrent_nll = sum(total.loss for total in scores["recurrent"][:horizon]) / count
+        standard_k1_nll = sum(total.loss for total in scores["standard_k1"][:horizon]) / count
         horizon_results.append(
             RecurrentHorizonResult(
                 horizon=horizon,
+                predicted_tokens=count,
                 exact_nll=exact_nll,
                 recurrent_nll=recurrent_nll,
-                vanilla_nll=vanilla_nll,
+                standard_k1_nll=standard_k1_nll,
                 recurrent_minus_exact=recurrent_nll - exact_nll,
-                recurrent_minus_vanilla=recurrent_nll - vanilla_nll,
+                recurrent_minus_standard_k1=recurrent_nll - standard_k1_nll,
                 hidden_delta_rms=hidden_rms[horizon - 1],
                 hidden_cosine=hidden_cosine[horizon - 1],
             )
         )
+
+    by_mode = {}
+    for name, offsets in scores.items():
+        total = NLLAccumulator()
+        for offset in offsets:
+            total.merge(offset)
+        by_mode[name] = total
 
     return RecurrentEvaluationResult(
         prefill_passes=prefill_passes,
@@ -221,7 +211,21 @@ def evaluate_recurrent_continuation(
         horizons=tuple(horizon_results),
         exact_nll_by_offset=exact_offset,
         recurrent_nll_by_offset=recurrent_offset,
-        vanilla_nll_by_offset=vanilla_offset,
+        standard_k1_nll_by_offset=standard_k1_offset,
         hidden_delta_rms_by_step=hidden_rms,
         hidden_cosine_by_step=hidden_cosine,
+        predicted_tokens_by_offset=tuple(prediction_count_by_offset),
+        nll_by_source_by_mode={name: total.by_source for name, total in by_mode.items()},
+        predicted_tokens_by_source=dict(sorted(by_mode["exact"].source_tokens.items())),
+        evaluation=packed_evaluation_metadata(
+            model, dataset, device=device, autocast_dtype=autocast_dtype, blocks=limit,
+            policy={
+                "modes": ["exact_incremental", "feedback", "standard_k1"],
+                "prefill_passes": prefill_passes, "standard_prefill_passes": 1,
+                "prompt_tokens": prompt_tokens, "continuation_tokens": continuation_tokens,
+                "initialization": "data_prefix", "teacher_forced": True,
+                "generation": False,
+            },
+            target_coverage="linguistic_tokens_in_continuation; prompt_unscored; no_added_bos",
+        ),
     )

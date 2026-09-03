@@ -1,5 +1,26 @@
 # Precision contract
 
+Trainer validation and standalone NLL, pass-depth, continuation, intervention,
+and downstream evaluation now use the same evaluation context. The command-line
+default inherits the experiment's `autocast_dtype`; `--autocast-dtype float32`
+disables autocast and `--autocast-dtype bfloat16` requests BF16 explicitly.
+Overrides do not change the training config used to identify a checkpoint.
+
+Selected-checkpoint BOS feedback uses `feedback_eval_autocast_dtype`:
+`config` (default), `float32` or `bfloat16`. This can differ explicitly from
+routine validation precision. Reports record both the actual setting and target
+coverage; a precision change creates a separate durable report on retry.
+
+Results record the resolved device, parameter dtypes, autocast setting and FP32
+loss reduction. Compare scores at the same precision. A BF16 CUDA experiment
+evaluated on CPU needs an explicit `--autocast-dtype float32` override; unsupported
+precision requests fail rather than silently changing compute mode.
+
+Direct Python evaluator calls have no experiment config: pass `autocast_dtype`
+explicitly, or use their default of no autocast. The context restores model
+training mode on success and failure. Hardware speed and numerical qualification
+remain separate from these shared execution rules.
+
 `dtype` is the **learned-parameter storage dtype**. Existing MPS development
 runs remain FP32.
 

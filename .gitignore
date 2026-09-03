@@ -36,15 +36,16 @@ data/dolmino/gpu_2048_long_2p5b/*
 !data/dolmino/stage_6_evaluation_2048/
 data/dolmino/stage_6_evaluation_2048/*
 !data/dolmino/stage_6_evaluation_2048/config.yaml
-!data/dolmino/paper_1024/
-data/dolmino/paper_1024/*
-!data/dolmino/paper_1024/config.yaml
 
 # Training outputs remain colocated with their study/control but are not source.
 # Keep the results README files visible, while ignoring every run directory or
 # result file directly below the owning results directory.
 benchmarks/**/results/*
 !benchmarks/**/results/README.md
+
+# Small reference timing reports, not checkpoints or raw training runs.
+!benchmarks/development/inference_efficiency/results/inference_efficiency_verda_a6000.json
+!benchmarks/development/inference_efficiency/results/inference_efficiency_verda_a6000_bf16.json
 
 # Historical protocols and small summaries are source. Raw run payloads remain
 # ignored by the general results rule above, regardless of study role.

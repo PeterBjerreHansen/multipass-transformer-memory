@@ -11,10 +11,14 @@ from typing import Any
 import torch
 from safetensors.torch import load_file as load_safetensors
 
+from .snapshots import snapshot_metadata as read_snapshot_metadata
+from .durable import fsync_directory as _fsync_directory
+
 from ..config import (
     ExperimentConfig,
     canonical_memory_write_mode,
     canonical_variant_name,
+    reject_removed_paper_policy,
 )
 
 
@@ -41,6 +45,7 @@ _INIT_ARCHITECTURE_FIELDS = (
     "recirculation_destination_layer",
     "recirculation_alpha",
     "recirculation_mode",
+    "recurrent_merger",
 )
 
 _HISTORICAL_VARIANT_NAMES = {
@@ -79,6 +84,7 @@ _INIT_ARCHITECTURE_DEFAULTS = {
     "recirculation_destination_layer": None,
     "recirculation_alpha": 0.1,
     "recirculation_mode": "fixed",
+    "recurrent_merger": None,
 }
 
 
@@ -115,16 +121,6 @@ def restore_rng_state(state: dict[str, Any]) -> None:
         torch.cuda.set_rng_state_all(state["torch_cuda"])
     if "torch_mps" in state and torch.backends.mps.is_available():
         torch.mps.set_rng_state(state["torch_mps"])
-
-
-def _fsync_directory(path: Path) -> None:
-    if os.name == "nt":
-        return
-    fd = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
 
 
 def _durable_replace_bytes(path: Path, data: bytes) -> None:
@@ -376,6 +372,7 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
     # Canonicalize historical generic pass-weight names and discard fields
     # that are no longer part of the current experiment schema. This keeps
     # exact resume viable for older checkpoints.
+    reject_removed_paper_policy(config)
     canonical = dict(config)
     if "ntp_pass_loss_weights" not in canonical:
         canonical["ntp_pass_loss_weights"] = canonical.get("pass_loss_weights")
@@ -383,9 +380,8 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
         canonical["ntp_pass_loss_weights_by_k"] = canonical.get("pass_loss_weights_by_k")
     canonical.setdefault("fbt_normalize_gate_input", False)
     canonical.setdefault("fbt_latent_jitter_std", 0.0)
+    canonical.setdefault("recurrent_merger", None)
     canonical.setdefault("training_forward", "parallel_multipass")
-    canonical.setdefault("recirculation_activation_checkpointing", False)
-    canonical.setdefault("recirculation_bptt_truncate_tokens", None)
     canonical.setdefault("freeze_pretrained_until_tokens", 0)
     canonical.setdefault("pretrained_weight_decay", None)
     canonical.setdefault("added_weight_decay", None)
@@ -414,6 +410,8 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
         "eval_every_tokens",
         "eval_batches",
         "eval_passes",
+        "eval_prefill_passes",
+        "eval_decode_mode",
         "validation_forward",
         "train_log_every_tokens",
         "early_stop",
@@ -421,6 +419,9 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
         "checkpoint_every_seconds",
         "checkpoint_keep_last",
         "snapshot_at_tokens",
+        "feedback_eval_at_tokens",
+        "feedback_eval_max_blocks",
+        "feedback_eval_autocast_dtype",
     }
     schedule = canonical.get("lr_schedule")
     schedule_type = "cosine" if schedule is None else str(schedule.get("type", "cosine"))
@@ -460,6 +461,7 @@ def _init_compatibility_view(config: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(
             "init_from checkpoint is missing a semantic experiment configuration"
         )
+    reject_removed_paper_policy(config)
     view = {
         field: config.get(field, _INIT_ARCHITECTURE_DEFAULTS.get(field))
         for field in _INIT_ARCHITECTURE_FIELDS
@@ -494,6 +496,7 @@ def _validate_payload(
     pass_scheduler=None,
 ) -> None:
     _require_payload(payload)
+    reject_removed_paper_policy(payload["experiment_config"])
     if (
         expected_manifest_sha256 is not None
         and payload["data_manifest_sha256"] != expected_manifest_sha256
@@ -529,21 +532,23 @@ def load_model_weights(
     if source_path.suffix == ".safetensors":
         source_format = "safetensors_snapshot"
         checkpoint_state = load_safetensors(str(source_path), device="cpu")
-        metadata_path = source_path.with_suffix(".json")
-        if not metadata_path.is_file():
-            raise ValueError(
-                f"initialization snapshot is missing metadata: {metadata_path}"
-            )
-        snapshot_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        run_path = source_path.parent.parent / "run.json"
-        if not run_path.is_file():
-            raise ValueError(
-                f"initialization snapshot is missing source run metadata: {run_path}"
-            )
-        source_run = json.loads(run_path.read_text(encoding="utf-8"))
-        source_config = source_run.get("config")
+        snapshot_metadata = read_snapshot_metadata(source_path)
+        if snapshot_metadata is not None:
+            source_config = snapshot_metadata["experiment_config"]
+        else:
+            # Legacy two-file snapshots remain readable, but are not treated as
+            # committed when their sidecar or source-run config is absent.
+            metadata_path = source_path.with_suffix(".json")
+            if not metadata_path.is_file():
+                raise ValueError(f"initialization snapshot is missing metadata: {metadata_path}")
+            snapshot_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            run_path = source_path.parent.parent / "run.json"
+            if not run_path.is_file():
+                raise ValueError(f"initialization snapshot is missing source run metadata: {run_path}")
+            source_run = json.loads(run_path.read_text(encoding="utf-8"))
+            source_config = source_run.get("config")
         if not isinstance(source_config, dict):
-            raise ValueError("initialization snapshot run.json has no experiment config")
+            raise ValueError("initialization snapshot has no experiment config")
         source_train_state = {
             key: snapshot_metadata[key]
             for key in (

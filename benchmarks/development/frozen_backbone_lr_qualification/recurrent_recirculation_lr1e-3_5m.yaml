@@ -1,13 +1,12 @@
-variant: recirculation
+variant: recurrent_memory
 phase: A
 training_forward: parallel_multipass
-recirculation_mode: adaptive
-recirculation_source_layer: 6
-recirculation_destination_layer: 3
-recirculation_alpha: 0.1
+recurrent_merger: recirculation
+memory_window: 1
+memory_layers: [3]
 model_dir: checkpoints/TinyMistral-248M-v3
 data_dir: data/dolmino/gpu_2048
-output_dir: benchmarks/development/frozen_backbone_lr_qualification/results/recirculation_lr1e-4_5m
+output_dir: benchmarks/development/frozen_backbone_lr_qualification/results/recurrent_recirculation_lr1e-3_5m
 device: cuda
 dtype: float32
 autocast_dtype: bfloat16
@@ -18,7 +17,7 @@ batch_size: 8
 grad_accum_steps: 4
 max_unique_tokens: 5013504
 learning_rate: 1.0e-6
-added_learning_rate: 1.0e-4
+added_learning_rate: 1.0e-3
 lr_schedule: {type: constant}
 weight_decay: 1.0e-4
 grad_clip: 1.0

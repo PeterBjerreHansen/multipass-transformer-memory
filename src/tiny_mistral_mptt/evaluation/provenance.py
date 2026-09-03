@@ -112,7 +112,7 @@ def load_evaluation_weights(
     }
 
 
-def _package_versions() -> dict[str, str | None]:
+def package_versions() -> dict[str, str | None]:
     versions: dict[str, str | None] = {}
     versions["python"] = platform.python_version()
     for distribution in (
@@ -139,6 +139,7 @@ def evaluation_provenance(
     seeds: dict[str, int],
     evaluation_data_dir: str | Path | None = None,
     suite_path: str | Path | None = None,
+    tokenizer_path: str | Path | None = None,
 ) -> dict[str, Any]:
     config_path = Path(config_path)
     normalized_config = config.to_dict()
@@ -151,7 +152,7 @@ def evaluation_provenance(
         "seeds": {name: int(value) for name, value in seeds.items()},
         "source": source_provenance(REPOSITORY_ROOT),
         "hardware": hardware_provenance(device),
-        "package_versions": _package_versions(),
+        "package_versions": package_versions(),
     }
     if evaluation_data_dir is not None:
         data_dir = Path(evaluation_data_dir)
@@ -166,6 +167,12 @@ def evaluation_provenance(
         result["suite"] = {
             "path": str(suite.resolve()),
             "sha256": file_sha256(suite),
+        }
+    if tokenizer_path is not None:
+        tokenizer = Path(tokenizer_path)
+        result["tokenizer"] = {
+            "path": str(tokenizer.resolve()),
+            "sha256": file_sha256(tokenizer),
         }
     return result
 

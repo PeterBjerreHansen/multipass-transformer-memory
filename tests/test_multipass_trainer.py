@@ -143,7 +143,8 @@ def test_integrated_freeze_unfreezes_without_resetting_added_optimizer_state(
         recirculation_source_layer=1,
         recirculation_destination_layer=0,
         recirculation_mode="adaptive",
-        training_forward="recirculation_bptt",
+        training_forward="parallel_multipass",
+        pass_schedule=[{"probabilities": {2: 1.0}}],
         freeze_pretrained_until_tokens=16,
         phase="B",
         model_dir="unused",
@@ -214,54 +215,6 @@ def test_integrated_freeze_unfreezes_without_resetting_added_optimizer_state(
     ]
     train_records = [record for record in records if record["event"] == "train"]
     assert [record["backbone_frozen"] for record in train_records] == [True, True, False, False]
-
-
-def test_trainer_backpropagates_tbptt_chunks_before_advancing(tmp_path):
-    data_dir = tmp_path / "data-tbptt"
-    make_artifact(data_dir)
-    train = PackedTokenDataset(data_dir, "train")
-    val = PackedTokenDataset(data_dir, "validation")
-    model = make_adaptive_recirculation()
-    cfg = ExperimentConfig(
-        variant="recirculation",
-        recirculation_source_layer=1,
-        recirculation_destination_layer=0,
-        recirculation_mode="adaptive",
-        training_forward="recirculation_bptt",
-        recirculation_activation_checkpointing=True,
-        recirculation_bptt_truncate_tokens=2,
-        phase="A",
-        model_dir="unused",
-        data_dir=str(data_dir),
-        output_dir=str(tmp_path / "tbptt"),
-        device="cpu",
-        attention_backend="reference",
-        max_unique_tokens=8,
-        batch_size=1,
-        grad_accum_steps=1,
-        added_learning_rate=1e-3,
-        lr_schedule={"type": "constant"},
-        pass_schedule=[{"probabilities": {1: 1.0}}],
-        eval_every_tokens=0,
-        eval_batches=0,
-        checkpoint_every_tokens=0,
-    )
-
-    state = Trainer(
-        model=model,
-        config=cfg,
-        train_data=train,
-        validation_data=val,
-        device=torch.device("cpu"),
-    ).train()
-
-    assert state.optimizer_steps == 1
-    records = [
-        json.loads(line)
-        for line in (tmp_path / "tbptt" / "metrics.jsonl").read_text().splitlines()
-    ]
-    train_record = next(record for record in records if record["event"] == "train")
-    assert train_record["recirculation_bptt_truncate_tokens"] == 2.0
 
 
 def test_training_journal_can_aggregate_over_token_intervals(tmp_path):

@@ -44,6 +44,7 @@ SUPPORTED_VARIANTS = {
     "fbt",
     "memory_add",
     "recirculation",
+    "recurrent_memory",
     "bank",
     "bank_multiscale",
     "bank_add_hybrid",
@@ -79,8 +80,24 @@ MULTISCALE_MEMORY_ATTENTION_VARIANTS = {
 }
 SUPPORTED_LR_SCHEDULES = {"constant", "cosine", "piecewise_linear"}
 SUPPORTED_AUTOCAST_DTYPES = {"bfloat16"}
-SUPPORTED_TRAINING_FORWARDS = {"parallel_multipass", "recirculation_bptt"}
-SUPPORTED_VALIDATION_FORWARDS = {"parallel_multipass", "paper_recirculation"}
+SUPPORTED_TRAINING_FORWARDS = {"parallel_multipass"}
+SUPPORTED_VALIDATION_FORWARDS = {"parallel_multipass"}
+
+
+def reject_removed_paper_policy(raw: dict[str, Any]) -> None:
+    """Reject removed execution policies; permit neutral legacy metadata only."""
+    if (
+        raw.get("training_forward") == "recirculation_bptt"
+        or raw.get("validation_forward") == "paper_recirculation"
+    ):
+        raise ValueError("paper_recirculation and its BPTT/TBPTT policy have been removed")
+    for field, neutral in (
+        ("recirculation_activation_checkpointing", False),
+        ("recirculation_bptt_truncate_tokens", None),
+    ):
+        if field in raw and raw[field] is not neutral:
+            raise ValueError(f"{field} belongs to the removed paper replay policy")
+
 
 
 def _coerce_pass_probabilities(raw: Any) -> dict[int, float]:
@@ -327,6 +344,10 @@ class ExperimentConfig:
     eval_every_tokens: int = 32_768
     eval_batches: int = 16
     eval_passes: int = 1
+    # Downstream initialization and continuation are independent parameters.
+    # None inherits eval_passes / the loaded model's feedback capability.
+    eval_prefill_passes: int | None = None
+    eval_decode_mode: str | None = None
     validation_forward: str = "parallel_multipass"
     # Zero preserves the historical per-update training journal. Long runs
     # should set this to a larger token interval; validation and checkpoint
@@ -337,15 +358,15 @@ class ExperimentConfig:
     checkpoint_every_seconds: float = 0.0
     checkpoint_keep_last: int = 2
     snapshot_at_tokens: list[int] | None = None
+    # Opt-in expensive validation, only at selected planned snapshot thresholds.
+    feedback_eval_at_tokens: list[int] | None = None
+    feedback_eval_max_blocks: int = 1
+    feedback_eval_autocast_dtype: str = "config"
 
     # Architecture/training protocol knobs. Explicit NTP names and historical
     # bank field names remain serialized for checkpoint compatibility.
     phase: str = "B"
     training_forward: str = "parallel_multipass"
-    recirculation_activation_checkpointing: bool = False
-    # None is paper-faithful full BPTT. A positive value explicitly selects a
-    # truncated-gradient approximation while preserving the forward KV state.
-    recirculation_bptt_truncate_tokens: int | None = None
     # In an integrated retrofit run, added parameters train immediately while
     # pretrained parameters remain frozen up to this linguistic-token count.
     # The optimizer contains both groups from the start, so the transition does
@@ -383,6 +404,8 @@ class ExperimentConfig:
     recirculation_destination_layer: int | None = None
     recirculation_alpha: float = 0.1
     recirculation_mode: str = "fixed"
+    # Late emitted memory, read at memory_layers; no paper-replay policy.
+    recurrent_merger: str | None = None
 
     # ``resume_from`` restores the exact run. ``init_from`` loads model weights
     # only and begins a fresh trajectory/optimizer/data schedule.
@@ -417,6 +440,8 @@ class ExperimentConfig:
             self.pass_loss_weights_by_k = self.ntp_pass_loss_weights_by_k
         if self.snapshot_at_tokens is not None:
             self.snapshot_at_tokens = sorted({int(value) for value in self.snapshot_at_tokens})
+        if self.feedback_eval_at_tokens is not None:
+            self.feedback_eval_at_tokens = sorted({int(value) for value in self.feedback_eval_at_tokens})
         self.early_stop = _coerce_early_stop(self.early_stop)
         if self.variant in MEMORY_ATTENTION_VARIANTS:
             self.memory_layers = _coerce_layer_indices(
@@ -478,22 +503,14 @@ class ExperimentConfig:
         return self.ntp_loss_weights_for_passes(passes)
 
     def validate(self) -> None:
+        reject_removed_paper_policy(self.to_dict())
         if self.variant not in SUPPORTED_VARIANTS:
             raise ValueError(f"variant must be one of {sorted(SUPPORTED_VARIANTS)}; got {self.variant!r}")
         if self.phase not in {"A", "B"}:
             raise ValueError("phase must be 'A' or 'B'")
         if self.training_forward not in SUPPORTED_TRAINING_FORWARDS:
             raise ValueError(
-                "training_forward must be parallel_multipass or recirculation_bptt"
-            )
-        if not isinstance(self.recirculation_activation_checkpointing, bool):
-            raise ValueError("recirculation_activation_checkpointing must be boolean")
-        if (
-            self.recirculation_bptt_truncate_tokens is not None
-            and self.recirculation_bptt_truncate_tokens < 2
-        ):
-            raise ValueError(
-                "recirculation_bptt_truncate_tokens must be at least 2"
+                "training_forward must be parallel_multipass"
             )
         if self.freeze_pretrained_until_tokens < 0:
             raise ValueError("freeze_pretrained_until_tokens must be non-negative")
@@ -552,19 +569,14 @@ class ExperimentConfig:
             raise ValueError("train_log_every_tokens must be non-negative")
         if self.eval_passes < 1:
             raise ValueError("eval_passes must be positive")
+        if self.eval_prefill_passes is not None and self.eval_prefill_passes < 1:
+            raise ValueError("eval_prefill_passes must be positive when provided")
+        if self.eval_decode_mode not in {None, "standard", "feedback"}:
+            raise ValueError("eval_decode_mode must be standard or feedback")
         if self.validation_forward not in SUPPORTED_VALIDATION_FORWARDS:
             raise ValueError(
-                "validation_forward must be parallel_multipass or paper_recirculation"
+                "validation_forward must be parallel_multipass"
             )
-        if self.validation_forward == "paper_recirculation":
-            if self.variant != "recirculation":
-                raise ValueError(
-                    "paper_recirculation validation requires variant=recirculation"
-                )
-            if self.eval_passes != 1:
-                raise ValueError(
-                    "paper_recirculation validation has no multipass K axis; use eval_passes=1"
-                )
         self.early_stop = _coerce_early_stop(self.early_stop)
         if self.early_stop is not None:
             if self.eval_every_tokens <= 0:
@@ -593,8 +605,19 @@ class ExperimentConfig:
         if self.snapshot_at_tokens is not None:
             if any(value <= 0 or value > self.max_unique_tokens for value in self.snapshot_at_tokens):
                 raise ValueError("snapshot_at_tokens values must lie in (0, max_unique_tokens]")
+        if not set(self.feedback_eval_at_tokens or []) <= set(self.snapshot_at_tokens or []):
+            raise ValueError("feedback_eval_at_tokens must select thresholds from snapshot_at_tokens")
+        if self.feedback_eval_max_blocks < 1:
+            raise ValueError("feedback_eval_max_blocks must be positive")
+        if self.feedback_eval_autocast_dtype not in {"config", "float32", "bfloat16"}:
+            raise ValueError("feedback_eval_autocast_dtype must be config, float32 or bfloat16")
         if self.memory_window <= 0:
             raise ValueError("memory_window must be positive")
+        if self.variant == "recurrent_memory":
+            if self.recurrent_merger not in {"projected_residual", "recirculation"}:
+                raise ValueError("recurrent_merger must be projected_residual or recirculation")
+        elif self.recurrent_merger is not None:
+            raise ValueError("recurrent_merger requires variant=recurrent_memory")
 
         recirculation_variants = {
             "recirculation",
@@ -709,6 +732,18 @@ class ExperimentConfig:
                 raise ValueError(
                     "Multiscale Memory Attention requires memory_position_encoding: rope|none"
                 )
+        elif self.variant == "recurrent_memory":
+            if self.memory_layers is None or self.memory_layers == "all":
+                raise ValueError("recurrent memory_layers must be an explicit non-empty list")
+            self.memory_layers = _coerce_layer_indices(
+                self.memory_layers, field_name="memory_layers"
+            )
+            if any(value is not None for value in (
+                self.memory_write_mode, self.memory_write_stride,
+                self.memory_token_visibility, self.memory_position_encoding,
+                self.memory_dense_window, self.memory_sparse_window, self.memory_sparse_stride,
+            )) or self.memory_window != 1:
+                raise ValueError("recurrent memory retains one dense record; attention memory controls do not apply")
         elif (
             self.memory_write_mode is not None
             or self.memory_write_stride is not None
@@ -760,28 +795,6 @@ class ExperimentConfig:
             raise ValueError("fbt_* fields are supported only for variant=fbt")
         schedule = self.normalized_pass_schedule()
         pass_counts = {passes for stage in schedule for passes in stage["probabilities"]}
-        if self.training_forward == "recirculation_bptt":
-            if self.variant != "recirculation":
-                raise ValueError(
-                    "recirculation_bptt is implemented only for variant=recirculation"
-                )
-            if pass_counts != {1}:
-                raise ValueError(
-                    "recirculation_bptt uses pass_schedule K=1; K is not a diagonal-recurrence axis"
-                )
-            if (
-                self.ntp_pass_loss_weights is not None
-                or self.ntp_pass_loss_weights_by_k is not None
-            ):
-                raise ValueError("recirculation_bptt does not use multipass loss weights")
-        elif self.recirculation_activation_checkpointing:
-            raise ValueError(
-                "recirculation_activation_checkpointing requires recirculation_bptt"
-            )
-        elif self.recirculation_bptt_truncate_tokens is not None:
-            raise ValueError(
-                "recirculation_bptt_truncate_tokens requires recirculation_bptt"
-            )
         single_pass_variants = {"vanilla", "sparse_swa", "swa_transformer", "strided_attention"}
         if self.variant in single_pass_variants and pass_counts != {1}:
             raise ValueError(f"{self.variant} supports only one-pass training")
@@ -821,6 +834,11 @@ class ExperimentConfig:
                     )
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ExperimentConfig":
+        reject_removed_paper_policy(raw)
+        raw = dict(raw)
+        # Older multipass run.json/checkpoints serialized these unused defaults.
+        raw.pop("recirculation_activation_checkpointing", None)
+        raw.pop("recirculation_bptt_truncate_tokens", None)
         known = set(cls.__dataclass_fields__)
         unknown = sorted(set(raw) - known)
         if unknown:

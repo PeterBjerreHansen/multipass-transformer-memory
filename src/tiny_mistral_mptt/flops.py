@@ -434,6 +434,7 @@ def estimate_pass(
     sparse_attention_window: int | None = None,
     sparse_attention_layers: Iterable[int] | str = "all",
     recirculation_mode: str = "fixed",
+    recurrent_merger: str | None = None,
 ) -> PassFlopEstimate:
     """Estimate forward/training FLOPs for one fixed K-pass optimizer step."""
     variant = canonical_variant_name(str(variant))
@@ -447,6 +448,7 @@ def estimate_pass(
         "sparse_swa",
         "memory_add",
         "recirculation",
+        "recurrent_memory",
         *MEMORY_ATTENTION_VARIANTS,
     }:
         raise ValueError(f"unsupported variant {variant!r}")
@@ -543,6 +545,25 @@ def estimate_pass(
         adaptive_recirculation=recirculation_mode == "adaptive",
     )
     per_pass_extra = bank + recurrent
+    if variant == "recurrent_memory":
+        if recurrent_merger not in {"projected_residual", "recirculation"}:
+            raise ValueError("recurrent_merger must be projected_residual or recirculation")
+        if memory_layers == "all":
+            raise ValueError("recurrent memory_layers must be an explicit non-empty list")
+        layers = tuple(memory_layers)
+        if not layers or len(set(layers)) != len(layers) or any(
+            layer < 0 or layer >= config.num_hidden_layers for layer in layers
+        ):
+            raise ValueError("recurrent memory_layers must be unique valid decoder indices")
+        linear = _linear_flops(physical_length, config.hidden_size, config.hidden_size)
+        # One shared late writer, then one merger at each declared read layer.
+        per_pass_extra = FlopBreakdown(
+            bank_writer=linear,
+            recurrent_controller=len(layers) * linear * (
+                5 if recurrent_merger == "recirculation" else 2
+            ),
+            recurrent_projection=(len(layers) * linear if recurrent_merger == "projected_residual" else 0),
+        )
     total = FlopBreakdown()
     for pass_index in range(passes):
         total = total + base
@@ -577,6 +598,7 @@ def estimate_schedule(
     sparse_attention_window: int | None = None,
     sparse_attention_layers: Iterable[int] | str = "all",
     recirculation_mode: str = "fixed",
+    recurrent_merger: str | None = None,
 ) -> ScheduledFlopEstimate:
     """Estimate a pass schedule and normalize it to SWA Transformer K=1."""
     if not pass_probabilities:
@@ -609,6 +631,7 @@ def estimate_schedule(
             sparse_attention_window=sparse_attention_window,
             sparse_attention_layers=sparse_attention_layers,
             recirculation_mode=recirculation_mode,
+            recurrent_merger=recurrent_merger,
         )
         for passes in probabilities
     }
@@ -631,81 +654,4 @@ def estimate_schedule(
         weighted_training_flops=weighted_training,
         baseline_training_flops=baseline,
         relative_training_flops=weighted_training / baseline,
-    )
-
-
-def estimate_recirculation_bptt(
-    config: MistralConfig,
-    *,
-    linguistic_sequence_length: int,
-    source_layer: int,
-    destination_layer: int,
-    recirculation_mode: str = "fixed",
-    activation_checkpointing: bool = False,
-) -> ScheduledFlopEstimate:
-    """Estimate the paper's ordinary-readout plus upper-stack replay forward.
-
-    This is not represented as K=2: the replay starts above the destination
-    layer and does not run a second LM head. Activation checkpointing adds one
-    forward recomputation to the conventional forward-plus-backward estimate.
-    TBPTT boundary savings are deliberately not discounted, making this a
-    conservative dominant-matmul estimate for finite truncation windows.
-    """
-    sequence_length = _validate_positive(
-        "linguistic_sequence_length", linguistic_sequence_length
-    )
-    layers = int(config.num_hidden_layers)
-    source_layer = int(source_layer)
-    destination_layer = int(destination_layer)
-    if not 0 <= destination_layer < source_layer < layers:
-        raise ValueError(
-            "recirculation BPTT FLOPs require 0 <= destination < source < layers"
-        )
-    if recirculation_mode not in {"fixed", "adaptive"}:
-        raise ValueError("recirculation_mode must be fixed or adaptive")
-
-    key_valid = (True,) * sequence_length
-    ordinary = _backbone_pass_breakdown(config, key_valid=key_valid)
-    replayed_layers = layers - destination_layer - 1
-    replay = _backbone_pass_breakdown(
-        config,
-        key_valid=key_valid,
-        layer_count=replayed_layers,
-        include_lm_head=False,
-    )
-    controller = _recurrent_breakdown(
-        config,
-        sequence_length=sequence_length,
-        variant="recirculation",
-        adaptive_recirculation=recirculation_mode == "adaptive",
-    )
-    estimate = PassFlopEstimate(
-        variant="recirculation",
-        passes=1,
-        linguistic_sequence_length=sequence_length,
-        physical_sequence_length=sequence_length,
-        memory_positions=0,
-        bank_write_positions=0,
-        forward=ordinary + replay + controller,
-        training_forward="recirculation_bptt",
-        training_multiplier=(
-            BACKWARD_MULTIPLIER + 1
-            if activation_checkpointing
-            else BACKWARD_MULTIPLIER
-        ),
-    )
-    baseline = estimate_pass(
-        config,
-        variant="vanilla",
-        passes=1,
-        linguistic_sequence_length=sequence_length,
-    ).training_flops
-    return ScheduledFlopEstimate(
-        variant="recirculation",
-        pass_probabilities={1: 1.0},
-        pass_estimates={1: estimate},
-        weighted_forward_flops=float(estimate.forward_flops),
-        weighted_training_flops=float(estimate.training_flops),
-        baseline_training_flops=baseline,
-        relative_training_flops=estimate.training_flops / baseline,
     )

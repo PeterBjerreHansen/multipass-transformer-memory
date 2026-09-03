@@ -18,7 +18,7 @@ def autocast_context(
     device: torch.device | str,
     dtype: str | None,
 ) -> AbstractContextManager:
-    """Return the configured training autocast context.
+    """Return the configured training/evaluation autocast context.
 
     Learned parameters remain FP32 when this is used through ``ExperimentConfig``.
     BF16 autocast is supported on CUDA and is exposed on MPS when the installed

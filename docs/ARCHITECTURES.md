@@ -55,7 +55,21 @@ x_t = e_t + W_A RMSNorm(h^(k-1)_(t-1))
 `W_A` is bias-free and zero-initialized. Position zero receives a zero recurrent
 residual.
 
-## Recirculation
+## Recurrent memory
+
+`RecurrentMemoryVariant` uses the same late writer as Memory Attention, reads
+only the preceding token's previous-pass memory, and selects one of two mergers
+with `recurrent_merger: projected_residual|recirculation`. Reads occur after
+self-attention and before the MLP at `memory_layers`. The active study uses
+`memory_layers: [3]` and `memory_window: 1`. See
+[RECURRENT_MEMORY.md](RECURRENT_MEMORY.md) for initialization, gradient flow,
+comparison limits, and inference semantics.
+
+## Legacy middle-layer recirculation
+
+This shifted multipass implementation remains for historical configs and
+checkpoint compatibility. Its same-token paper replay/BPTT implementation has
+been deleted. New recurrent comparisons use the late-memory contract above.
 
 `RecirculationVariant` captures the output of a configured source decoder
 layer and, on later passes, right-shifts it by one position before mixing it

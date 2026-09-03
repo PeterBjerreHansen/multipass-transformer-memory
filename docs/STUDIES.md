@@ -8,6 +8,13 @@ namespaces. `benchmarks/historical/` preserves superseded manifests and raw
 artifacts, but the verifier does not discover or reinterpret them. Historical
 configs deliberately retain the paths recorded when they ran.
 
+The active scientific manifests are the frozen comparison and its LR
+qualification. The old 1024-token studies, including the earlier frozen study,
+have been deleted along with their preparation recipe. A diagnostic directory without `STUDY.yaml` does
+not count as a scientific study. No replacement unfrozen study has been added.
+Completed cleanup and remaining additions are tracked in
+[CLEANUP_STATUS.md](CLEANUP_STATUS.md).
+
 A development or core study has the following shape:
 
 ```text

@@ -12,8 +12,10 @@ from typing import Any
 import yaml
 
 from tiny_mistral.config import MistralConfig, tiny_mistral_248m_config
-from tiny_mistral_mptt.flops import estimate_recirculation_bptt, estimate_schedule
-from tiny_mistral_mptt.config import canonical_variant_name, load_experiment_config
+from tiny_mistral_mptt.flops import estimate_schedule
+from tiny_mistral_mptt.config import (
+    canonical_variant_name, load_experiment_config, reject_removed_paper_policy,
+)
 from tiny_mistral_mptt.data.config import load_data_config
 from tiny_mistral_mptt.studies import verify_study
 
@@ -21,8 +23,6 @@ from tiny_mistral_mptt.studies import verify_study
 ARCHITECTURE_FIELDS = (
     "variant",
     "training_forward",
-    "recirculation_activation_checkpointing",
-    "recirculation_bptt_truncate_tokens",
     "sequence_length",
     "memory_window",
     "memory_write_mode",
@@ -37,6 +37,7 @@ ARCHITECTURE_FIELDS = (
     "sparse_attention_window",
     "sparse_attention_layers",
     "recirculation_mode",
+    "recurrent_merger",
     "recirculation_source_layer",
     "recirculation_destination_layer",
     "recirculation_alpha",
@@ -103,29 +104,14 @@ def _estimator_metadata(config: MistralConfig) -> dict[str, Any]:
         "model_config": config.to_dict(),
         "scope": "dominant dense/matmul FLOPs; excludes elementwise, masking, and optimizer arithmetic",
         "freeze_accounting": "conventional backward multiplier; not adjusted for frozen parameter gradients",
-        "activation_checkpointing": "Recirculation BPTT adds one forward recomputation",
     }
 
 
 def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[int, float]):
+    reject_removed_paper_policy(case)
     variant = str(case["variant"])
     implementation_variant = canonical_variant_name(variant)
     training_forward = str(case.get("training_forward", "parallel_multipass"))
-    if training_forward == "recirculation_bptt":
-        if implementation_variant != "recirculation" or int(case["passes"]) != 1:
-            raise ValueError(
-                "recirculation_bptt FLOP cases require recirculation with passes=1"
-            )
-        return estimate_recirculation_bptt(
-            config,
-            linguistic_sequence_length=int(case.get("sequence_length", 2048)),
-            source_layer=int(case["recirculation_source_layer"]),
-            destination_layer=int(case["recirculation_destination_layer"]),
-            recirculation_mode=str(case.get("recirculation_mode", "fixed")),
-            activation_checkpointing=bool(
-                case.get("recirculation_activation_checkpointing", False)
-            ),
-        )
     if training_forward != "parallel_multipass":
         raise ValueError(f"unknown training_forward {training_forward!r}")
     if implementation_variant in {"vanilla", "sparse_swa"}:
@@ -150,6 +136,7 @@ def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[i
         sparse_attention_window=case.get("sparse_attention_window"),
         sparse_attention_layers=case.get("sparse_attention_layers", "all"),
         recirculation_mode=str(case.get("recirculation_mode", "fixed")),
+        recurrent_merger=case.get("recurrent_merger"),
     )
 
 
@@ -172,9 +159,7 @@ def build_report(
         expected_passes = (
             {1}
             if (
-                str(first.get("training_forward", "parallel_multipass"))
-                == "recirculation_bptt"
-                or canonical_variant_name(str(first["variant"]))
+                canonical_variant_name(str(first["variant"]))
                 in {"vanilla", "sparse_swa"}
             )
             else set(schedule)
@@ -246,9 +231,7 @@ def build_study_report(
         case = {
             **experiment.to_dict(),
             "sequence_length": data.sequence_length,
-            "passes": 1
-            if experiment.training_forward == "recirculation_bptt"
-            else min(schedule),
+            "passes": min(schedule),
         }
         estimate = _estimate_case(model_config, case, schedule)
         per_sequence = float(estimate.weighted_training_flops)
@@ -315,7 +298,7 @@ def main() -> None:
         report = build_report(
             suite_path=(
                 args.suite
-                or Path("benchmarks/efficiency/suites/forward_modes.yaml")
+                or Path("benchmarks/efficiency/suites/training.yaml")
             ),
             config_path=args.model_config,
             schedule=_parse_schedule(args.schedule),

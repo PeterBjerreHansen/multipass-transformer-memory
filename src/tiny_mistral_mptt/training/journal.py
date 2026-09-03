@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .checkpoint import TrainState
+from .durable import fsync_directory
 
 
 def append_jsonl(path: str | Path, item: dict[str, Any], *, durable: bool = False) -> None:
@@ -25,7 +26,7 @@ def _record_is_committed(record: dict[str, Any], state: TrainState) -> bool:
             return int(record["optimizer_steps"]) <= state.optimizer_steps
         except (KeyError, TypeError, ValueError):
             return False
-    if event == "validation":
+    if event in {"validation", "feedback_validation"}:
         try:
             return int(record["unique_tokens_seen"]) <= state.unique_tokens_seen
         except (KeyError, TypeError, ValueError):
@@ -36,6 +37,21 @@ def _record_is_committed(record: dict[str, Any], state: TrainState) -> bool:
         except (TypeError, ValueError):
             return False
     return True
+
+
+def event_recorded(path: Path, event: str, **identity) -> bool:
+    if not path.exists():
+        return False
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (isinstance(record, dict) and record.get("event") == event
+                    and all(record.get(key) == value for key, value in identity.items())):
+                return True
+    return False
 
 
 def repair_metrics_to_checkpoint(path: str | Path, state: TrainState) -> dict[str, int]:
@@ -68,10 +84,5 @@ def repair_metrics_to_checkpoint(path: str | Path, state: TrainState) -> dict[st
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temporary, path)
-    if os.name != "nt":
-        fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+    fsync_directory(path.parent)
     return {"kept": len(kept), "dropped": dropped, "malformed": malformed}
