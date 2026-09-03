@@ -23,7 +23,7 @@ The active recurrent arms read at layer 3 (zero-based). Like Memory Attention,
 the read occurs after self-attention and before the MLP. The legacy recirculation
 arm inserted its mixture after the entire destination block, so the new baseline
 changes that placement as well as its source. Historical results must not be
-relabeled as results for the new baseline. Attention arms retain their existing
+relabeled as results for the new baseline. All active attention arms now use
 read layers `[3, 7]`; the overall comparison is not a pure access-pattern ablation.
 The two recurrent arms, however, have identical routing and differ only in merger.
 
@@ -51,7 +51,8 @@ d_new = alpha * norm_match(m, d) + beta * d
 The controller uses the existing two-hidden-layer GELU MLP and input LayerNorm.
 It starts at alpha=0.1 and beta=0.9; the coefficients are independent thereafter.
 Unlike the projected residual, this merger perturbs later passes at initialization.
-Report that initial condition rather than attributing all starting-loss differences
+Dedicated initial-baseline evaluation is deferred for the current frozen study.
+Keep this initial condition in mind rather than attributing all starting-loss differences
 to learning. This comparison selects a useful merger design; it does not isolate
 projection, residual preservation, gating, and initialization individually.
 
@@ -96,7 +97,7 @@ training and validation are removed from the codebase.
 ## Study and compatibility
 
 The frozen comparison contains these two recurrent arms plus dense, strided and
-multiscale Memory Attention. All use 2048-token blocks, identical training K
+dense-and-strided Memory Attention. All use 2048-token blocks, identical training K
 distributions and objectives, and K=4 headline NLL with K=1–4 diagnostics.
 Each of the five arms gets the same four-value LR qualification budget.
 
@@ -108,8 +109,8 @@ controller state-dict names remain unchanged by their shared-module extraction.
 Scheduled snapshots and interruption-recovery checkpoints retain their existing,
 separate policies. No training run was launched as part of this restructuring.
 
-Cleanup 3–4 fixes K=1 state conversion and shares evaluation precision, scoring
-and result identity. Snapshot publication is interruption-safe; see
-[CLEANUP_STATUS.md](CLEANUP_STATUS.md). Initial-state and K=4
-memory-use diagnostics are later additions. Both mergers already have a learned
-writer projection; this comparison does not isolate projection versus no projection.
+Both mergers already have a learned writer projection.
+This comparison does not isolate projection versus no projection.
+Use the existing simple ablations described in [evaluation](../evaluation/README.md).
+Initial-baseline evaluation and expanded, configurable-depth diagnostics remain
+deferred in the [development plan](DEVELOPMENT_PLAN.md).

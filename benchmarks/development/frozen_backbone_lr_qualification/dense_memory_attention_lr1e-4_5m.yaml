@@ -1,4 +1,4 @@
-variant: memory_attention
+variant: dense_memory_attention
 phase: A
 training_forward: parallel_multipass
 memory_window: 32

@@ -15,17 +15,21 @@ Research infrastructure must not change ordinary vanilla behavior silently.
 Baseline tests, HF-comparison scripts, and `VANILLA_SOURCE.sha256` are the
 guardrails.
 
+The terminology migration changes local K/V variable names and comments in the
+attention substrate, without changing its operations. The source manifest records
+these edits; numerical-equivalence tests still check behavior independently.
+
 The local cache API additionally accepts `detach_cache`. Its default remains
 `true`, preserving ordinary inference and multipass behavior. This generic
 substrate capability remains unchanged; the paper replay/BPTT caller has been
 deleted. Vanilla numerical-equivalence tests remain authoritative.
 
-Memory Attention and Strided Attention add two tested substrate capabilities. Self-attention K/V
+Memory Attention and Strided Self-Attention add two tested substrate capabilities. Self-attention K/V
 entries can carry a validity mask, and selected layers can use a bounded
 dense-recent/fixed-stride-old mask. Write-only `<MEM>` positions retain their
 physical, RoPE, and cache coordinates while remaining unavailable as K/V. An
 empty attention row returns exact zero in every backend. Ordinary layers retain
-the original local path, while Strided Attention reuses the pretrained projections.
+the original local path, while Strided Self-Attention reuses the pretrained projections.
 
 ## FBT architecture reference
 

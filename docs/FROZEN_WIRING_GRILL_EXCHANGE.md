@@ -1,5 +1,9 @@
 # Frozen-Wiring Experiments: Grill Exchange
 
+> Historical transcript. It includes superseded proposals and removed methods.
+> Use the [current documentation map](README.md) and [development plan](DEVELOPMENT_PLAN.md)
+> for the implemented contract and the latest user decisions.
+
 This transcript contains the substantive exchange about the frozen-wiring experiments. Internal tool-call payloads and environment metadata are omitted.
 
 ## Opening request

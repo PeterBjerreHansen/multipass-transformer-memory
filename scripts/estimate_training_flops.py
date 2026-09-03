@@ -25,6 +25,7 @@ ARCHITECTURE_FIELDS = (
     "training_forward",
     "sequence_length",
     "memory_window",
+    "memory_pattern",
     "memory_write_mode",
     "memory_write_stride",
     "memory_token_visibility",
@@ -38,6 +39,7 @@ ARCHITECTURE_FIELDS = (
     "sparse_attention_layers",
     "recirculation_mode",
     "recurrent_merger",
+    "recurrent_layers",
     "recirculation_source_layer",
     "recirculation_destination_layer",
     "recirculation_alpha",
@@ -114,7 +116,7 @@ def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[i
     training_forward = str(case.get("training_forward", "parallel_multipass"))
     if training_forward != "parallel_multipass":
         raise ValueError(f"unknown training_forward {training_forward!r}")
-    if implementation_variant in {"vanilla", "sparse_swa"}:
+    if implementation_variant in {"vanilla", "strided_self_attention"}:
         probabilities = {1: 1.0}
     else:
         probabilities = schedule
@@ -125,6 +127,7 @@ def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[i
         pass_probabilities=probabilities,
         linguistic_sequence_length=int(case.get("sequence_length", 2048)),
         memory_window=int(case.get("memory_window", 32)),
+        memory_pattern=case.get("memory_pattern"),
         memory_write_mode=case.get("memory_write_mode"),
         memory_write_stride=case.get("memory_write_stride"),
         memory_token_visibility=str(case.get("memory_token_visibility", "visible")),
@@ -137,6 +140,7 @@ def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[i
         sparse_attention_layers=case.get("sparse_attention_layers", "all"),
         recirculation_mode=str(case.get("recirculation_mode", "fixed")),
         recurrent_merger=case.get("recurrent_merger"),
+        recurrent_layers=case.get("recurrent_layers"),
     )
 
 
@@ -160,7 +164,7 @@ def build_report(
             {1}
             if (
                 canonical_variant_name(str(first["variant"]))
-                in {"vanilla", "sparse_swa"}
+                in {"vanilla", "strided_self_attention"}
             )
             else set(schedule)
         )
@@ -189,6 +193,7 @@ def build_report(
         rows.append(row)
     rows.sort(key=lambda row: (row["variant"], str(row["parameters"])))
     return {
+        "schema_version": 2,
         "estimator": {
             **_estimator_metadata(config),
             "schedule": {str(key): value for key, value in sorted(schedule.items())},

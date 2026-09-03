@@ -17,10 +17,9 @@ from tiny_mistral_mptt.data.packed_dataset import insert_memory_tokens
 from tiny_mistral_mptt.model_factory import load_variant
 from tiny_mistral_mptt.config import (
     reject_removed_paper_policy,
-    MEMORY_ATTENTION_VARIANTS,
-    MULTISCALE_MEMORY_ATTENTION_VARIANTS,
     canonical_memory_write_mode,
     canonical_variant_name,
+    resolve_memory_attention_pattern,
 )
 from tiny_mistral_mptt.precision import PrecisionNotSupportedError, autocast_context
 from tiny_mistral_mptt.training.phases import configure_phase
@@ -229,8 +228,13 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
     recirculation_mode = str(case.get("recirculation_mode", "fixed"))
     recurrent_merger = case.get("recurrent_merger")
 
-    is_bank = variant in MEMORY_ATTENTION_VARIANTS
-    if variant in MULTISCALE_MEMORY_ATTENTION_VARIANTS:
+    is_memory = implementation_variant == "memory_attention"
+    memory_pattern = case.get("memory_pattern")
+    recurrent_layers = case.get("recurrent_layers")
+    if is_memory:
+        memory_pattern, memory_write_mode = resolve_memory_attention_pattern(variant, memory_pattern, memory_write_mode)
+        memory_write_mode = canonical_memory_write_mode(memory_write_mode)
+    if is_memory and memory_pattern == "dense_and_strided":
         if any(
             value is not None
             for value in (
@@ -239,11 +243,11 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
                 memory_token_visibility,
             )
         ):
-            raise ValueError("Multiscale Memory Attention efficiency cases do not use memory_write_* fields")
+            raise ValueError("Dense-and-strided Memory Attention efficiency cases do not use memory_write_* fields")
         if min(memory_dense_window + memory_sparse_window, memory_sparse_stride) <= 0:
-            raise ValueError("Multiscale Memory Attention efficiency cases require valid retention fields")
+            raise ValueError("Dense-and-strided Memory Attention efficiency cases require valid retention fields")
         memory_window = memory_dense_window + memory_sparse_window
-    elif is_bank:
+    elif is_memory:
         if memory_write_mode not in {"dense", "periodic", "memory_token"}:
             raise ValueError("Memory Attention efficiency cases require memory_write_mode: dense|strided|memory_token")
         if memory_write_mode == "dense":
@@ -263,7 +267,7 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
 
     if passes not in WEIGHTS_BY_K:
         raise ValueError("efficiency benchmark currently supports K=1,2,3")
-    single_pass = implementation_variant in {"vanilla", "sparse_swa"}
+    single_pass = implementation_variant in {"vanilla", "strided_self_attention"}
     if training_forward != "parallel_multipass":
         raise ValueError("unknown efficiency training_forward")
     elif single_pass and passes != 1:
@@ -274,13 +278,13 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
         and passes < 2
     ):
         raise ValueError("multipass efficiency cases require passes>=2")
-    if implementation_variant == "sparse_swa" and (
+    if implementation_variant == "strided_self_attention" and (
         sparse_attention_stride is None
         or sparse_attention_stride <= 0
         or sparse_attention_window is None
         or sparse_attention_window <= 0
     ):
-        raise ValueError("sparse_swa efficiency cases require positive sparse attention fields")
+        raise ValueError("strided_self_attention efficiency cases require positive sparse attention fields")
     if min(sequence_length, batch_size, grad_accum_steps, measure_steps) <= 0 or warmup_steps < 0:
         raise ValueError(
             "sequence_length, batch_size, grad_accum_steps, and measure_steps must be positive"
@@ -307,6 +311,7 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
         "autocast_dtype": autocast_dtype,
         "attention_backend": attention_backend,
         "memory_window": memory_window,
+        "memory_pattern": memory_pattern,
         "memory_write_mode": memory_write_mode,
         "memory_write_stride": memory_write_stride,
         "memory_token_visibility": memory_token_visibility,
@@ -323,6 +328,7 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
         "recirculation_alpha": recirculation_alpha,
         "recirculation_mode": recirculation_mode,
         "recurrent_merger": recurrent_merger,
+        "recurrent_layers": recurrent_layers,
         "warmup_steps": warmup_steps,
         "measure_steps": measure_steps,
         "status": "running",
@@ -340,6 +346,7 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
             attention_backend=attention_backend,
             architecture_seed=4242,
             memory_window=memory_window,
+            memory_pattern=memory_pattern,
             memory_write_mode=memory_write_mode,
             memory_write_stride=memory_write_stride,
             memory_token_visibility=memory_token_visibility,
@@ -356,6 +363,7 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
             recirculation_alpha=recirculation_alpha,
             recirculation_mode=recirculation_mode,
             recurrent_merger=recurrent_merger,
+            recurrent_layers=recurrent_layers,
         )
         configure_phase(model, phase)
         model.train()

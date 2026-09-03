@@ -3,7 +3,7 @@ import torch
 
 from conftest import micro_config
 from tiny_mistral.modeling import MistralForCausalLM
-from tiny_mistral_mptt.feedback import HybridFeedbackState, BankState
+from tiny_mistral_mptt.feedback import HybridFeedbackState, MemoryAttentionState
 from tiny_mistral_mptt.inference import (
     exact_decode_step,
     prefill_exact,
@@ -11,8 +11,8 @@ from tiny_mistral_mptt.inference import (
     recurrent_decode_step,
     recurrent_from_exact,
 )
-from tiny_mistral_mptt.variants.bank import BankVariant
-from tiny_mistral_mptt.variants.bank_add_hybrid import BankAddHybridVariant
+from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionVariant
+from tiny_mistral_mptt.variants.memory_attention_recurrent_hybrid import MemoryAttentionRecurrentHybridVariant
 
 
 def make_model(*, mode="periodic", visibility="visible", hybrid=False):
@@ -21,9 +21,10 @@ def make_model(*, mode="periodic", visibility="visible", hybrid=False):
         micro_config(num_hidden_layers=2, sliding_window=4),
         attention_backend="reference",
     )
-    cls = BankAddHybridVariant if hybrid else BankVariant
+    cls = MemoryAttentionRecurrentHybridVariant if hybrid else MemoryAttentionVariant
     model = cls(
         backbone,
+        **({"recurrent_merger": "projected_residual", "recurrent_layers": [0]} if hybrid else {}),
         memory_window=3,
         memory_write_mode=mode,
         memory_write_stride=2,
@@ -35,7 +36,7 @@ def make_model(*, mode="periodic", visibility="visible", hybrid=False):
         for reader in model.memory_readers.values():
             reader.o_proj.weight.copy_(torch.eye(model.config.hidden_size))
         if hybrid:
-            model.memory_projection.weight.copy_(0.03 * torch.eye(model.config.hidden_size))
+            model.memory_mergers["0"].projection.weight.copy_(0.03 * torch.eye(model.config.hidden_size))
     return model.eval()
 
 
@@ -121,23 +122,23 @@ def test_recurrent_first_transition_matches_exact(hybrid, mode, visibility, pass
     torch.testing.assert_close(recurrent_after.last_hidden, exact_after.last_hidden, atol=8e-5, rtol=8e-5)
 
 
-def test_periodic_bank_state_is_bounded_and_only_commits_on_trigger():
+def test_periodic_memory_state_is_bounded_and_only_commits_on_trigger():
     model = make_model(mode="periodic")
     ids = sequence(model, "periodic")
     with torch.no_grad():
         state = prefill_recurrent(
             model, ids[:, :5], passes=2, decode_mode="feedback"
         )
-        assert isinstance(state.feedback_memory, BankState)
+        assert isinstance(state.feedback_memory, MemoryAttentionState)
         assert state.feedback_memory.capacity == model.memory_window
         before = state.feedback_memory
         # Position 5 (zero-based) is a C2 commit position: (5+1)%2 == 0.
         state = recurrent_decode_step(model, state, ids[:, 5:6])
-        assert isinstance(state.feedback_memory, BankState)
+        assert isinstance(state.feedback_memory, MemoryAttentionState)
         assert state.feedback_memory.valid.sum() >= before.valid.sum()
 
 
-def test_memory_token_hybrid_state_preserves_fast_hidden_across_mem_decode():
+def test_memory_token_hybrid_state_preserves_recurrent_memory_across_mem_decode():
     model = make_model(mode="memory_token", hybrid=True)
     ids = sequence(model, "memory_token")
     # prompt ends immediately before first MEM
@@ -148,11 +149,11 @@ def test_memory_token_hybrid_state_preserves_fast_hidden_across_mem_decode():
             model, prompt, passes=2, decode_mode="feedback"
         )
         assert isinstance(state.feedback_memory, HybridFeedbackState)
-        old_fast = state.feedback_memory.fast_hidden.clone()
+        old_memory = state.feedback_memory.recurrent_memory.clone()
         state = recurrent_decode_step(model, state, mem)
     assert isinstance(state.feedback_memory, HybridFeedbackState)
-    torch.testing.assert_close(state.feedback_memory.fast_hidden, old_fast, atol=0, rtol=0)
-    assert state.feedback_memory.bank.valid.any()
+    torch.testing.assert_close(state.feedback_memory.recurrent_memory, old_memory, atol=0, rtol=0)
+    assert state.feedback_memory.memory_attention.valid.any()
 
 
 def test_write_only_mem_stays_in_kv_cache_position_but_is_marked_invalid():

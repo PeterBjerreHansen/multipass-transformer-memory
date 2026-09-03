@@ -7,11 +7,11 @@ The default wiring loss-curve set is defined by the five arms in the sibling
 `STUDY.yaml`; plotting and tabulation should discover those arm IDs rather than
 maintain a second hard-coded list. In particular, include both
 `strided_memory_attention_multipass_100m` and
-`multiscale_memory_attention_multipass_100m`. The parameter-free
-`strided_attention` control is not a Phase-A wiring arm.
+`dense_and_strided_memory_attention_multipass_100m`. The parameter-free
+`strided_self_attention` control is not a Phase-A wiring arm.
 
-Paper replay/BPTT execution and its forward-policy study are retired. Their
-records are historical, not part of this curve set or FLOP report.
+Paper replay/BPTT execution and its forward-policy study were deleted.
+They are not part of this curve set or FLOP report.
 
 `make estimate-flops-frozen-backbone` writes the ignored, reproducible
 `training_flops.json` report here. Join its per-token estimate to the aligned

@@ -280,7 +280,7 @@ def main() -> None:
             "memory_sparse_window": cfg.memory_sparse_window,
             "memory_sparse_stride": cfg.memory_sparse_stride,
         },
-        "strided_attention": {
+        "strided_self_attention": {
             "sparse_attention_stride": cfg.sparse_attention_stride,
             "sparse_attention_window": cfg.sparse_attention_window,
             "sparse_attention_layers": cfg.sparse_attention_layers,

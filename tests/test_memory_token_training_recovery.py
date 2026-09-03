@@ -12,8 +12,8 @@ from tiny_mistral_mptt.data.packed_dataset import load_packed_dataset_for_experi
 from tiny_mistral_mptt.data.prepare import PreparationRequest, materialize_from_document_iterators
 from tiny_mistral_mptt.data.recipes import DOLMINO_50B_SOURCES
 from tiny_mistral_mptt.training.trainer import Trainer
-from tiny_mistral_mptt.variants.bank import BankVariant
-from tiny_mistral_mptt.variants.bank_add_hybrid import BankAddHybridVariant
+from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionVariant
+from tiny_mistral_mptt.variants.memory_attention_recurrent_hybrid import MemoryAttentionRecurrentHybridVariant
 
 
 def _docs(offset: int):
@@ -42,15 +42,16 @@ def _artifact(root: Path):
     )
 
 
-def _model(variant: str):
+def _model(hybrid: bool):
     torch.manual_seed(444)
     backbone = MistralForCausalLM(
         micro_config(num_hidden_layers=2, sliding_window=4),
         attention_backend="reference",
     )
-    cls = BankVariant if variant == "bank" else BankAddHybridVariant
+    cls = MemoryAttentionRecurrentHybridVariant if hybrid else MemoryAttentionVariant
     return cls(
         backbone,
+        **({"recurrent_merger": "projected_residual", "recurrent_layers": [0]} if hybrid else {}),
         memory_window=3,
         memory_write_mode="memory_token",
         memory_write_stride=2,
@@ -73,8 +74,8 @@ def _assert_optimizer_equal(a: torch.optim.Optimizer, b: torch.optim.Optimizer) 
                 assert value == other
 
 
-@pytest.mark.parametrize("variant", ["bank", "bank_add_hybrid"])
-def test_memory_token_training_is_bit_exact_across_auto_resume(tmp_path, variant):
+@pytest.mark.parametrize("hybrid", [False, True])
+def test_memory_token_training_is_bit_exact_across_auto_resume(tmp_path, hybrid):
     data_dir = tmp_path / "data"
     _artifact(data_dir)
     train = load_packed_dataset_for_experiment(
@@ -87,7 +88,8 @@ def test_memory_token_training_is_bit_exact_across_auto_resume(tmp_path, variant
     assert train.linguistic_sequence_length == 8
 
     common = dict(
-        variant=variant,
+        variant="memory_attention",
+        **({"recurrent_merger": "projected_residual", "recurrent_layers": [0]} if hybrid else {}),
         phase="B",
         model_dir="unused",
         data_dir=str(data_dir),
@@ -117,7 +119,7 @@ def test_memory_token_training_is_bit_exact_across_auto_resume(tmp_path, variant
 
     full_cfg = ExperimentConfig(output_dir=str(tmp_path / "full"), **common)
     full = Trainer(
-        model=_model(variant),
+        model=_model(hybrid),
         config=full_cfg,
         train_data=train,
         validation_data=val,
@@ -127,7 +129,7 @@ def test_memory_token_training_is_bit_exact_across_auto_resume(tmp_path, variant
 
     resumed_cfg = ExperimentConfig(output_dir=str(tmp_path / "resumed"), **common)
     first_segment = Trainer(
-        model=_model(variant),
+        model=_model(hybrid),
         config=resumed_cfg,
         train_data=train,
         validation_data=val,
@@ -139,7 +141,7 @@ def test_memory_token_training_is_bit_exact_across_auto_resume(tmp_path, variant
     assert interrupted_state.model_positions_seen == 44
 
     second_segment = Trainer(
-        model=_model(variant),
+        model=_model(hybrid),
         config=resumed_cfg,
         train_data=train,
         validation_data=val,

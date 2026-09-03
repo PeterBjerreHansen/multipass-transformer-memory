@@ -8,7 +8,7 @@ from torch import nn
 from tiny_mistral.modeling import LayerKVCache, MistralForCausalLM
 
 from .decoder import DecoderRun, run_memory_decoder
-from .memory_modules import MemoryWriter, ProjectedResidualMerger, RecirculationMerger
+from .memory_modules import MemoryWriter, build_recurrent_mergers
 from .multipass import MultiPassVariant, shift_previous_hidden
 
 
@@ -50,16 +50,9 @@ class RecurrentMemoryVariant(MultiPassVariant):
         self.recurrent_merger = merger
         hidden_size = int(backbone.config.hidden_size)
         self.writer = MemoryWriter(hidden_size)
-        self.memory_mergers = nn.ModuleDict()
-        for layer in layers:
-            kwargs = {"initialization_seed": int(initialization_seed) + layer}
-            if merger == "projected_residual":
-                module = ProjectedResidualMerger(
-                    hidden_size, eps=backbone.config.rms_norm_eps, **kwargs
-                )
-            else:
-                module = RecirculationMerger(hidden_size, **kwargs)
-            self.memory_mergers[str(layer)] = module
+        self.memory_mergers = build_recurrent_mergers(
+            backbone.config, layers=layers, merger=merger, initialization_seed=initialization_seed
+        )
 
     def added_parameters(self) -> Iterable[nn.Parameter]:
         yield from self.writer.parameters()

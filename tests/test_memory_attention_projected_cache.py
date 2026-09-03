@@ -1,8 +1,8 @@
 import torch
 
 from tiny_mistral import MistralConfig, MistralForCausalLM
-from tiny_mistral_mptt.feedback import BankState
-from tiny_mistral_mptt.variants import BankReader, BankVariant
+from tiny_mistral_mptt.feedback import MemoryAttentionState
+from tiny_mistral_mptt.variants import MemoryAttentionReader, MemoryAttentionVariant
 
 
 def make_backbone() -> MistralForCausalLM:
@@ -21,16 +21,16 @@ def make_backbone() -> MistralForCausalLM:
     return MistralForCausalLM(config)
 
 
-def test_raw_and_projected_bank_match() -> None:
+def test_raw_and_projected_memory_match() -> None:
     backbone = make_backbone()
-    reader = BankReader(backbone, window=4, initialization_seed=7)
+    reader = MemoryAttentionReader(backbone, window=4, initialization_seed=7)
     query = torch.randn(2, 1, 24)
     memories = torch.randn(2, 4, 24)
     mask = torch.tensor([[1, 1, 1, 0], [1, 1, 0, 0]], dtype=torch.bool)
     query_positions = torch.tensor([[7], [7]])
     memory_positions = torch.tensor([[1, 3, 5, 0], [2, 4, 0, 0]])
 
-    raw = reader.forward_bank(
+    raw = reader.forward_memory(
         query,
         memories,
         memory_mask=mask,
@@ -38,7 +38,7 @@ def test_raw_and_projected_bank_match() -> None:
         memory_position_ids=memory_positions,
     )
     key, value = reader.project_memory(memories, position_ids=memory_positions)
-    projected = reader.forward_projected_bank(
+    projected = reader.forward_projected_memory(
         query,
         key,
         value,
@@ -50,20 +50,20 @@ def test_raw_and_projected_bank_match() -> None:
 
 
 def test_default_rope_uses_original_memory_positions() -> None:
-    reader = BankReader(make_backbone(), window=4, initialization_seed=11)
+    reader = MemoryAttentionReader(make_backbone(), window=4, initialization_seed=11)
     with torch.no_grad():
         reader.o_proj.weight.copy_(torch.eye(reader.hidden_size))
     query = torch.randn(1, 1, reader.hidden_size)
     memories = torch.randn(1, 3, reader.hidden_size)
     query_positions = torch.tensor([[12]])
     with torch.no_grad():
-        near = reader.forward_bank(
+        near = reader.forward_memory(
             query,
             memories,
             query_position_ids=query_positions,
             memory_position_ids=torch.tensor([[8, 9, 10]]),
         )
-        displaced = reader.forward_bank(
+        displaced = reader.forward_memory(
             query,
             memories,
             query_position_ids=query_positions,
@@ -74,7 +74,7 @@ def test_default_rope_uses_original_memory_positions() -> None:
 
 def test_seeded_state_projection_matches_readers() -> None:
     backbone = make_backbone()
-    model = BankVariant(
+    model = MemoryAttentionVariant(
         backbone,
         memory_window=4,
         memory_write_mode="dense",
@@ -84,7 +84,7 @@ def test_seeded_state_projection_matches_readers() -> None:
     hidden = torch.randn(1, 3, 24)
     state = model._feedback_memory_from_hidden(hidden, input_ids=input_ids)
 
-    assert isinstance(state, BankState)
+    assert isinstance(state, MemoryAttentionState)
     assert state.projected_keys is not None
     assert state.projected_values is not None
     for index, reader in enumerate(model.memory_readers.values()):
@@ -96,7 +96,7 @@ def test_seeded_state_projection_matches_readers() -> None:
 
 
 def test_periodic_nonwrite_preserves_projected_cache_exactly() -> None:
-    model = BankVariant(
+    model = MemoryAttentionVariant(
         make_backbone(),
         memory_window=4,
         memory_write_mode="periodic",
@@ -125,7 +125,7 @@ def test_periodic_nonwrite_preserves_projected_cache_exactly() -> None:
 
 
 def test_append_and_eviction_keep_raw_kv_aligned() -> None:
-    model = BankVariant(
+    model = MemoryAttentionVariant(
         make_backbone(),
         memory_window=2,
         memory_write_mode="dense",
@@ -157,7 +157,7 @@ def test_append_and_eviction_keep_raw_kv_aligned() -> None:
 
 
 def test_cached_read_does_not_reproject_old_memory(monkeypatch) -> None:
-    model = BankVariant(
+    model = MemoryAttentionVariant(
         make_backbone(),
         memory_window=4,
         memory_write_mode="dense",
@@ -186,7 +186,7 @@ def test_cached_read_does_not_reproject_old_memory(monkeypatch) -> None:
 
     query = torch.randn(1, 1, 24)
     for _ in range(3):
-        reader.forward_projected_bank(
+        reader.forward_projected_memory(
             query,
             state.projected_keys[0],
             state.projected_values[0],

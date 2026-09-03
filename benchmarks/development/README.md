@@ -6,7 +6,7 @@ The active frozen comparison and its qualification are:
   mechanisms, with equal 5M-token budgets;
 - `frozen_backbone_comparison/`: 100M-token frozen-backbone curves for two
   late-memory recurrent mergers (projected residual and adaptive recirculation),
-  dense Memory Attention, Strided Memory Attention, and Multiscale Memory Attention.
+  dense Memory Attention, Strided Memory Attention, and Dense-and-strided Memory Attention.
 
 These studies use 2048-token blocks, microbatch 8 with accumulation 4, and the
 same K=2/3 final-pass training objective. K=4 whole-block NLL is the headline
@@ -22,6 +22,6 @@ Pass-depth stability, parameter drift, and inference diagnostics are reusable
 evaluation tools, not standalone development studies. Superseded Stage 0–6 and
 exploratory protocols are preserved under `../historical/`.
 
-[Remaining additions](../../docs/CLEANUP_STATUS.md) are tracked separately. The inference-efficiency
+[Remaining additions](../../docs/DEVELOPMENT_PLAN.md) are tracked separately. The inference-efficiency
 directory is a diagnostic with no study manifest; it must not be counted as a
 scientific comparison or removed to satisfy study-layout tests.

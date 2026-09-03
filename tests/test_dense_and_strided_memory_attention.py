@@ -8,10 +8,9 @@ from tiny_mistral.attention.multiresolution import (
     multiresolution_key_indices,
 )
 from tiny_mistral.modeling import MistralForCausalLM
-from tiny_mistral_mptt.feedback import BankState
+from tiny_mistral_mptt.feedback import MemoryAttentionState
 from tiny_mistral_mptt.inference import exact_decode_step, prefill_exact
-from tiny_mistral_mptt.variants.bank import BankVariant
-from tiny_mistral_mptt.variants.bank_multiscale import MultiscaleBankVariant
+from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionVariant
 
 
 def test_fast_multiresolution_windows_match_reference_gather_for_both_causal_modes():
@@ -86,7 +85,7 @@ def backbone(seed: int) -> MistralForCausalLM:
     )
 
 
-def activate_readers(model: BankVariant) -> None:
+def activate_readers(model: MemoryAttentionVariant) -> None:
     with torch.no_grad():
         for reader in model.memory_readers.values():
             reader.o_proj.weight.copy_(torch.eye(model.config.hidden_size))
@@ -94,16 +93,17 @@ def activate_readers(model: BankVariant) -> None:
 
 def matching_models(
     *, dense_window: int, sparse_window: int, stride: int
-) -> tuple[MultiscaleBankVariant, BankVariant]:
-    multiscale = MultiscaleBankVariant(
+) -> tuple[MemoryAttentionVariant, MemoryAttentionVariant]:
+    dense_and_strided = MemoryAttentionVariant(
         backbone(91),
+        memory_pattern="dense_and_strided",
         memory_dense_window=dense_window,
         memory_sparse_window=sparse_window,
         memory_sparse_stride=stride,
         memory_layers=[1],
         initialization_seed=301,
     )
-    endpoint = BankVariant(
+    endpoint = MemoryAttentionVariant(
         backbone(92),
         memory_window=dense_window + sparse_window,
         memory_write_mode="dense" if sparse_window == 0 else "periodic",
@@ -111,20 +111,20 @@ def matching_models(
         memory_layers=[1],
         initialization_seed=302,
     )
-    endpoint.load_state_dict(multiscale.state_dict())
-    activate_readers(multiscale)
+    endpoint.load_state_dict(dense_and_strided.state_dict())
+    activate_readers(dense_and_strided)
     activate_readers(endpoint)
-    return multiscale.eval(), endpoint.eval()
+    return dense_and_strided.eval(), endpoint.eval()
 
 
-def test_dense_only_endpoint_is_exact_dense_bank():
-    multiscale, dense = matching_models(
+def test_dense_only_endpoint_is_exact_dense_memory():
+    dense_and_strided, dense = matching_models(
         dense_window=4, sparse_window=0, stride=3
     )
     ids = torch.tensor([[1, 7, 3, 14, 22, 9, 31, 4, 51, 12]])
     with torch.no_grad():
         for passes in (2, 3):
-            actual = multiscale.compute_passes(ids, passes=passes)
+            actual = dense_and_strided.compute_passes(ids, passes=passes)
             expected = dense.compute_passes(ids, passes=passes)
             torch.testing.assert_close(
                 actual.final.hidden_states,
@@ -134,14 +134,14 @@ def test_dense_only_endpoint_is_exact_dense_bank():
             )
 
 
-def test_sparse_only_endpoint_is_exact_periodic_bank():
-    multiscale, periodic = matching_models(
+def test_sparse_only_endpoint_is_exact_periodic_memory():
+    dense_and_strided, periodic = matching_models(
         dense_window=0, sparse_window=3, stride=2
     )
     ids = torch.tensor([[1, 7, 3, 14, 22, 9, 31, 4, 51, 12]])
     with torch.no_grad():
         for passes in (2, 3):
-            actual = multiscale.compute_passes(ids, passes=passes)
+            actual = dense_and_strided.compute_passes(ids, passes=passes)
             expected = periodic.compute_passes(ids, passes=passes)
             torch.testing.assert_close(
                 actual.final.hidden_states,
@@ -151,9 +151,10 @@ def test_sparse_only_endpoint_is_exact_periodic_bank():
             )
 
 
-def test_zero_initialized_multiscale_bank_is_exact_vanilla_each_pass():
-    model = MultiscaleBankVariant(
+def test_zero_initialized_dense_and_strided_memory_is_exact_vanilla_each_pass():
+    model = MemoryAttentionVariant(
         backbone(93),
+        memory_pattern="dense_and_strided",
         memory_dense_window=3,
         memory_sparse_window=2,
         memory_sparse_stride=3,
@@ -166,9 +167,10 @@ def test_zero_initialized_multiscale_bank_is_exact_vanilla_each_pass():
         torch.testing.assert_close(later.logits, outputs.passes[0].logits, atol=0, rtol=0)
 
 
-def test_multiscale_bank_state_retains_sparse_old_and_dense_recent_positions():
-    model = MultiscaleBankVariant(
+def test_dense_and_strided_memory_state_retains_sparse_old_and_dense_recent_positions():
+    model = MemoryAttentionVariant(
         backbone(94),
+        memory_pattern="dense_and_strided",
         memory_dense_window=3,
         memory_sparse_window=2,
         memory_sparse_stride=3,
@@ -177,15 +179,16 @@ def test_multiscale_bank_state_retains_sparse_old_and_dense_recent_positions():
     hidden = torch.randn(1, 10, model.config.hidden_size)
     ids = torch.arange(10)[None, :]
     state = model._feedback_memory_from_hidden(hidden, input_ids=ids)
-    assert isinstance(state, BankState)
+    assert isinstance(state, MemoryAttentionState)
     assert state.capacity == 5
     assert state.valid.tolist() == [[True, True, True, True, True]]
     assert state.positions.tolist() == [[2, 5, 7, 8, 9]]
 
 
-def test_multiscale_bank_exact_incremental_matches_full_prefix():
-    model = MultiscaleBankVariant(
+def test_dense_and_strided_memory_exact_incremental_matches_full_prefix():
+    model = MemoryAttentionVariant(
         backbone(95),
+        memory_pattern="dense_and_strided",
         memory_dense_window=2,
         memory_sparse_window=2,
         memory_sparse_stride=3,

@@ -76,58 +76,37 @@ class HybridPassSource:
     """Full-stream sources produced by one Memory Attention/recurrent pass."""
 
     recurrent_hidden: torch.Tensor
-    bank_hidden: torch.Tensor
+    memory_attention_hidden: torch.Tensor
 
     def __post_init__(self) -> None:
-        if self.recurrent_hidden.ndim != 3 or self.bank_hidden.ndim != 3:
+        if self.recurrent_hidden.ndim != 3 or self.memory_attention_hidden.ndim != 3:
             raise ValueError("hybrid pass sources must be [B,T,D]")
-        if self.recurrent_hidden.shape != self.bank_hidden.shape:
-            raise ValueError("hybrid recurrent/bank pass sources must have equal shapes")
-
-    @property
-    def memory_attention_hidden(self) -> torch.Tensor:
-        """Public terminology alias for the historical ``bank_hidden`` field."""
-        return self.bank_hidden
+        if self.recurrent_hidden.shape != self.memory_attention_hidden.shape:
+            raise ValueError("hybrid recurrent/attention pass sources must have equal shapes")
 
 
 @dataclass(frozen=True)
 class HybridFeedbackState:
-    """Immediate recurrent state plus addressable Memory Attention records.
+    """One preceding-ordinary-token emitted record plus retained attention records."""
 
-    ``fast_hidden`` retains its original name for checkpoint/API compatibility;
-    it may contain either a top-layer MemoryAdd state or an internal-layer
-    recirculation source.
-    """
-
-    fast_hidden: torch.Tensor
-    bank: MemoryAttentionState
+    recurrent_memory: torch.Tensor
+    memory_attention: MemoryAttentionState
 
     def __post_init__(self) -> None:
-        if self.fast_hidden.ndim != 3 or self.fast_hidden.shape[1] != 1:
-            raise ValueError("HybridFeedbackState.fast_hidden must be [B,1,D]")
-        if self.fast_hidden.shape[0] != self.bank.batch_size:
-            raise ValueError("hybrid fast/bank batch sizes differ")
-        if self.fast_hidden.shape[-1] != self.bank.hidden_size:
-            raise ValueError("hybrid fast/bank hidden dimensions differ")
+        if self.recurrent_memory.ndim != 3 or self.recurrent_memory.shape[1] != 1:
+            raise ValueError("HybridFeedbackState.recurrent_memory must be [B,1,D]")
+        if self.recurrent_memory.shape[0] != self.memory_attention.batch_size:
+            raise ValueError("hybrid recurrent/attention batch sizes differ")
+        if self.recurrent_memory.shape[-1] != self.memory_attention.hidden_size:
+            raise ValueError("hybrid recurrent/attention hidden dimensions differ")
 
     @property
     def batch_size(self) -> int:
-        return int(self.fast_hidden.shape[0])
+        return int(self.recurrent_memory.shape[0])
 
     @property
     def hidden_size(self) -> int:
-        return int(self.fast_hidden.shape[-1])
-
-    @property
-    def recurrent_hidden(self) -> torch.Tensor:
-        return self.fast_hidden
-
-    @property
-    def memory_attention(self) -> MemoryAttentionState:
-        return self.bank
-
-
-BankState = MemoryAttentionState
+        return int(self.recurrent_memory.shape[-1])
 
 
 FeedbackMemory = torch.Tensor | MemoryAttentionState | HybridFeedbackState

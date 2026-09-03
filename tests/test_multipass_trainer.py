@@ -620,15 +620,15 @@ def test_validation_gates_checkpoint_and_stop_at_first_passing_evaluation(tmp_pa
     assert sum(record["event"] == "train" for record in resumed_records) == 1
 
 
-def test_bank_phase_a_runs_through_shared_trainer(tmp_path):
-    from tiny_mistral_mptt.variants.bank import BankVariant
+def test_memory_phase_a_runs_through_shared_trainer(tmp_path):
+    from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionVariant
 
     data_dir = tmp_path / "data-memory"
     make_artifact(data_dir)
     train = PackedTokenDataset(data_dir, "train")
     val = PackedTokenDataset(data_dir, "validation")
     torch.manual_seed(23)
-    model = BankVariant(
+    model = MemoryAttentionVariant(
         MistralForCausalLM(micro_config(), attention_backend="reference"),
         memory_window=4,
         memory_write_mode="dense",
@@ -636,7 +636,7 @@ def test_bank_phase_a_runs_through_shared_trainer(tmp_path):
         initialization_seed=31,
     )
     cfg = ExperimentConfig(
-        variant="bank",
+        variant="memory_attention",
         memory_write_mode="dense",
         phase="A",
         model_dir="unused",

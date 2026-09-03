@@ -9,7 +9,7 @@ arms:
   - {id: recurrent_recirculation_multipass_100m, config: recurrent_recirculation_multipass_100m.yaml}
   - {id: dense_memory_attention_multipass_100m, config: dense_memory_attention_multipass_100m.yaml}
   - {id: strided_memory_attention_multipass_100m, config: strided_memory_attention_multipass_100m.yaml}
-  - {id: multiscale_memory_attention_multipass_100m, config: multiscale_memory_attention_multipass_100m.yaml}
+  - {id: dense_and_strided_memory_attention_multipass_100m, config: dense_and_strided_memory_attention_multipass_100m.yaml}
 comparisons:
   - name: frozen_feedback_mechanisms
     arms:
@@ -17,9 +17,10 @@ comparisons:
       - recurrent_recirculation_multipass_100m
       - dense_memory_attention_multipass_100m
       - strided_memory_attention_multipass_100m
-      - multiscale_memory_attention_multipass_100m
+      - dense_and_strided_memory_attention_multipass_100m
     experimental_axes:
       - variant
+      - memory_pattern
       - memory_window
       - memory_write_mode
       - memory_write_stride

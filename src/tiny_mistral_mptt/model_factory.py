@@ -8,18 +8,17 @@ import torch
 from tiny_mistral.loading import load_model
 from tiny_mistral.modeling import MistralForCausalLM
 
-from .config import canonical_memory_write_mode, canonical_variant_name
+from .compatibility import normalize_legacy_variant_name
+from .config import canonical_memory_write_mode, canonical_variant_name, resolve_memory_attention_pattern
 from .variants import (
     ExperimentalVariant,
     FBTVariant,
     MemoryAddVariant,
     RecirculationVariant,
     RecurrentMemoryVariant,
-    MemoryAttentionAddHybridVariant,
-    RecirculationStridedMemoryAttentionVariant,
-    MultiscaleMemoryAttentionVariant,
+    MemoryAttentionRecurrentHybridVariant,
     MemoryAttentionVariant,
-    StridedAttentionVariant,
+    StridedSelfAttentionVariant,
     SWATransformerVariant,
 )
 
@@ -33,6 +32,7 @@ def build_variant(
     *,
     architecture_seed: int = 4242,
     memory_window: int = 32,
+    memory_pattern: str | None = None,
     memory_write_mode: str | None = None,
     memory_write_stride: int | None = None,
     memory_token_visibility: str | None = None,
@@ -52,19 +52,30 @@ def build_variant(
     recirculation_alpha: float = 0.1,
     recirculation_mode: str = "fixed",
     recurrent_merger: str | None = None,
+    recurrent_layers: list[int] | None = None,
 ) -> ExperimentalVariant:
-    requested_name = str(name)
+    requested_name = normalize_legacy_variant_name(str(name))
     name = canonical_variant_name(requested_name)
     memory_write_mode = canonical_memory_write_mode(memory_write_mode)
+    if name != "memory_attention":
+        if memory_pattern is not None or recurrent_layers is not None:
+            raise ValueError("memory_pattern and recurrent_layers apply only to Memory Attention")
+        if recurrent_merger is not None and name != "recurrent_memory":
+            raise ValueError("recurrent_merger requires recurrent_memory or Memory Attention")
+    if name != "recirculation" and (
+        recirculation_source_layer is not None or recirculation_destination_layer is not None
+        or recirculation_alpha != 0.1 or recirculation_mode != "fixed"
+    ):
+        raise ValueError("recirculation_* fields apply only to legacy recirculation")
     if name == "vanilla":
         variant: ExperimentalVariant = SWATransformerVariant(backbone)
-    elif name == "sparse_swa":
+    elif name == "strided_self_attention":
         if sparse_attention_stride is None or sparse_attention_window is None:
             raise ValueError(
-                "Strided Attention requires sparse_attention_stride and "
+                "Strided Self-Attention requires sparse_attention_stride and "
                 "sparse_attention_window"
             )
-        variant = StridedAttentionVariant(
+        variant = StridedSelfAttentionVariant(
             backbone,
             sparse_attention_stride=sparse_attention_stride,
             sparse_attention_window=sparse_attention_window,
@@ -101,85 +112,58 @@ def build_variant(
             mode=recirculation_mode,
             initialization_seed=architecture_seed,
         )
-    elif name == "bank_multiscale":
-        if (
-            memory_write_mode is not None
-            or memory_write_stride is not None
-            or memory_token_visibility is not None
-        ):
-            raise ValueError(
-                "multiscale Memory Attention uses dense source states and does not accept "
-                "memory_write_* controls"
-            )
-        variant = MultiscaleMemoryAttentionVariant(
-            backbone,
-            memory_dense_window=memory_dense_window,
-            memory_sparse_window=memory_sparse_window,
-            memory_sparse_stride=memory_sparse_stride,
-            memory_layers=memory_layers,
-            memory_position_encoding=memory_position_encoding,
-            initialization_seed=architecture_seed,
+    elif name == "memory_attention":
+        memory_pattern, memory_write_mode = resolve_memory_attention_pattern(
+            requested_name, memory_pattern, memory_write_mode
         )
-    elif name in {"bank", "bank_add_hybrid", "bank_recirculation_hybrid"}:
-        if memory_write_mode not in {"dense", "periodic", "memory_token"}:
-            raise ValueError("Memory Attention variants require memory_write_mode: dense|strided|memory_token")
-        if memory_write_mode == "dense":
-            if memory_write_stride is not None:
-                raise ValueError("dense Memory Attention must not set memory_write_stride")
-            if memory_token_visibility is not None:
-                raise ValueError("dense Memory Attention must not set memory_token_visibility")
-            stride = 1
-            visibility = "visible"
-        elif memory_write_mode == "periodic":
-            if memory_write_stride is None or int(memory_write_stride) <= 0:
-                raise ValueError("strided Memory Attention requires positive memory_write_stride")
-            if memory_token_visibility is not None:
-                raise ValueError("memory_token_visibility applies only to memory_token mode")
-            stride = int(memory_write_stride)
-            visibility = "visible"
+        if memory_pattern == "dense_and_strided":
+            if memory_write_stride is not None or memory_token_visibility is not None:
+                raise ValueError("dense-and-strided retention does not accept memory_write_* controls")
+            stride, visibility = 1, "visible"
+        elif memory_write_mode == "dense":
+            if memory_write_stride is not None or memory_token_visibility is not None:
+                raise ValueError("dense Memory Attention must not set memory_write_stride or memory_token_visibility")
+            stride, visibility = 1, "visible"
         else:
             if memory_write_stride is None or int(memory_write_stride) <= 0:
-                raise ValueError("memory-token Memory Attention requires positive memory_write_stride")
-            if memory_token_visibility not in {"visible", "write_only"}:
-                raise ValueError("memory-token Memory Attention requires memory_token_visibility: visible|write_only")
+                raise ValueError("strided or memory-token Memory Attention requires positive memory_write_stride")
             stride = int(memory_write_stride)
-            visibility = str(memory_token_visibility)
+            if memory_write_mode == "memory_token":
+                if memory_token_visibility not in {"visible", "write_only"}:
+                    raise ValueError("memory-token Memory Attention requires memory_token_visibility")
+                visibility = str(memory_token_visibility)
+            else:
+                if memory_token_visibility is not None:
+                    raise ValueError("memory_token_visibility applies only to memory_token mode")
+                visibility = "visible"
         kwargs = dict(
+            memory_pattern=memory_pattern,
             memory_window=memory_window,
-            memory_write_mode=memory_write_mode,
+            memory_write_mode="dense" if memory_pattern == "dense_and_strided" else memory_write_mode,
             memory_write_stride=stride,
             memory_token_visibility=visibility,
             memory_layers=memory_layers,
             memory_position_encoding=memory_position_encoding,
+            memory_dense_window=memory_dense_window,
+            memory_sparse_window=memory_sparse_window,
+            memory_sparse_stride=memory_sparse_stride,
             initialization_seed=architecture_seed,
         )
-        if name == "bank":
+        if recurrent_merger is None:
+            if recurrent_layers is not None:
+                raise ValueError("recurrent_layers requires recurrent_merger")
             variant = MemoryAttentionVariant(backbone, **kwargs)
-        elif name == "bank_add_hybrid":
-            variant = MemoryAttentionAddHybridVariant(backbone, **kwargs)
         else:
-            if (
-                recirculation_source_layer is None
-                or recirculation_destination_layer is None
-            ):
-                raise ValueError(
-                    "Memory Attention recirculation hybrid requires recirculation_source_layer "
-                    "and recirculation_destination_layer"
-                )
-            variant = RecirculationStridedMemoryAttentionVariant(
-                backbone,
-                source_layer=recirculation_source_layer,
-                destination_layer=recirculation_destination_layer,
-                alpha=recirculation_alpha,
-                mode=recirculation_mode,
-                **kwargs,
+            variant = MemoryAttentionRecurrentHybridVariant(
+                backbone, recurrent_merger=recurrent_merger,
+                recurrent_layers=recurrent_layers, **kwargs,
             )
     else:
         raise ValueError(f"unknown variant {name!r}")
 
     reference_parameter = next(backbone.parameters())
     variant.to(device=reference_parameter.device, dtype=reference_parameter.dtype)
-    # Preserve the requested model name in experiment metadata.
+    # Preserve current public names, but never emit retired input aliases.
     variant.variant_name = requested_name
     return variant
 
@@ -194,6 +178,7 @@ def load_variant(
     compile_flex: bool = True,
     architecture_seed: int = 4242,
     memory_window: int = 32,
+    memory_pattern: str | None = None,
     memory_write_mode: str | None = None,
     memory_write_stride: int | None = None,
     memory_token_visibility: str | None = None,
@@ -213,6 +198,7 @@ def load_variant(
     recirculation_alpha: float = 0.1,
     recirculation_mode: str = "fixed",
     recurrent_merger: str | None = None,
+    recurrent_layers: list[int] | None = None,
 ) -> ExperimentalVariant:
     backbone = load_model(
         model_dir,
@@ -226,6 +212,7 @@ def load_variant(
         backbone,
         architecture_seed=architecture_seed,
         memory_window=memory_window,
+        memory_pattern=memory_pattern,
         memory_write_mode=memory_write_mode,
         memory_write_stride=memory_write_stride,
         memory_token_visibility=memory_token_visibility,
@@ -245,6 +232,7 @@ def load_variant(
         recirculation_alpha=recirculation_alpha,
         recirculation_mode=recirculation_mode,
         recurrent_merger=recurrent_merger,
+        recurrent_layers=recurrent_layers,
     )
 
 
@@ -261,6 +249,7 @@ def load_variant_from_config(
         attention_backend=cfg.attention_backend,
         architecture_seed=cfg.architecture_seed,
         memory_window=cfg.memory_window,
+        memory_pattern=cfg.memory_pattern,
         memory_write_mode=cfg.memory_write_mode,
         memory_write_stride=cfg.memory_write_stride,
         memory_token_visibility=cfg.memory_token_visibility,
@@ -292,4 +281,5 @@ def load_variant_from_config(
         recirculation_alpha=cfg.recirculation_alpha,
         recirculation_mode=cfg.recirculation_mode,
         recurrent_merger=cfg.recurrent_merger,
+        recurrent_layers=cfg.recurrent_layers,
     )

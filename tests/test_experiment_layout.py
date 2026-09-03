@@ -93,9 +93,7 @@ def test_active_studies_share_2048_data_and_effective_optimizer_batch():
         assert cfg.variant not in {
             "fbt",
             "memory_add",
-            "bank_add_hybrid",
-            "strided_attention",
-            "recirculation_strided_memory_attention",
+            "strided_self_attention",
         }
 
 
@@ -106,7 +104,7 @@ def test_frozen_backbone_comparison_has_two_recurrent_mergers_and_three_attentio
         "recurrent_projected_residual_multipass_100m",
         "dense_memory_attention_multipass_100m",
         "strided_memory_attention_multipass_100m",
-        "multiscale_memory_attention_multipass_100m",
+        "dense_and_strided_memory_attention_multipass_100m",
     }
     assert all(cfg.phase == "A" for cfg in configs.values())
     assert {(cfg.batch_size, cfg.grad_accum_steps) for cfg in configs.values()} == {
@@ -121,6 +119,11 @@ def test_frozen_backbone_comparison_has_two_recurrent_mergers_and_three_attentio
     assert {tuple(cfg.snapshot_at_tokens) for cfg in configs.values()} == {
         (3_276_800, 5_013_504, 10_027_008, 20_021_248, 50_003_968, 100_007_936)
     }
+    assert {tuple(cfg.feedback_eval_at_tokens) for cfg in configs.values()} == {
+        (5_013_504, 20_021_248, 100_007_936)
+    }
+    assert {cfg.feedback_eval_max_blocks for cfg in configs.values()} == {1}
+    assert {cfg.feedback_eval_autocast_dtype for cfg in configs.values()} == {"config"}
     multipass = configs
     assert all(
         cfg.normalized_pass_schedule()[0]["probabilities"] == {2: 0.9, 3: 0.1}
@@ -134,10 +137,10 @@ def test_frozen_backbone_comparison_has_two_recurrent_mergers_and_three_attentio
     assert strided.variant == "strided_memory_attention"
     assert strided.memory_write_mode == "strided"
     assert strided.memory_write_stride == 32
-    multiscale = configs["multiscale_memory_attention_multipass_100m"]
-    assert multiscale.variant == "multiscale_memory_attention"
-    assert (multiscale.memory_dense_window, multiscale.memory_sparse_window) == (32, 32)
-    assert multiscale.memory_sparse_stride == 32
+    combined = configs["dense_and_strided_memory_attention_multipass_100m"]
+    assert combined.variant == "dense_and_strided_memory_attention"
+    assert (combined.memory_dense_window, combined.memory_sparse_window) == (32, 32)
+    assert combined.memory_sparse_stride == 32
     assert {cfg.added_learning_rate for cfg in configs.values()} == {3.0e-4}
     recurrent = [cfg for cfg in configs.values() if cfg.variant == "recurrent_memory"]
     assert {cfg.recurrent_merger for cfg in recurrent} == {"recirculation", "projected_residual"}
@@ -148,6 +151,8 @@ def test_frozen_backbone_comparison_has_two_recurrent_mergers_and_three_attentio
 def test_frozen_backbone_lr_qualification_uses_2048_sweep():
     configs = _study_configs("frozen_backbone_lr_qualification")
     assert len(configs) == 20
+    assert all(not cfg.feedback_eval_at_tokens for cfg in configs.values())
+    assert sum(cfg.variant == "dense_and_strided_memory_attention" for cfg in configs.values()) == 4
     for merger in ("recirculation", "projected_residual"):
         assert sum(cfg.recurrent_merger == merger for cfg in configs.values()) == 4
     assert {cfg.data_dir for cfg in configs.values()} == {"data/dolmino/gpu_2048"}
@@ -162,11 +167,23 @@ def test_frozen_backbone_lr_qualification_uses_2048_sweep():
     }
 
 
+def test_attention_reader_layers_match_across_frozen_studies():
+    for name in ("frozen_backbone_comparison", "frozen_backbone_lr_qualification"):
+        attention = [
+            cfg for cfg in _study_configs(name).values()
+            if cfg.variant != "recurrent_memory"
+        ]
+        assert {cfg.variant for cfg in attention} == {
+            "dense_memory_attention", "strided_memory_attention", "dense_and_strided_memory_attention",
+        }
+        assert all(cfg.memory_layers == [3, 7] for cfg in attention)
+
+
 def test_historical_studies_are_preserved_but_not_discovered():
     historical = ROOT / "benchmarks" / "historical"
     assert (historical / "staged_pipeline" / "stage_5_cloud_100m").is_dir()
     assert (historical / "staged_pipeline" / "stage_6_long_continuation").is_dir()
-    assert (historical / "exploratory" / "fbt").is_dir()
+    assert (historical / "exploratory" / "backbone_lr_sweep").is_dir()
     discovered = set(discover_studies(ROOT))
     assert not any(path.is_relative_to(historical) for path in discovered)
 

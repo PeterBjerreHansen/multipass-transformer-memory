@@ -1,134 +1,67 @@
-# Scripts
+# Command-line entry points
 
-Scripts are thin command-line entry points. Data recipes live under `data/`,
-evaluation suites under `evaluation/`, and experiment settings with their owning
-benchmark study/control.
+Run commands from the repository root. Use `uv run python scripts/<name>.py --help`
+for each Python command's arguments. Scientific settings live with their owning study.
 
-## Setup and validation
+## Setup and correctness
 
-```text
-download_model.py
-verify_model.py
-compare_to_hf.py
-compare_to_hf_layers.py
-compare_to_hf_inputs_embeds.py
-prepare_data.py
-verify_data.py
-verify_data_disjointness.py
-verify_study.py
-smoke_mps.py
-```
+| Command | Purpose |
+| --- | --- |
+| `download_model.py`, `verify_model.py` | Fetch or verify the pinned TinyMistral checkpoint |
+| `compare_to_hf.py`, `compare_to_hf_layers.py`, `compare_to_hf_inputs_embeds.py` | Compare the vendored backbone with the pinned Transformers oracle |
+| `prepare_data.py`, `verify_data.py` | Materialize or verify packed data |
+| `verify_data_disjointness.py` | Check complete BOS-delimited documents across artifacts |
+| `verify_study.py` | Validate active manifests and declared comparison differences |
+| `smoke_mps.py` | Run local Apple-hardware checks |
 
-## Efficiency and cloud qualification
+See [data](../docs/DATA.md), [study organization](../benchmarks/README.md) and
+[validation gates](../docs/VALIDATION.md).
 
-```text
-benchmark_training_efficiency.py
-benchmark_inference_efficiency.py
-estimate_training_flops.py
-cloud_preflight.py
-```
+## Training and operation
 
-The efficiency runner performs real optimizer steps and reports linguistic-token
-and physical-position throughput when they differ. Memory Attention cases must
-state their write policy explicitly. The paper-policy `forward_modes.yaml`
-suite and its Makefile targets are retired. The general training/precision/
-scaling suites remain; they are optional engineering measurements, not new
-scientific arms or qualification of unmeasured merger architectures.
+| Command | Purpose |
+| --- | --- |
+| `train.py` | Train one config, optionally restoring a durable trajectory |
+| `run_study.py` | Verify a study, run forward/backward checks, then train selected arms sequentially |
+| `cloud_preflight.py` | Check CUDA, input integrity, source/run compatibility and persistent storage |
+| `start-and-watch` | Start or observe a remote run, transfer verified outputs, then apply requested Verda cleanup |
+| `run-cloud-study` | Apply that lifecycle to selected arms of a locked study |
 
-`benchmark_inference_efficiency.py` measures full-block K-pass validation and
-cached standard, feedback, exact, and diagnostic continuation costs on CUDA.
-Its synthetic timing protocol is documented in
-`benchmarks/development/inference_efficiency/README.md`.
+`run_study.py --wire-only` does not perform an optimizer step.
+It does not replace the [real-trainer preflight](../docs/CLOUD.md#pre-training-checks).
+Neither cloud wrapper performs that qualification automatically.
+The current planned studies cannot run through the locked-study wrapper.
 
-`cloud_preflight.py` checks CUDA/model/data/source/run compatibility, persistent
-storage, free space, and memory-token-expanded batching before a paid run.
+See [training and recovery](../docs/TRAINING.md) and [cloud operation](../docs/CLOUD.md).
+These guides define resume and cleanup behavior. The script index does not duplicate those contracts.
 
-`estimate_training_flops.py --study <STUDY.yaml>` derives one dominant-matmul
-estimate per arm directly from its authoritative experiment config and data
-recipe. The report identifies its conventional backward and frozen-parameter
-limitations; it is an algorithmic estimate, not measured accelerator work.
+## Evaluation
 
-## Training and evaluation
+| Command | Purpose |
+| --- | --- |
+| `evaluate_nll.py` | Final parallel-pass NLL, or full-block BOS feedback with `--forward feedback` |
+| `evaluate_pass_depth.py` | Parallel NLL and hidden-state changes through the requested K |
+| `evaluate_memory_interventions.py` | Real/zero/mismatched memory for one K=1-to-K=2 transition |
+| `evaluate_recurrent_inference.py` | Same-checkpoint exact, feedback and standard continuation comparison |
+| `evaluate_lm_harness.py` | Candidate scoring or generation with explicit prefill/decode choices |
+| `evaluate_parameter_drift.py` | Backbone and added-parameter changes relative to compatible reference weights |
+| `generate.py` | Ordinary pretrained-backbone generation, not trained feedback-model generation |
 
-```text
-train.py
-run_study.py
-evaluate_nll.py
-evaluate_lm_harness.py
-evaluate_pass_depth.py
-evaluate_memory_interventions.py
-evaluate_recurrent_inference.py
-evaluate_parameter_drift.py
-generate.py
-```
+The checkpoint evaluators require explicit weights or `--initialized-baseline`.
+Parameter drift requires its checkpoint and reference.
+`generate.py` loads the pretrained backbone directly.
+See [evaluation](../evaluation/README.md) for defaults, precision, target sets and result identity.
+See [cached inference](../docs/RECURRENT_INFERENCE.md) for the lower-level feedback interface.
 
-`run_study.py` is the common executor for colocated development/core studies.
-It validates the manifest, exercises every sampled pass depth with a
-forward/backward preflight at the config's declared physical batch, and then
-runs selected arms sequentially. Paper replay/BPTT execution is removed.
+## Engineering measurements
 
-`start-and-watch` is the unattended cloud wrapper. It starts a remote
-`train.py --resume-auto` process, waits for a durable completed segment,
-transfers the output, verifies SHA-256 hashes, and then shuts down or deletes
-the Verda compute instance. It leaves the VM untouched when a run is
-interrupted or transfer verification fails. Run `--help` for the full
-interface; use `--transfer metadata` only for small smoke checks.
+- `benchmark_training_efficiency.py`: synthetic training with real optimizer steps.
+- `benchmark_inference_efficiency.py`: synthetic full-pass and cached-continuation timing.
+- `estimate_training_flops.py`: dominant-matmul estimates from a suite or study.
+- `select_cuda_batch.py`: choose a candidate from an engineering batch report.
 
-`run-cloud-study` applies that lifecycle to the manifest arms of any explicitly
-selected locked study. It skips locally complete arms, transfers full artifacts,
-deletes each verified remote run directory, shuts down between arms, and deletes
-the compute instance after the selected study. A lock file prevents two study
-controllers from using the same VM concurrently.
-
-```bash
-uv run python scripts/run_study.py \
-  --study-dir benchmarks/development/frozen_backbone_comparison \
-  --wire-only --wire-device cuda
-```
-
-Training/evaluation loaders automatically wrap ordinary packed artifacts with
-`MemoryTokenPackedDataset` when `memory_write_mode: memory_token`. The stored
-data remain ordinary linguistic IDs; the view inserts input-only control ID V at
-load time.
-
-Evaluation commands require either `--checkpoint` or the explicit
-`--initialized-baseline` time-zero mode. `evaluate_nll.py` reports the final
-parallel pass; `evaluate_pass_depth.py` reports every pass through the experiment's
-`eval_passes` (or an explicit `--passes` override). Both accept an independent
-`--evaluation-data-dir`.
-
-`evaluate_lm_harness.py` accepts independent `--prefill-passes K` and
-`--decode-mode standard|feedback` overrides, with experiment defaults described
-below. Candidate suites retain answer scores and
-margins; generation suites retain generated samples. `evaluate_parameter_drift.py`
-separates backbone and added-module movement from an architecture-compatible
-reference. `verify_data_disjointness.py` rejects shared complete tokenized
-documents between the evaluation split and each training/wiring artifact.
-
-Pass-depth, memory interventions, and exact-vs-feedback continuation scripts
-are reusable checkpoint diagnostics.
-`evaluate_memory_interventions.py` measures one feedback transition and can
-independently intervene on the historical Recirculation–Memory Attention hybrid's
-recurrent source and slow memory source. It requires at least two validation blocks for a
-genuine mismatch condition.
-
-Public `generate.py`/model generation remain ordinary language generation. The
-low-level recurrent API can consume explicit MEM control steps, but no sampler
-silently schedules architecture control positions.
-
-## Evaluation defaults
-
-The evaluation commands now share precision and scoring. Parallel depth defaults
-to `eval_passes`; downstream prompt depth defaults to `eval_prefill_passes` or
-`eval_passes`, independently of `eval_decode_mode`. Explicit flags override these
-values. `--autocast-dtype config|float32|bfloat16` records actual evaluation
-precision without changing checkpoint compatibility settings. Standalone
-`--max-blocks` is a prefix limit; omit it for the full split, or use 64 to match
-the active routine check. See [the evaluation contract](../evaluation/README.md).
-
-Snapshot publication and recovery are documented in
-[docs/TRAINING.md](../docs/TRAINING.md). Use `evaluate_nll.py --forward feedback
---max-blocks 1` for full-block BOS-only feedback; it fixes prefill to K=1 and
-reports full and aligned target scores. The trainer can run the same evaluator
-at selected `feedback_eval_at_tokens` snapshot thresholds. This adds no new
-inference algorithm and does not change routine K=4 checks.
+Engineering grids are not scientific arms.
+The general training grid includes legacy recirculation, not both active recurrent mergers.
+The inference script uses the five current arms but does not yet time the production BOS NLL evaluator.
+See [efficiency measurements](../benchmarks/efficiency/README.md) and
+[the retained A6000 report](../benchmarks/development/inference_efficiency/README.md).

@@ -16,9 +16,10 @@ profiles.
 | `--device` | Experiment `device` | Execution device; does not modify checkpoint compatibility settings |
 | `--max-blocks` | All blocks for standalone packed evaluators | Prefix-subset limit, **not** a batch size |
 
-The trainer retains its separate routine block limit, `eval_batches` (64 in the
-active frozen configs), and cadence of 3,276,800 tokens. To reproduce that check
-standalone, use the same weights, artifact, precision, K and `--max-blocks 64`.
+The trainer uses `eval_batches` for its block limit and `eval_every_tokens` for
+its cadence. The main comparison and LR sweep have different cadences.
+See [the study protocols](../benchmarks/README.md). To reproduce a routine check
+standalone, use the same weights, artifact, precision, K and block limit.
 Omitting the standalone limit still selects the full split. Blocks are evaluated
 one at a time; multi-block batching remains a later addition.
 
@@ -26,6 +27,42 @@ A K=1 BOS-only prompt uses the ordinary feedback implementation. It is not a new
 mode. Downstream tasks normally use K=4 actual-context prefill followed by one
 feedback step per observed candidate token or generated token. A vanilla model
 uses K=1 standard decoding; unsupported requests fail, without fallback.
+
+## Precision
+
+`dtype` sets parameter storage. The active CUDA configs use FP32 parameters and
+BF16 autocast for eligible operations. Ordinary AdamW state therefore remains FP32.
+BF16 compute is not weight quantization.
+
+```yaml
+device: cuda
+dtype: float32
+autocast_dtype: bfloat16
+```
+
+The CLI inherits `autocast_dtype` from the experiment. Use
+`--autocast-dtype float32` to disable autocast or `bfloat16` to request it explicitly.
+Overrides do not modify the training config used for checkpoint compatibility.
+Direct Python evaluators have no experiment config. Their default is no autocast.
+
+The shared evaluation context restores model training mode after success or failure.
+It calculates each cross-entropy reduction in FP32 and accumulates the returned
+loss sums and target counts across blocks. Reports record actual parameter
+dtypes, autocast, device and loss dtype. Compare results at matched precision.
+
+Selected-checkpoint feedback uses `feedback_eval_autocast_dtype`:
+`config`, `float32` or `bfloat16`. It can differ explicitly from routine validation.
+A changed precision request gets a separate durable feedback report.
+
+BF16 autocast requires supported CUDA or MPS hardware and runtime.
+CPU evaluation of a CUDA/BF16 experiment requires `--device cpu --autocast-dtype float32`.
+Unsupported requests fail without a silent precision change.
+MPS normally uses FP32. MPS BF16 remains an engineering option until qualified on the target host.
+The efficiency runner records unavailable modes as unsupported.
+
+The trainer accepts only BF16 or disabled autocast. Enabling autocast requires
+`dtype: float32`. FP16 training has no validated loss-scaling policy.
+Pure BF16 parameter storage is not the active training protocol.
 
 ## Packed NLL and diagnostics
 
@@ -58,7 +95,21 @@ not denote a separately trained vanilla model. Historical JSON is not rewritten.
 transition with real, zero and mismatched memory. It now uses the shared scorer,
 precision context and per-source aggregation. The mismatch donor is the next
 block modulo the full artifact length, even when the scored subset is smaller;
-this rule is recorded. Depth-aligned K=4 interventions remain later work.
+this rule is recorded. Use this simple check on early trained snapshots first;
+dedicated token-zero evaluation and deeper diagnostics are deferred. General
+depth-configurable memory diagnostics remain later work; K=4 will be an
+experiment default, not an implementation limit. Zero memory is not equivalent
+to bypassing an adaptive recirculation merger, which can still rescale its input.
+See [the development plan](../docs/DEVELOPMENT_PLAN.md).
+
+Intervention reports use schema version 3. Hybrid channel keys explicitly name
+both channels, for example `zero_recurrent_real_attention` and `real_recurrent_zero_attention`;
+the combined `real_memory`, `zero_memory` and `mismatched_memory` conditions are unchanged.
+FLOP reports use schema version 2 and `memory_writer`, `memory_reader_projections`,
+`memory_reader_products` and `memory_write_positions` fields.
+Pure-model field renames do not change the computation. The optional late-memory
+hybrid is a new architecture, not a rename of the deleted hybrids. CLI provenance records
+its recurrent merger and layer configuration. Older JSON retains its original schema.
 
 ## Full-block BOS-only feedback NLL
 
@@ -94,6 +145,10 @@ For trainer integration, use `feedback_eval_at_tokens` to select a subset of
 `feedback_eval_max_blocks` defaults to one complete prefix block. All arms must
 use the same artifact, prefix length and feedback precision. One block is a
 diagnostic, not a statistically reliable ranking or full-split evaluation.
+
+The [main frozen protocol](../benchmarks/development/frozen_backbone_comparison/README.md)
+selects the checkpoint milestones. The LR sweep leaves feedback off.
+Reports retain requested thresholds and actual optimizer-boundary token counts.
 
 ## Downstream suites
 
@@ -134,9 +189,7 @@ margins. The same contract can be used by a future fresh unfrozen experiment;
 freezing is not an evaluation mode.
 
 Older standalone results may have used FP32 despite a BF16 training config.
-Do not silently relabel them as BF16 or combine unmatched settings. New results
-record actual evaluator precision. Unsupported BF16 hardware fails explicitly;
-CPU evaluation of a CUDA/BF16 config needs `--device cpu --autocast-dtype float32`.
+Do not relabel them as BF16 or combine unmatched settings.
 
 Write retained output beside the relevant study/checkpoint. Use
 `--evaluation-data-dir` to select a separate artifact for final claims; the
@@ -151,9 +204,6 @@ diagnostics, initially one fixed full block per arm (`--max-blocks 1`).
 The combined exact-vs-feedback cost includes reference decoding and diagnostics;
 it is not feedback-only cost. BF16 is not uniformly faster across these paths.
 
-New planned snapshots commit weights and identity in one safetensors file;
-the sidecar is a repairable mirror. Legacy files still need their sidecar and
-run metadata. See [snapshot recovery](../docs/TRAINING.md).
-Multi-block batching, expanded memory interventions and the
-fresh unfrozen study are later additions, tracked in
-[the cleanup ledger](../docs/CLEANUP_STATUS.md).
+See [training](../docs/TRAINING.md) for snapshot recovery and scheduling.
+The [development plan](../docs/DEVELOPMENT_PLAN.md) tracks batching, expanded
+interventions and the separate unfrozen study.

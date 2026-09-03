@@ -14,10 +14,12 @@ from safetensors.torch import load_file as load_safetensors
 from .snapshots import snapshot_metadata as read_snapshot_metadata
 from .durable import fsync_directory as _fsync_directory
 
+from ..compatibility import normalize_checkpoint_variant_name
 from ..config import (
     ExperimentConfig,
     canonical_memory_write_mode,
     canonical_variant_name,
+    resolve_memory_attention_pattern,
     reject_removed_paper_policy,
 )
 
@@ -28,6 +30,7 @@ _CHECKPOINT_RE = re.compile(r"^checkpoint_(\d{12})\.pt$")
 
 _INIT_ARCHITECTURE_FIELDS = (
     "variant",
+    "memory_pattern",
     "memory_window",
     "memory_write_mode",
     "memory_write_stride",
@@ -46,27 +49,11 @@ _INIT_ARCHITECTURE_FIELDS = (
     "recirculation_alpha",
     "recirculation_mode",
     "recurrent_merger",
+    "recurrent_layers",
 )
 
-_HISTORICAL_VARIANT_NAMES = {
-    "swa_transformer": "vanilla",
-    "strided_attention": "sparse_swa",
-    "memory_attention": "bank",
-    "dense_memory_attention": "bank",
-    "strided_memory_attention": "bank",
-    "memory_token_attention": "bank",
-    "multiscale_memory_attention": "bank_multiscale",
-    "recirculation_strided_memory_attention": "bank_recirculation_hybrid",
-    "tape": "bank",
-    "tape_multiscale": "bank_multiscale",
-    "tape_add_hybrid": "bank_add_hybrid",
-    "tape_recirculation_hybrid": "bank_recirculation_hybrid",
-    "memory_attention_multiscale": "bank_multiscale",
-    "memory_attention_add_hybrid": "bank_add_hybrid",
-    "memory_attention_recirculation_hybrid": "bank_recirculation_hybrid",
-}
-
 _INIT_ARCHITECTURE_DEFAULTS = {
+    "memory_pattern": None,
     "memory_window": 32,
     "memory_write_mode": None,
     "memory_write_stride": None,
@@ -85,6 +72,7 @@ _INIT_ARCHITECTURE_DEFAULTS = {
     "recirculation_alpha": 0.1,
     "recirculation_mode": "fixed",
     "recurrent_merger": None,
+    "recurrent_layers": None,
 }
 
 
@@ -368,6 +356,22 @@ def save_checkpoint_generation(
     return path
 
 
+def _canonical_architecture_names(config: dict[str, Any]) -> dict[str, Any]:
+    result = dict(config)
+    result.setdefault("memory_pattern", None)
+    result.setdefault("recurrent_layers", None)
+    name = result.get("variant")
+    if isinstance(name, str):
+        name = normalize_checkpoint_variant_name(name)
+        result["variant"] = canonical_variant_name(name)
+        if result["variant"] == "memory_attention":
+            result["memory_pattern"], result["memory_write_mode"] = resolve_memory_attention_pattern(
+                name, result.get("memory_pattern"), result.get("memory_write_mode")
+            )
+    result["memory_write_mode"] = canonical_memory_write_mode(result.get("memory_write_mode"))
+    return result
+
+
 def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
     # Canonicalize historical generic pass-weight names and discard fields
     # that are no longer part of the current experiment schema. This keeps
@@ -392,15 +396,7 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
         for key, value in canonical.items()
         if key in ExperimentConfig.__dataclass_fields__
     }
-    if isinstance(canonical.get("variant"), str):
-        # Public Memory Attention/SWA names and historical checkpoint names
-        # describe the same implementation and must compare semantically.
-        canonical["variant"] = _HISTORICAL_VARIANT_NAMES.get(
-            canonical["variant"], canonical_variant_name(canonical["variant"])
-        )
-    canonical["memory_write_mode"] = canonical_memory_write_mode(
-        canonical.get("memory_write_mode")
-    )
+    canonical = _canonical_architecture_names(canonical)
     ignored = {
         "model_dir",
         "data_dir",
@@ -448,12 +444,6 @@ def _changed_experiment_config_fields(
     )
 
 
-def _canonical_init_variant(value: Any) -> Any:
-    if not isinstance(value, str):
-        return value
-    return _HISTORICAL_VARIANT_NAMES.get(value, value)
-
-
 def _init_compatibility_view(config: dict[str, Any]) -> dict[str, Any]:
     """Return fields whose meaning must survive weight-only initialization."""
 
@@ -466,9 +456,8 @@ def _init_compatibility_view(config: dict[str, Any]) -> dict[str, Any]:
         field: config.get(field, _INIT_ARCHITECTURE_DEFAULTS.get(field))
         for field in _INIT_ARCHITECTURE_FIELDS
     }
-    view["variant"] = _canonical_init_variant(view["variant"])
-    view["memory_write_mode"] = canonical_memory_write_mode(view["memory_write_mode"])
-    for field in ("memory_layers", "sparse_attention_layers"):
+    view = _canonical_architecture_names(view)
+    for field in ("memory_layers", "sparse_attention_layers", "recurrent_layers"):
         if isinstance(view[field], tuple):
             view[field] = list(view[field])
     return view
@@ -497,6 +486,7 @@ def _validate_payload(
 ) -> None:
     _require_payload(payload)
     reject_removed_paper_policy(payload["experiment_config"])
+    normalize_checkpoint_variant_name(payload["experiment_config"].get("variant", ""))
     if (
         expected_manifest_sha256 is not None
         and payload["data_manifest_sha256"] != expected_manifest_sha256
@@ -564,14 +554,15 @@ def load_model_weights(
                 "initialization snapshot metadata has no unique_tokens_seen"
             )
         metadata_variant = snapshot_metadata.get("variant")
-        if (
-            metadata_variant is not None
-            and _canonical_init_variant(metadata_variant)
-            != _canonical_init_variant(source_config.get("variant"))
-        ):
-            raise ValueError(
-                "initialization snapshot variant disagrees with run.json"
-            )
+        if metadata_variant is not None:
+            try:
+                changed = _changed_init_architecture_fields(
+                    {**source_config, "variant": metadata_variant}, source_config,
+                )
+            except ValueError as exc:
+                raise ValueError("initialization snapshot variant disagrees with run.json") from exc
+            if changed:
+                raise ValueError("initialization snapshot variant disagrees with run.json")
     else:
         payload = torch.load(source_path, map_location="cpu", weights_only=False)
         _require_payload(payload)

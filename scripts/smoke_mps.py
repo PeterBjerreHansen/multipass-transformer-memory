@@ -13,7 +13,7 @@ from tiny_mistral.config import MistralConfig
 from tiny_mistral.device import mps_available, synchronize
 from tiny_mistral.modeling import MistralForCausalLM
 from tiny_mistral_mptt.training.phases import configure_phase
-from tiny_mistral_mptt.variants import MultiscaleMemoryAttentionVariant
+from tiny_mistral_mptt.variants import MemoryAttentionVariant
 
 
 def config() -> MistralConfig:
@@ -86,8 +86,9 @@ def main() -> None:
         cfg, attention_backend="local"
     ).to(device=device, dtype=torch.float16)
     memory_backbone.load_state_dict(ref.state_dict())
-    memory_attention = MultiscaleMemoryAttentionVariant(
+    memory_attention = MemoryAttentionVariant(
         memory_backbone,
+        memory_pattern="dense_and_strided",
         memory_dense_window=8,
         memory_sparse_window=4,
         memory_sparse_stride=8,
@@ -101,7 +102,7 @@ def main() -> None:
         loss_weights=[0.0, 1.0],
     )
     if not bool(torch.isfinite(memory_output.loss).item()):
-        raise RuntimeError("non-finite Multiscale Memory Attention loss")
+        raise RuntimeError("non-finite Dense-and-strided Memory Attention loss")
     memory_output.loss.backward()
     if not any(
         parameter.grad is not None
@@ -109,10 +110,10 @@ def main() -> None:
         for parameter in memory_attention.added_parameters()
         if parameter.requires_grad
     ):
-        raise RuntimeError("Multiscale Memory Attention produced no added-parameter gradients")
+        raise RuntimeError("Dense-and-strided Memory Attention produced no added-parameter gradients")
     synchronize(device)
-    print(f"multiscale_memory_attention_loss={memory_output.loss.item():.6f}")
-    print("PASS: MPS local, Strided Attention, and Multiscale Memory Attention smoke tests")
+    print(f"dense_and_strided_memory_attention_loss={memory_output.loss.item():.6f}")
+    print("PASS: MPS local, Strided Self-Attention, and Dense-and-strided Memory Attention smoke tests")
 
 
 if __name__ == "__main__":

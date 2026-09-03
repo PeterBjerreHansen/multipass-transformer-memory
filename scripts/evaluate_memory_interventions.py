@@ -23,10 +23,7 @@ SUPPORTED = {
     "memory_add",
     "recirculation",
     "recurrent_memory",
-    "bank",
-    "bank_multiscale",
-    "bank_add_hybrid",
-    "bank_recirculation_hybrid",
+    "memory_attention",
 }
 
 
@@ -34,7 +31,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Run real/zero/mismatched recurrence interventions. The hybrid also "
-            "reports fast and Memory Attention channel interventions independently."
+            "reports recurrent and Memory Attention channel interventions independently."
         )
     )
     parser.add_argument("--config", required=True)
@@ -77,7 +74,7 @@ def main() -> None:
     result["variant"] = cfg.variant
 
     document = {
-        "schema_version": 2,
+        "schema_version": 3,
         "evaluation_kind": "single_feedback_transition_interventions",
         "provenance": evaluation_provenance(
             config_path=args.config,

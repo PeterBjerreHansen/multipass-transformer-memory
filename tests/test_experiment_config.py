@@ -90,14 +90,14 @@ def test_unvalidated_autocast_dtype_is_rejected():
     with pytest.raises(ValueError, match="autocast_dtype"):
         _config(autocast_dtype="float16")
 
-def test_bank_config_requires_coherent_write_policy():
-    dense = _config(variant="bank", memory_write_mode="dense")
+def test_memory_config_requires_coherent_write_policy():
+    dense = _config(variant="memory_attention", memory_write_mode="dense")
     assert dense.memory_write_mode == "dense"
     assert dense.memory_write_stride is None
     assert dense.memory_token_visibility is None
 
     periodic = _config(
-        variant="bank",
+        variant="memory_attention",
         memory_write_mode="periodic",
         memory_write_stride=4,
         memory_layers=[7, 3],
@@ -113,7 +113,8 @@ def test_bank_config_requires_coherent_write_policy():
     assert strided.memory_write_mode == "strided"
 
     mem = _config(
-        variant="bank_add_hybrid",
+        variant="memory_token_attention",
+        recurrent_merger="projected_residual", recurrent_layers=[3],
         memory_write_mode="memory_token",
         memory_write_stride=8,
         memory_token_visibility="visible",
@@ -122,36 +123,36 @@ def test_bank_config_requires_coherent_write_policy():
     assert mem.memory_token_visibility == "visible"
 
     with pytest.raises(ValueError, match="require memory_write_mode"):
-        _config(variant="bank")
+        _config(variant="memory_attention")
     with pytest.raises(ValueError, match="requires positive memory_write_stride"):
-        _config(variant="bank", memory_write_mode="periodic")
+        _config(variant="memory_attention", memory_write_mode="periodic")
     with pytest.raises(ValueError, match="requires memory_token_visibility"):
         _config(
-            variant="bank",
+            variant="memory_attention",
             memory_write_mode="memory_token",
             memory_write_stride=8,
         )
     with pytest.raises(ValueError, match="must not set memory_write_stride"):
-        _config(variant="bank", memory_write_mode="dense", memory_write_stride=1)
+        _config(variant="memory_attention", memory_write_mode="dense", memory_write_stride=1)
     with pytest.raises(ValueError, match="applies only"):
         _config(
-            variant="bank",
+            variant="memory_attention",
             memory_write_mode="periodic",
             memory_write_stride=8,
             memory_token_visibility="write_only",
         )
 
 
-def test_bank_fields_cannot_silently_change_other_variants():
+def test_memory_fields_cannot_silently_change_other_variants():
     with pytest.raises(ValueError, match="supported only for Memory Attention variants"):
         _config(variant="memory_add", memory_write_stride=4)
     with pytest.raises(ValueError, match="supported only for Memory Attention variants"):
         _config(variant="memory_add", memory_layers=[3])
 
 
-def test_multiscale_bank_config_uses_explicit_dense_and_sparse_windows():
+def test_dense_and_strided_memory_config_uses_explicit_dense_and_sparse_windows():
     cfg = _config(
-        variant="bank_multiscale",
+        variant="dense_and_strided_memory_attention",
         memory_dense_window=32,
         memory_sparse_window=32,
         memory_sparse_stride=32,
@@ -162,17 +163,17 @@ def test_multiscale_bank_config_uses_explicit_dense_and_sparse_windows():
     assert cfg.memory_window == 64
 
     with pytest.raises(ValueError, match="requires memory_dense_window"):
-        _config(variant="bank_multiscale")
+        _config(variant="dense_and_strided_memory_attention")
     with pytest.raises(ValueError, match="at least one non-zero"):
         _config(
-            variant="bank_multiscale",
+            variant="dense_and_strided_memory_attention",
             memory_dense_window=0,
             memory_sparse_window=0,
             memory_sparse_stride=32,
         )
-    with pytest.raises(ValueError, match="not memory_write"):
+    with pytest.raises(ValueError, match="conflicts with memory_write_mode"):
         _config(
-            variant="bank_multiscale",
+            variant="dense_and_strided_memory_attention",
             memory_write_mode="dense",
             memory_dense_window=32,
             memory_sparse_window=32,
@@ -180,9 +181,9 @@ def test_multiscale_bank_config_uses_explicit_dense_and_sparse_windows():
         )
 
 
-def test_sparse_swa_config_is_single_pass_and_rejects_bank_fields():
+def test_strided_self_attention_config_is_single_pass_and_rejects_memory_fields():
     cfg = _config(
-        variant="sparse_swa",
+        variant="strided_self_attention",
         pass_schedule=[{"probabilities": {1: 1.0}}],
         sparse_attention_stride=32,
         sparse_attention_window=32,
@@ -192,19 +193,19 @@ def test_sparse_swa_config_is_single_pass_and_rejects_bank_fields():
 
     with pytest.raises(ValueError, match="requires positive sparse_attention_stride"):
         _config(
-            variant="sparse_swa",
+            variant="strided_self_attention",
             pass_schedule=[{"probabilities": {1: 1.0}}],
             sparse_attention_window=32,
         )
     with pytest.raises(ValueError, match="only one-pass"):
         _config(
-            variant="sparse_swa",
+            variant="strided_self_attention",
             sparse_attention_stride=32,
             sparse_attention_window=32,
         )
     with pytest.raises(ValueError, match="supported only for Memory Attention variants"):
         _config(
-            variant="sparse_swa",
+            variant="strided_self_attention",
             pass_schedule=[{"probabilities": {1: 1.0}}],
             sparse_attention_stride=32,
             sparse_attention_window=32,
@@ -212,9 +213,9 @@ def test_sparse_swa_config_is_single_pass_and_rejects_bank_fields():
         )
 
 
-def test_bank_memory_layer_and_position_configuration_is_validated():
+def test_memory_attention_layer_and_position_configuration_is_validated():
     cfg = _config(
-        variant="bank",
+        variant="memory_attention",
         memory_write_mode="periodic",
         memory_write_stride=32,
         memory_layers="all",
@@ -225,21 +226,21 @@ def test_bank_memory_layer_and_position_configuration_is_validated():
 
     with pytest.raises(ValueError, match="non-empty list"):
         _config(
-            variant="bank",
+            variant="memory_attention",
             memory_write_mode="periodic",
             memory_write_stride=32,
             memory_layers=[],
         )
     with pytest.raises(ValueError, match="unique"):
         _config(
-            variant="bank",
+            variant="memory_attention",
             memory_write_mode="periodic",
             memory_write_stride=32,
             memory_layers=[3, 3],
         )
     with pytest.raises(ValueError, match=r"rope\|none"):
         _config(
-            variant="bank",
+            variant="memory_attention",
             memory_write_mode="periodic",
             memory_write_stride=32,
             memory_position_encoding="absolute",
@@ -307,25 +308,26 @@ def test_integrated_freeze_policy_requires_a_later_phase_b_transition() -> None:
         _config(freeze_pretrained_until_tokens=100, max_unique_tokens=100)
 
 
-def test_bank_recirculation_hybrid_requires_both_configuration_contracts():
+def test_optional_recurrent_memory_requires_its_own_read_layers():
     cfg = _config(
-        variant="bank_recirculation_hybrid",
+        variant="memory_attention",
         phase="A",
         memory_write_mode="periodic",
         memory_write_stride=32,
         memory_layers=[3, 7],
-        recirculation_mode="adaptive",
-        recirculation_source_layer=6,
-        recirculation_destination_layer=3,
+        recurrent_merger="recirculation",
+        recurrent_layers=[5, 3],
     )
     assert cfg.memory_position_encoding == "rope"
-    assert cfg.recirculation_mode == "adaptive"
+    assert cfg.recurrent_merger == "recirculation"
+    assert cfg.recurrent_layers == [3, 5]
 
-    with pytest.raises(ValueError, match="requires source and destination"):
+    with pytest.raises(ValueError, match="recurrent_layers"):
         _config(
-            variant="bank_recirculation_hybrid",
+            variant="memory_attention",
             memory_write_mode="periodic",
             memory_write_stride=32,
+            recurrent_merger="recirculation",
         )
 
 

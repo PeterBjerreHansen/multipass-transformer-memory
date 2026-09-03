@@ -70,7 +70,7 @@ def test_flex_key_validity_mask_matches_reference_when_available():
     torch.testing.assert_close(yf, yr, atol=3e-5, rtol=3e-5)
 
 
-def test_sparse_swa_flex_mask_matches_reference_union():
+def test_strided_self_attention_flex_mask_matches_reference_union():
     cfg = micro_config(sliding_window=4)
     ref = MistralAttention(cfg, 0, attention_backend="reference")
     flex = MistralAttention(

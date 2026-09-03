@@ -11,7 +11,7 @@ from tiny_mistral.attention import (
 )
 from tiny_mistral.modeling import MistralForCausalLM
 from tiny_mistral_mptt.model_factory import build_variant
-from tiny_mistral_mptt.variants.sparse_swa import SparseSWAVariant
+from tiny_mistral_mptt.variants.strided_self_attention import StridedSelfAttentionVariant
 
 
 def test_multiresolution_selector_is_dense_recent_plus_fixed_periodic_old():
@@ -37,7 +37,7 @@ def test_multiresolution_selector_is_dense_recent_plus_fixed_periodic_old():
     assert mask[0, 0].nonzero().flatten().tolist() == [2, 5, 6, 7, 8, 9]
 
 
-def test_compact_sparse_swa_matches_dense_reference_union_mask():
+def test_compact_strided_self_attention_matches_dense_reference_union_mask():
     torch.manual_seed(81)
     query = torch.randn(2, 4, 11, 8)
     key = torch.randn(2, 2, 11, 8)
@@ -69,19 +69,19 @@ def test_compact_sparse_swa_matches_dense_reference_union_mask():
     torch.testing.assert_close(compact, dense, atol=2e-6, rtol=2e-6)
 
 
-def test_sparse_swa_variant_adds_no_parameters_and_only_marks_selected_layers():
+def test_strided_self_attention_variant_adds_no_parameters_and_only_marks_selected_layers():
     torch.manual_seed(82)
     vanilla_backbone = MistralForCausalLM(micro_config(num_hidden_layers=3))
     torch.manual_seed(82)
     sparse_backbone = MistralForCausalLM(micro_config(num_hidden_layers=3))
     variant = build_variant(
-        "sparse_swa",
+        "strided_self_attention",
         sparse_backbone,
         sparse_attention_stride=3,
         sparse_attention_window=2,
         sparse_attention_layers=[0, 2],
     )
-    assert isinstance(variant, SparseSWAVariant)
+    assert isinstance(variant, StridedSelfAttentionVariant)
     assert variant.sparse_attention_layers == (0, 2)
     assert tuple(variant.state_dict()) == tuple(
         f"backbone.{name}" for name in vanilla_backbone.state_dict()
@@ -94,13 +94,13 @@ def test_sparse_swa_variant_adds_no_parameters_and_only_marks_selected_layers():
         assert layer.self_attn.sparse_attention_window == expected
 
 
-def test_sparse_swa_incremental_cache_matches_full_forward():
+def test_strided_self_attention_incremental_cache_matches_full_forward():
     torch.manual_seed(83)
     backbone = MistralForCausalLM(
         micro_config(num_hidden_layers=2, sliding_window=4),
         attention_backend="reference",
     ).eval()
-    model = SparseSWAVariant(
+    model = StridedSelfAttentionVariant(
         backbone,
         sparse_attention_stride=3,
         sparse_attention_window=2,
@@ -127,4 +127,3 @@ def test_sparse_swa_incremental_cache_matches_full_forward():
                 assert selected.tolist() == sorted(selected.tolist())
         incremental = torch.cat(pieces, dim=1)
     torch.testing.assert_close(incremental, full, atol=4e-5, rtol=4e-5)
-

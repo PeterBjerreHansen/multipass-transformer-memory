@@ -5,11 +5,11 @@ import sys
 
 from tiny_mistral.config import tiny_mistral_248m_config
 from tiny_mistral_mptt.flops import (
-    _bank_pairs,
+    _memory_pairs,
     estimate_pass,
     estimate_schedule,
     memory_token_layout,
-    bank_write_positions,
+    memory_write_positions,
 )
 
 
@@ -42,7 +42,7 @@ def test_frozen_study_flop_report_uses_authoritative_arm_batching():
         "recurrent_projected_residual_multipass_100m",
         "dense_memory_attention_multipass_100m",
         "strided_memory_attention_multipass_100m",
-        "multiscale_memory_attention_multipass_100m",
+        "dense_and_strided_memory_attention_multipass_100m",
     }
     assert {
         (row["batch_size"], row["grad_accum_steps"])
@@ -65,7 +65,7 @@ def test_recurrent_memory_counts_shared_writer_and_each_merger():
             linguistic_sequence_length=128, memory_layers=[3, 7],
             recurrent_merger=merger,
         )
-        assert estimate.forward.bank_writer == 2 * linear
+        assert estimate.forward.memory_writer == 2 * linear
         assert estimate.forward.recurrent_controller == 2 * 2 * controller_factor * linear
         assert estimate.forward.recurrent_projection == 2 * 2 * projection_factor * linear
 
@@ -74,7 +74,7 @@ def test_memory_token_layout_matches_packed_dataset_contract():
     layout = memory_token_layout(2048, 32)
     assert len(layout) == 2111
     assert sum(layout) == 63
-    uses_controls, writes, key_layout = bank_write_positions(
+    uses_controls, writes, key_layout = memory_write_positions(
         linguistic_length=2048,
         memory_write_mode="memory_token",
         memory_write_stride=32,
@@ -84,10 +84,10 @@ def test_memory_token_layout_matches_packed_dataset_contract():
     assert key_layout == layout
 
 
-def test_bank_pairs_are_strictly_past_and_windowed():
+def test_memory_pairs_are_strictly_past_and_windowed():
     # Query positions 0..3 see 0, 0, 1, and 1 strictly prior writes. The write
     # at position 3 is not visible to the query at position 3.
-    assert _bank_pairs(4, (1, 3), 2) == 2
+    assert _memory_pairs(4, (1, 3), 2) == 2
 
 
 def test_stage5_flop_estimates_include_architecture_specific_work():
@@ -100,7 +100,7 @@ def test_stage5_flop_estimates_include_architecture_specific_work():
     )
     dense = estimate_schedule(
         config,
-        variant="bank",
+        variant="memory_attention",
         pass_probabilities={2: 0.9, 3: 0.1},
         linguistic_sequence_length=2048,
         memory_window=32,
@@ -109,7 +109,7 @@ def test_stage5_flop_estimates_include_architecture_specific_work():
     )
     periodic = estimate_schedule(
         config,
-        variant="bank",
+        variant="memory_attention",
         pass_probabilities={2: 0.9, 3: 0.1},
         linguistic_sequence_length=2048,
         memory_window=32,
@@ -119,7 +119,7 @@ def test_stage5_flop_estimates_include_architecture_specific_work():
     )
     memory_token = estimate_schedule(
         config,
-        variant="bank",
+        variant="memory_attention",
         pass_probabilities={2: 0.9, 3: 0.1},
         linguistic_sequence_length=2048,
         memory_window=32,
@@ -157,7 +157,7 @@ def test_fixed_recursion_does_not_charge_adaptive_controller():
     assert adaptive.forward.recurrent_controller > 0
 
 
-def test_sparse_swa_adds_only_sparse_attention_products():
+def test_strided_self_attention_adds_only_sparse_attention_products():
     config = tiny_mistral_248m_config()
     vanilla = estimate_pass(
         config,
@@ -167,7 +167,7 @@ def test_sparse_swa_adds_only_sparse_attention_products():
     )
     sparse = estimate_pass(
         config,
-        variant="sparse_swa",
+        variant="strided_self_attention",
         passes=1,
         linguistic_sequence_length=128,
         sparse_attention_stride=32,
@@ -179,11 +179,11 @@ def test_sparse_swa_adds_only_sparse_attention_products():
     assert sparse.forward.mlp_projections == vanilla.forward.mlp_projections
 
 
-def test_multiscale_bank_flops_count_dense_writes_and_union_reads():
+def test_dense_and_strided_memory_flops_count_dense_writes_and_union_reads():
     config = tiny_mistral_248m_config()
     estimate = estimate_pass(
         config,
-        variant="bank_multiscale",
+        variant="dense_and_strided_memory_attention",
         passes=2,
         linguistic_sequence_length=128,
         memory_dense_window=32,
@@ -191,7 +191,22 @@ def test_multiscale_bank_flops_count_dense_writes_and_union_reads():
         memory_sparse_stride=32,
         memory_layers=[4, 7],
     )
-    assert estimate.bank_write_positions == 128
+    assert estimate.memory_write_positions == 128
     assert estimate.memory_positions == 0
-    assert estimate.forward.bank_writer > 0
-    assert estimate.forward.bank_reader_products > 0
+    assert estimate.forward.memory_writer > 0
+    assert estimate.forward.memory_reader_products > 0
+
+
+def test_optional_hybrid_counts_both_writer_applications_and_shared_mergers():
+    config = tiny_mistral_248m_config()
+    for merger in ("projected_residual", "recirculation"):
+        common = dict(passes=3, linguistic_sequence_length=128)
+        attention = estimate_pass(config, variant="dense_memory_attention", memory_layers=[3, 7], **common)
+        recurrent = estimate_pass(config, variant="recurrent_memory", memory_layers=[3],
+                                  recurrent_merger=merger, **common)
+        hybrid = estimate_pass(config, variant="dense_memory_attention", memory_layers=[3, 7],
+                               recurrent_merger=merger, recurrent_layers=[3], **common)
+        assert hybrid.forward.memory_writer == attention.forward.memory_writer + recurrent.forward.memory_writer
+        assert hybrid.forward.memory_reader_projections == attention.forward.memory_reader_projections
+        assert hybrid.forward.recurrent_controller == recurrent.forward.recurrent_controller
+        assert hybrid.forward.recurrent_projection == recurrent.forward.recurrent_projection

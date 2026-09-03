@@ -21,9 +21,9 @@ from typing import Any, Iterable, Mapping
 from tiny_mistral.config import MistralConfig
 from .config import (
     MEMORY_ATTENTION_VARIANTS,
-    MULTISCALE_MEMORY_ATTENTION_VARIANTS,
     canonical_memory_write_mode,
     canonical_variant_name,
+    resolve_memory_attention_pattern,
 )
 
 
@@ -117,7 +117,7 @@ def _multiresolution_pairs(
     return pairs
 
 
-def _bank_pairs(
+def _memory_pairs(
     sequence_length: int,
     write_positions: tuple[int, ...],
     memory_window: int,
@@ -140,7 +140,7 @@ def _bank_pairs(
     return pairs
 
 
-def bank_write_positions(
+def memory_write_positions(
     *,
     linguistic_length: int,
     memory_write_mode: str,
@@ -182,9 +182,9 @@ class FlopBreakdown:
     self_attention_products: int = 0
     mlp_projections: int = 0
     lm_head: int = 0
-    bank_writer: int = 0
-    bank_reader_projections: int = 0
-    bank_reader_products: int = 0
+    memory_writer: int = 0
+    memory_reader_projections: int = 0
+    memory_reader_products: int = 0
     recurrent_controller: int = 0
     recurrent_projection: int = 0
 
@@ -222,7 +222,7 @@ class PassFlopEstimate:
     linguistic_sequence_length: int
     physical_sequence_length: int
     memory_positions: int
-    bank_write_positions: int
+    memory_write_positions: int
     forward: FlopBreakdown
     training_forward: str = "parallel_multipass"
     training_multiplier: float = BACKWARD_MULTIPLIER
@@ -242,7 +242,7 @@ class PassFlopEstimate:
             "linguistic_sequence_length": self.linguistic_sequence_length,
             "physical_sequence_length": self.physical_sequence_length,
             "memory_positions": self.memory_positions,
-            "bank_write_positions": self.bank_write_positions,
+            "memory_write_positions": self.memory_write_positions,
             "training_forward": self.training_forward,
             "training_multiplier": self.training_multiplier,
             "forward": self.forward.to_dict(),
@@ -307,9 +307,9 @@ def _backbone_pass_breakdown(
     total_pairs = layers * local_pairs
     if sparse_attention_window:
         if config.sliding_window is None:
-            raise ValueError("Strided Attention requires a finite sliding_window")
+            raise ValueError("Strided Self-Attention requires a finite sliding_window")
         if sparse_attention_stride is None:
-            raise ValueError("Strided Attention requires sparse_attention_stride")
+            raise ValueError("Strided Self-Attention requires sparse_attention_stride")
         if not 0 < int(sparse_attention_layers) <= layers:
             raise ValueError("sparse_attention_layers count is outside the backbone")
         multiresolution_pairs = _multiresolution_pairs(
@@ -345,7 +345,7 @@ def _backbone_pass_breakdown(
     )
 
 
-def _bank_breakdown(
+def _memory_breakdown(
     config: MistralConfig,
     *,
     sequence_length: int,
@@ -359,12 +359,12 @@ def _bank_breakdown(
     hidden_size = int(config.hidden_size)
     kv_width = int(config.num_key_value_heads) * int(config.head_dim)
     memory_length = len(write_positions)
-    multiscale = memory_dense_window is not None
-    if multiscale:
+    dense_and_strided = memory_dense_window is not None
+    if dense_and_strided:
         if memory_sparse_stride is None or memory_sparse_window is None:
-            raise ValueError("multiscale Memory Attention FLOPs require all retention fields")
+            raise ValueError("dense-and-strided Memory Attention FLOPs require all retention fields")
         if write_positions != tuple(range(sequence_length)):
-            raise ValueError("multiscale Memory Attention writes every source position")
+            raise ValueError("dense-and-strided Memory Attention writes every source position")
         pairs = _multiresolution_pairs(
             (True,) * sequence_length,
             recent_window=memory_dense_window,
@@ -373,7 +373,7 @@ def _bank_breakdown(
             include_current=False,
         )
     else:
-        pairs = _bank_pairs(sequence_length, write_positions, memory_window)
+        pairs = _memory_pairs(sequence_length, write_positions, memory_window)
     reader_projections = (
         _linear_flops(sequence_length, hidden_size, hidden_size)
         + 2 * _linear_flops(memory_length, hidden_size, kv_width)
@@ -381,9 +381,9 @@ def _bank_breakdown(
     )
     reader_products = FLOPS_PER_MATMUL * hidden_size * pairs * 2
     return FlopBreakdown(
-        bank_writer=_linear_flops(memory_length, hidden_size, hidden_size),
-        bank_reader_projections=int(reader_layers) * reader_projections,
-        bank_reader_products=int(reader_layers) * reader_products,
+        memory_writer=_linear_flops(memory_length, hidden_size, hidden_size),
+        memory_reader_projections=int(reader_layers) * reader_projections,
+        memory_reader_products=int(reader_layers) * reader_products,
     )
 
 
@@ -399,7 +399,7 @@ def _recurrent_breakdown(
         return FlopBreakdown(
             recurrent_projection=_linear_flops(sequence_length, hidden_size, hidden_size)
         )
-    if variant in {"recirculation", "bank_recirculation_hybrid"}:
+    if variant == "recirculation":
         if not adaptive_recirculation:
             return FlopBreakdown()
         return FlopBreakdown(
@@ -408,10 +408,6 @@ def _recurrent_breakdown(
                 + _linear_flops(sequence_length, hidden_size, hidden_size)
                 + _linear_flops(sequence_length, hidden_size, 2 * hidden_size)
             )
-        )
-    if variant == "bank_add_hybrid":
-        return FlopBreakdown(
-            recurrent_projection=_linear_flops(sequence_length, hidden_size, hidden_size)
         )
     return FlopBreakdown()
 
@@ -423,6 +419,7 @@ def estimate_pass(
     passes: int,
     linguistic_sequence_length: int,
     memory_window: int = 32,
+    memory_pattern: str | None = None,
     memory_write_mode: str | None = None,
     memory_write_stride: int | None = None,
     memory_token_visibility: str = "visible",
@@ -435,9 +432,13 @@ def estimate_pass(
     sparse_attention_layers: Iterable[int] | str = "all",
     recirculation_mode: str = "fixed",
     recurrent_merger: str | None = None,
+    recurrent_layers: Iterable[int] | None = None,
 ) -> PassFlopEstimate:
     """Estimate forward/training FLOPs for one fixed K-pass optimizer step."""
-    variant = canonical_variant_name(str(variant))
+    requested_variant = str(variant)
+    variant = canonical_variant_name(requested_variant)
+    if variant == "memory_attention":
+        memory_pattern, memory_write_mode = resolve_memory_attention_pattern(requested_variant, memory_pattern, memory_write_mode)
     memory_write_mode = canonical_memory_write_mode(memory_write_mode)
     passes = _validate_positive("passes", passes)
     linguistic_sequence_length = _validate_positive(
@@ -445,38 +446,38 @@ def estimate_pass(
     )
     if variant not in {
         "vanilla",
-        "sparse_swa",
+        "strided_self_attention",
         "memory_add",
         "recirculation",
         "recurrent_memory",
         *MEMORY_ATTENTION_VARIANTS,
     }:
         raise ValueError(f"unsupported variant {variant!r}")
-    single_pass = variant in {"vanilla", "sparse_swa"}
+    single_pass = variant in {"vanilla", "strided_self_attention"}
     if single_pass and passes != 1:
         raise ValueError(f"{variant} FLOP estimation only supports passes=1")
     if not single_pass and passes < 2:
         raise ValueError("research variants require at least two passes")
 
-    uses_bank = variant in MEMORY_ATTENTION_VARIANTS
-    multiscale_bank = variant in MULTISCALE_MEMORY_ATTENTION_VARIANTS
-    if uses_bank and not multiscale_bank and memory_write_mode is None:
+    uses_memory = variant in MEMORY_ATTENTION_VARIANTS
+    dense_and_strided_memory = uses_memory and memory_pattern == "dense_and_strided"
+    if uses_memory and not dense_and_strided_memory and memory_write_mode is None:
         raise ValueError("Memory Attention variants require memory_write_mode")
-    if (not uses_bank or multiscale_bank) and memory_write_mode is not None:
+    if (not uses_memory or dense_and_strided_memory) and memory_write_mode is not None:
         raise ValueError("memory_write_mode only applies to Memory Attention variants")
 
-    if multiscale_bank:
+    if dense_and_strided_memory:
         if (
             memory_dense_window is None
             or memory_sparse_window is None
             or memory_sparse_stride is None
         ):
-            raise ValueError("bank_multiscale requires all multiscale retention fields")
+            raise ValueError("dense_and_strided_memory_attention requires all dense-and-strided retention fields")
         writes = tuple(range(linguistic_sequence_length))
         physical_length = linguistic_sequence_length
         key_valid = (True,) * physical_length
-    elif uses_bank:
-        uses_control_tokens, writes, layout = bank_write_positions(
+    elif uses_memory:
+        uses_control_tokens, writes, layout = memory_write_positions(
             linguistic_length=linguistic_sequence_length,
             memory_write_mode=str(memory_write_mode),
             memory_write_stride=memory_write_stride,
@@ -499,9 +500,9 @@ def estimate_pass(
         physical_length = linguistic_sequence_length
         key_valid = (True,) * physical_length
 
-    if variant == "sparse_swa":
+    if variant == "strided_self_attention":
         if sparse_attention_stride is None or sparse_attention_window is None:
-            raise ValueError("sparse_swa requires stride and window")
+            raise ValueError("strided_self_attention requires stride and window")
         sparse_layer_count = (
             int(config.num_hidden_layers)
             if sparse_attention_layers == "all"
@@ -518,10 +519,10 @@ def estimate_pass(
         ),
         sparse_attention_layers=sparse_layer_count,
     )
-    if uses_bank:
-        if not multiscale_bank:
+    if uses_memory:
+        if not dense_and_strided_memory:
             assert memory_write_mode is not None
-        bank = _bank_breakdown(
+        memory = _memory_breakdown(
             config,
             sequence_length=physical_length,
             write_positions=writes,
@@ -531,12 +532,12 @@ def estimate_pass(
                 if memory_layers == "all"
                 else len(tuple(memory_layers))
             ),
-            memory_dense_window=memory_dense_window if multiscale_bank else None,
-            memory_sparse_stride=memory_sparse_stride if multiscale_bank else None,
-            memory_sparse_window=memory_sparse_window if multiscale_bank else None,
+            memory_dense_window=memory_dense_window if dense_and_strided_memory else None,
+            memory_sparse_stride=memory_sparse_stride if dense_and_strided_memory else None,
+            memory_sparse_window=memory_sparse_window if dense_and_strided_memory else None,
         )
     else:
-        bank = FlopBreakdown()
+        memory = FlopBreakdown()
 
     recurrent = _recurrent_breakdown(
         config,
@@ -544,21 +545,22 @@ def estimate_pass(
         variant=variant,
         adaptive_recirculation=recirculation_mode == "adaptive",
     )
-    per_pass_extra = bank + recurrent
-    if variant == "recurrent_memory":
+    per_pass_extra = memory + recurrent
+    if variant == "recurrent_memory" or (uses_memory and recurrent_merger is not None):
         if recurrent_merger not in {"projected_residual", "recirculation"}:
             raise ValueError("recurrent_merger must be projected_residual or recirculation")
-        if memory_layers == "all":
+        merger_layers = memory_layers if variant == "recurrent_memory" else recurrent_layers
+        if merger_layers is None or merger_layers == "all":
             raise ValueError("recurrent memory_layers must be an explicit non-empty list")
-        layers = tuple(memory_layers)
+        layers = tuple(merger_layers)
         if not layers or len(set(layers)) != len(layers) or any(
             layer < 0 or layer >= config.num_hidden_layers for layer in layers
         ):
             raise ValueError("recurrent memory_layers must be unique valid decoder indices")
         linear = _linear_flops(physical_length, config.hidden_size, config.hidden_size)
         # One shared late writer, then one merger at each declared read layer.
-        per_pass_extra = FlopBreakdown(
-            bank_writer=linear,
+        per_pass_extra = per_pass_extra + FlopBreakdown(
+            memory_writer=linear,
             recurrent_controller=len(layers) * linear * (
                 5 if recurrent_merger == "recirculation" else 2
             ),
@@ -575,7 +577,7 @@ def estimate_pass(
         linguistic_sequence_length=linguistic_sequence_length,
         physical_sequence_length=physical_length,
         memory_positions=physical_length - linguistic_sequence_length,
-        bank_write_positions=len(writes),
+        memory_write_positions=len(writes),
         forward=total,
     )
 
@@ -587,6 +589,7 @@ def estimate_schedule(
     pass_probabilities: Mapping[int, float],
     linguistic_sequence_length: int,
     memory_window: int = 32,
+    memory_pattern: str | None = None,
     memory_write_mode: str | None = None,
     memory_write_stride: int | None = None,
     memory_token_visibility: str = "visible",
@@ -599,6 +602,7 @@ def estimate_schedule(
     sparse_attention_layers: Iterable[int] | str = "all",
     recirculation_mode: str = "fixed",
     recurrent_merger: str | None = None,
+    recurrent_layers: Iterable[int] | None = None,
 ) -> ScheduledFlopEstimate:
     """Estimate a pass schedule and normalize it to SWA Transformer K=1."""
     if not pass_probabilities:
@@ -620,6 +624,7 @@ def estimate_schedule(
             passes=passes,
             linguistic_sequence_length=linguistic_sequence_length,
             memory_window=memory_window,
+            memory_pattern=memory_pattern,
             memory_write_mode=memory_write_mode,
             memory_write_stride=memory_write_stride,
             memory_token_visibility=memory_token_visibility,
@@ -632,6 +637,7 @@ def estimate_schedule(
             sparse_attention_layers=sparse_attention_layers,
             recirculation_mode=recirculation_mode,
             recurrent_merger=recurrent_merger,
+            recurrent_layers=recurrent_layers,
         )
         for passes in probabilities
     }

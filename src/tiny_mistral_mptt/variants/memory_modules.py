@@ -9,6 +9,27 @@ from torch.nn import functional as F
 from tiny_mistral.modeling import MistralRMSNorm
 
 
+def build_recurrent_mergers(
+    config, *, layers, merger: str, initialization_seed: int,
+) -> nn.ModuleDict:
+    """Construct the same late-memory readers for standalone and hybrid use."""
+    if merger not in {"projected_residual", "recirculation"}:
+        raise ValueError("recurrent merger must be projected_residual or recirculation")
+    if not isinstance(layers, (list, tuple)) or not layers:
+        raise ValueError("recurrent layers must be an explicit non-empty list")
+    selected = tuple(sorted(int(layer) for layer in layers))
+    if len(set(selected)) != len(selected) or selected[0] < 0 or selected[-1] >= config.num_hidden_layers:
+        raise ValueError("recurrent layers must be unique valid decoder indices")
+    modules = nn.ModuleDict()
+    for layer in selected:
+        kwargs = {"initialization_seed": int(initialization_seed) + layer}
+        modules[str(layer)] = (
+            ProjectedResidualMerger(config.hidden_size, eps=config.rms_norm_eps, **kwargs)
+            if merger == "projected_residual" else RecirculationMerger(config.hidden_size, **kwargs)
+        )
+    return modules
+
+
 class MemoryWriter(nn.Module):
     """Learn a D-to-D memory record from a final normalized hidden state."""
 

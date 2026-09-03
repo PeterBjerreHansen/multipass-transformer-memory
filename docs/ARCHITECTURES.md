@@ -1,17 +1,17 @@
 # Architecture contracts
 
-This file defines the reusable model interfaces. Study-specific settings belong
-under `benchmarks/`. See [MEMORY_ATTENTION.md](MEMORY_ATTENTION.md) for the
-public terminology and [BANK_MEMORY.md](BANK_MEMORY.md) for the implementation
-contract.
+This map separates active model families from supported controls and legacy implementations.
+Study settings belong in the [benchmark protocols](../benchmarks/README.md).
+The detailed contracts are [recurrent memory](RECURRENT_MEMORY.md) and
+[Memory Attention](MEMORY_ATTENTION.md).
 
 ## SWA Transformer
 
 One ordinary TinyMistral causal pass with no architecture-added parameters.
 
-## Strided Attention control
+## Strided Self-Attention control
 
-`StridedAttentionVariant` is a one-pass, parameter-free Transformer control. At the
+`StridedSelfAttentionVariant` is a one-pass, parameter-free Transformer control. At the
 selected `sparse_attention_layers`, the existing Mistral self-attention uses
 one softmax over the union of its ordinary SWA keys and a bounded set of older
 fixed-stride keys. It reuses the pretrained Q/K/V/O projections and does not
@@ -24,13 +24,13 @@ retains `W-1` recent K/V entries plus at most `S` older strided entries with
 their absolute RoPE positions.
 
 ```yaml
-variant: strided_attention
+variant: strided_self_attention
 sparse_attention_stride: 32
 sparse_attention_window: 32
 sparse_attention_layers: [3, 7]
 ```
 
-## FBT
+## FBT (retired from active studies)
 
 An independent multipass comparison based on asymmetric latent feedback. It is
 not part of the Memory Attention family. Later-pass fused inputs are RMS-normalized before
@@ -40,8 +40,9 @@ recurrent inference interfaces as the other one-state feedback variants.
 
 ## Retired one-state controls
 
-MemoryAdd and MemoryAttentionAddHybrid remain for historical checkpoint compatibility.
-They are not part of new studies.
+Standalone MemoryAdd remains for historical checkpoint compatibility.
+It is not part of new studies. The named embedding-add and middle-layer
+attention hybrids have been deleted; their checkpoints need the original revision.
 
 ### MemoryAdd
 
@@ -97,10 +98,10 @@ h_destination <- alpha_t * norm_match(source_t)
 
 Its output head is initialized so adaptive mode starts at the fixed mixture
 (`alpha=recirculation_alpha`, `beta=1-alpha`). The controller is an added
-parameter group: use Phase A to freeze the TinyMistral backbone, as in the
-paper, or Phase B to fine-tune the full model. Fixed mode remains the default.
+parameter group: Phase A freezes the TinyMistral backbone.
+Phase B fine-tunes the full model. Fixed mode remains the default.
 
-Paper-style controller-only adaptation can be configured as:
+Historical controller-only adaptation uses:
 
 ```yaml
 variant: recirculation
@@ -112,92 +113,28 @@ recirculation_destination_layer: 3
 
 ## Memory Attention
 
-`MemoryAttentionVariant` (`variant: memory_attention`) has one shared
-identity-initialized bias-free writer
+`dense_memory_attention`, `strided_memory_attention` and
+`dense_and_strided_memory_attention` are presets of `memory_attention`, using
+one model implementation. They share a late writer and selected
+post-self-attention readers. Memory-token attention is also supported, but is
+not an active frozen arm. See [Memory Attention](MEMORY_ATTENTION.md) for
+masks, retention, initialization, gradient flow, aliases and input-only MEM semantics.
 
-```text
-m = W_write h
-```
+### Optional recurrent-memory hybrid
 
-and one independent GQA memory-attention reader at each configured
-`memory_layers` index.
-`memory_layers: all` expands to every decoder layer. The original study used
-`[3, 7]` for standalone Memory Attention models. Every selected reader consumes
-the same previous-pass top-layer memory records. Within a selected decoder
-layer the memory-attention residual is applied after the ordinary self-attention
-residual and before the MLP.
+Set `recurrent_merger` and explicit `recurrent_layers` on a Memory Attention
+configuration. Both channels use the same late writer. `memory_layers` controls
+attention readers; `recurrent_layers` controls preceding-token mergers.
+At overlapping layers, attention runs before recurrence, both before the MLP.
+MEM writes attention memory but does not advance the recurrent record.
+See [the hybrid contract](MEMORY_ATTENTION.md#10-optional-recurrent-memory-hybrid).
 
-Reader output projections are zero-initialized, so every pass is exact SWA Transformer
-at construction. Q/K/V remain normally initialized and begin receiving
-gradients after an output projection has moved away from zero.
-
-Cross-attention uses sequence-anchored RoPE by default. Query rotations use the
-current linguistic sequence position and key rotations use the original write
-position; compact memory-record indices are never used as positions. In memory-token
-mode a control slot inherits the preceding linguistic boundary so inserting
-control computation does not inflate memory age. `memory_position_encoding:
-none` is retained only as an explicit ablation.
-
-The architecture has three write policies:
-
-- `dense`: write every ordinary position;
-- `strided`: write positions satisfying `(t + 1) % C == 0`;
-- `memory_token`: write only explicit input-only `<MEM>` positions.
-
-`memory_window=W` counts committed memory records, not source-token distance.
-Every memory-attention read is strict-past: a record written at physical position `t` is
-first available to position `t+1`.
-
-Dense and strided C=1 are the same implementation and are required to be
-numerically identical with matching weights.
-
-### Multiscale Memory Attention control
-
-`MultiscaleMemoryAttentionVariant` (`variant: multiscale_memory_attention`) is
-the attention-only analogue of a
-short/long-range recurrent–Memory Attention hybrid. It writes the same dense
-previous-pass top-state stream as Dense Memory Attention, then presents each reader with a
-non-overlapping union of the preceding `D` records and the last `S` older
-fixed-stride records. A single memory-attention reader and softmax cover both
-regions.
-The model does not add a second reader residual.
-
-```yaml
-variant: multiscale_memory_attention
-memory_dense_window: 32
-memory_sparse_stride: 32
-memory_sparse_window: 32
-memory_layers: [4, 7]
-memory_position_encoding: rope
-```
-
-At query `t`, the dense region is `[t-D,t)`. Sparse positions satisfy
-`s < t-D` and `(s+1) % C == 0`, with only the most recent `S` retained. The
-maximum Memory Attention capacity is `D+S`. The approximate oldest direct reach is
-`D + C*S` tokens. SWA Transformer is unchanged.
-
-### Memory Attention + MemoryAdd hybrid (retired)
-
-`MemoryAttentionAddHybridVariant` is the
-same Memory Attention path plus the MemoryAdd path. There is no
-gate, controller, or fusion MLP between the channels.
-
-For ordinary-token sequences its fast path is ordinary MemoryAdd. With explicit
-memory slots, `<MEM>` does not advance the fast state. For
-
-```text
-A <MEM> B
-```
-
-previous-stream `h_A` supplies the Add residual to both `<MEM>` and B;
-`h_MEM` writes a slow memory record; B then becomes the next fast state. This preserves
-a clean distinction between ordinary-token fast recurrence and explicit memory
-writes.
+There are no separately named hybrid models or active hybrid benchmark arms.
 
 ## Shared multipass causal invariant
 
 Pass 1 is the current TinyMistral stream. Pass `k>1` consumes a completed
-previous-pass top-state sequence, allowing sequence-parallel training. Exact
+previous-pass source sequence with architecture-specific routing. This allows sequence-parallel training. Exact
 cached K-pass inference snapshots lower-stream feedback before computing the
 same physical position in higher streams, so no same-position lower-stream
 state leaks upward. Collapsed recurrent inference closes the final stream only

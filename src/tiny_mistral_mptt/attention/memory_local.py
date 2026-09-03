@@ -92,7 +92,7 @@ def strict_past_local_attention(
     return output.reshape(bsz, hq, seq_len, head_dim)
 
 
-def memory_bank_attention(
+def memory_attention(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
@@ -157,7 +157,7 @@ def memory_bank_attention(
     return output.contiguous().reshape(bsz, hq, query_len, head_dim)
 
 
-def strict_past_bank_attention(
+def strict_past_memory_attention(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
@@ -178,7 +178,7 @@ def strict_past_bank_attention(
     ``memory_mask`` is bool ``[B,M]`` for padded compact records. When
     ``dense=True``, the compact records are known to contain exactly one record per
     query position in chronological order, so the ordinary sliding-window
-    implementation can be used without the compact-bank gather.
+    implementation can be used without the compact-memory gather.
     """
     if query.ndim != 4 or key.ndim != 4 or value.ndim != 4:
         raise ValueError("query/key/value must be [B,H,T,D]")
@@ -228,7 +228,7 @@ def strict_past_bank_attention(
     valid_index = indices >= 0
     safe_indices = indices.clamp(min=0, max=max(memory_len - 1, 0)).long()
 
-    # Gather compact memory entries into a per-query local bank [B,Hkv,T,W,D].
+    # Gather compact memory entries into a per-query local memory [B,Hkv,T,W,D].
     key_expanded = key[:, :, None, :, :].expand(-1, -1, seq_len, -1, -1)
     value_expanded = value[:, :, None, :, :].expand(-1, -1, seq_len, -1, -1)
     gather_index = safe_indices[:, None, :, :, None].expand(
@@ -267,7 +267,7 @@ def strict_past_bank_attention(
     return output.reshape(bsz, hq, seq_len, head_dim)
 
 
-def strict_past_multiscale_bank_attention(
+def strict_past_dense_and_strided_memory_attention(
     query: torch.Tensor,
     key: torch.Tensor,
     value: torch.Tensor,
@@ -283,9 +283,9 @@ def strict_past_multiscale_bank_attention(
 ) -> torch.Tensor:
     """One-softmax Memory Attention over dense-recent and sparse-old records.
 
-    The multiscale Memory Attention path writes every previous-pass position. Query ``t`` reads
+    The dense-and-strided Memory Attention path writes every previous-pass position. Query ``t`` reads
     ``[t-D,t)`` densely and the last ``S`` strided positions strictly older
-    than that region. The two regions are gathered into one compact bank before
+    than that region. The two regions are gathered into one compact memory before
     the GQA score calculation.
     """
     if query.ndim != 4 or key.ndim != 4 or value.ndim != 4:
@@ -311,16 +311,16 @@ def strict_past_multiscale_bank_attention(
     if memory_len == 0:
         return torch.zeros_like(query)
 
-    # Full-sequence multiscale execution deliberately uses a dense source bank,
+    # Full-sequence dense-and-strided execution deliberately uses a dense source memory,
     # so absolute linguistic positions are direct gather indices.
     expected = torch.arange(
         memory_len, device=memory_positions.device, dtype=memory_positions.dtype
     )[None, :].expand_as(memory_positions)
     if not torch.equal(memory_positions, expected):
-        raise ValueError("multiscale Memory Attention requires one dense record per sequence position")
+        raise ValueError("dense-and-strided Memory Attention requires one dense record per sequence position")
 
     if query.device.type == "mps" and query_len == memory_len and torch.equal(query_positions, expected):
-        key_bank, value_bank, valid = fast_multiresolution_key_value_windows(
+        key_records, value_records, valid = fast_multiresolution_key_value_windows(
             key,
             value,
             query_positions,
@@ -345,8 +345,8 @@ def strict_past_multiscale_bank_attention(
         gather_index = safe_indices[:, None, :, :, None].expand(
             -1, hkv, -1, -1, head_dim
         )
-        key_bank = torch.gather(key_expanded, 3, gather_index)
-        value_bank = torch.gather(value_expanded, 3, gather_index)
+        key_records = torch.gather(key_expanded, 3, gather_index)
+        value_records = torch.gather(value_expanded, 3, gather_index)
         gathered_mask = torch.gather(
             memory_mask, 1, safe_indices.reshape(bsz, -1)
         ).reshape(bsz, query_len, compact_width)
@@ -355,7 +355,7 @@ def strict_past_multiscale_bank_attention(
     groups = hq // hkv
     grouped_query = query.reshape(bsz, hkv, groups, query_len, head_dim)
     q = grouped_query.permute(0, 1, 3, 2, 4)
-    scores = torch.matmul(q, key_bank.transpose(-2, -1))
+    scores = torch.matmul(q, key_records.transpose(-2, -1))
     scores = scores.permute(0, 1, 3, 2, 4) / math.sqrt(head_dim)
     scores = scores.masked_fill(
         ~valid[:, None, None, :, :], torch.finfo(scores.dtype).min
@@ -373,13 +373,6 @@ def strict_past_multiscale_bank_attention(
         probabilities = F.dropout(probabilities, p=dropout_p, training=training)
 
     p = probabilities.permute(0, 1, 3, 2, 4)
-    output = torch.matmul(p, value_bank)
+    output = torch.matmul(p, value_records)
     output = output.permute(0, 1, 3, 2, 4).contiguous()
     return output.reshape(bsz, hq, query_len, head_dim)
-
-
-# Public terminology aliases. The historical function names remain available
-# because they are referenced by checkpoints, tests, and downstream scripts.
-memory_attention = memory_bank_attention
-strict_past_memory_attention = strict_past_bank_attention
-strict_past_multiscale_memory_attention = strict_past_multiscale_bank_attention

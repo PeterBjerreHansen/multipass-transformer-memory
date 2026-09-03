@@ -1,4 +1,4 @@
-"""Single-transition interventions; depth-aligned K=4 ablations remain separate work."""
+"""Simple single-transition interventions; configurable-depth ablations are deferred."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -10,14 +10,10 @@ from ..feedback import HybridPassSource
 from ..variants.memory_add import MemoryAddVariant
 from ..variants.recirculation import RecirculationVariant
 from ..variants.recurrent_memory import RecurrentMemoryVariant
-from ..variants.bank_add_hybrid import MemoryAttentionAddHybridVariant
-from ..variants.bank_recirculation_hybrid import (
-    RecirculationStridedMemoryAttentionVariant,
-)
-from ..variants.bank_recurrent_hybrid import (
+from ..variants.memory_attention_recurrent_hybrid import (
     MemoryAttentionRecurrentHybridVariant,
 )
-from ..variants.bank import MemoryAttentionVariant
+from ..variants.memory_attention import MemoryAttentionVariant
 
 from .common import (
     NLLAccumulator, block_limit, evaluation_context, packed_evaluation_metadata,
@@ -42,32 +38,31 @@ def _condition_hiddens(
         ):
             raise TypeError("hybrid intervention requires HybridPassSource")
         zero_recurrent = torch.zeros_like(real.recurrent_hidden)
-        zero_bank = torch.zeros_like(real.bank_hidden)
+        zero_memory = torch.zeros_like(real.memory_attention_hidden)
 
-        def run(recurrent_hidden, bank_hidden):
-            source = HybridPassSource(recurrent_hidden, bank_hidden)
+        def run(recurrent_hidden, memory_attention_hidden):
+            source = HybridPassSource(recurrent_hidden, memory_attention_hidden)
             return model._run_feedback_state(
                 ids, token_embeddings, source
             ).hidden_states
 
-        recurrent_label = "fast" if isinstance(model, MemoryAttentionAddHybridVariant) else "recurrent"
         return {
-            "real_memory": run(real.recurrent_hidden, real.bank_hidden),
-            "zero_memory": run(zero_recurrent, zero_bank),
+            "real_memory": run(real.recurrent_hidden, real.memory_attention_hidden),
+            "zero_memory": run(zero_recurrent, zero_memory),
             "mismatched_memory": run(
-                mismatch.recurrent_hidden, mismatch.bank_hidden
+                mismatch.recurrent_hidden, mismatch.memory_attention_hidden
             ),
-            f"zero_{recurrent_label}_real_bank": run(
-                zero_recurrent, real.bank_hidden
+            "zero_recurrent_real_attention": run(
+                zero_recurrent, real.memory_attention_hidden
             ),
-            f"mismatched_{recurrent_label}_real_bank": run(
-                mismatch.recurrent_hidden, real.bank_hidden
+            "mismatched_recurrent_real_attention": run(
+                mismatch.recurrent_hidden, real.memory_attention_hidden
             ),
-            f"real_{recurrent_label}_zero_bank": run(
-                real.recurrent_hidden, zero_bank
+            "real_recurrent_zero_attention": run(
+                real.recurrent_hidden, zero_memory
             ),
-            f"real_{recurrent_label}_mismatched_bank": run(
-                real.recurrent_hidden, mismatch.bank_hidden
+            "real_recurrent_mismatched_attention": run(
+                real.recurrent_hidden, mismatch.memory_attention_hidden
             ),
         }
     if not isinstance(real, torch.Tensor) or not isinstance(mismatch, torch.Tensor):
@@ -86,8 +81,7 @@ def evaluate_memory_interventions(
 ) -> dict:
     if not isinstance(model, (
         MemoryAddVariant, RecirculationVariant, RecurrentMemoryVariant,
-        MemoryAttentionVariant, MemoryAttentionAddHybridVariant,
-        RecirculationStridedMemoryAttentionVariant,
+        MemoryAttentionVariant,
     )):
         raise ValueError("loaded model does not support memory interventions")
     blocks = block_limit(dataset, max_blocks)
@@ -117,13 +111,9 @@ def evaluate_memory_interventions(
                 delta_sums[name] += float(
                     (hidden.float() - first_hidden.float()).square().mean().cpu()
                 )
-            if isinstance(model, (MemoryAddVariant, MemoryAttentionAddHybridVariant)):
+            if isinstance(model, MemoryAddVariant):
                 embedding_rms_sum += _rms(token_embeddings[:, 1:, :])
-                residual = (
-                    model.memory_residual(first_hidden, ids)
-                    if isinstance(model, MemoryAttentionAddHybridVariant)
-                    else model.memory_residual(first_hidden)
-                )
+                residual = model.memory_residual(first_hidden)
                 residual_rms_sum += _rms(residual[:, 1:, :])
 
     def summarize(total):
@@ -152,7 +142,7 @@ def evaluate_memory_interventions(
             **summarize(total),
             "hidden_delta_rms": math.sqrt(delta_sums[name] / blocks),
         }
-    if isinstance(model, (MemoryAddVariant, MemoryAttentionAddHybridVariant)):
+    if isinstance(model, MemoryAddVariant):
         embedding_rms = embedding_rms_sum / blocks
         residual_rms = residual_rms_sum / blocks
         result["memory_add_scales"] = {

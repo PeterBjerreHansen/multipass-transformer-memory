@@ -20,9 +20,11 @@ MemoryAdd and FBT are intentionally absent from this locked study. Their
 historical implementations are not evidence for the current comparison.
 
 All eight arms are complete. The two attention-control arms used the same
-staged Phase-B slice and optimizer batch as the original six arms. Their full
-artifacts were transferred and checksum-verified into `results/<arm>/` before
-the cloud compute instance was shut down and deleted.
+staged Phase-B slice and optimizer batch as the original six arms. The local
+archive retains metadata, metrics, logs, and selected evaluations; large
+checkpoints were intentionally not transferred. Transfer manifests exist only
+for the arms whose retained payloads were explicitly checksum-verified, so this
+directory is not a complete artifact mirror.
 
 `STUDY.yaml` now activates the comparison verifier. Architecture, memory route,
 and pass schedule are declared experimental axes. Architecture-specific wiring

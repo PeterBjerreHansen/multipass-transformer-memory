@@ -9,7 +9,7 @@ from tiny_mistral_mptt.config import ExperimentConfig
 from tiny_mistral_mptt.model_factory import build_variant
 from tiny_mistral_mptt.inference.multipass import prefill_exact, exact_decode_step
 from tiny_mistral_mptt.training.phases import configure_phase
-from tiny_mistral_mptt.variants.bank import MemoryAttentionWriter
+from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionWriter
 from tiny_mistral_mptt.variants.memory_modules import MemoryWriter
 from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
 from tiny_mistral_mptt.variants.recurrent_memory import RecurrentMemoryVariant

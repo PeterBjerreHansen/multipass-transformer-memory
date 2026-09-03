@@ -7,10 +7,10 @@ experiment definitions. Automatic study discovery intentionally scans only
 
 - `staged_pipeline/` contains the former Stage 0–6 workflow, including the
   completed 100M Stage-5 campaign and the partial/continued Stage-6 work.
-- `exploratory/` contains FBT investigations, learning-rate sweeps, and related
-  pilots.
-- `efficiency/` contains suites and measurements tied to the superseded
-  architecture set and 2,048-token protocol.
+- `exploratory/` retains the backbone learning-rate sweep.
+
+The separate exploratory FBT study and historical efficiency directory have
+been removed from this checkout. The compatibility implementations remain.
 
 Files inside these studies retain their original paths and commands. Those
 references document how the runs were made and are not expected to resolve
@@ -25,5 +25,5 @@ paper artifact release.
 
 The former forward-policy, common-checkpoint and 1024-token frozen studies
 have been deleted at the user's request. They are no longer archived in this
-tree. The separate 2048-token historical protocols remain unchanged. Paper
+tree. The retained 2048-token staged protocols remain unchanged. Paper
 readout/replay and its BPTT/TBPTT implementation are also deleted.

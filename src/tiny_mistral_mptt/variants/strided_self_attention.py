@@ -5,7 +5,7 @@ from tiny_mistral.modeling import MistralForCausalLM
 from .vanilla import SWATransformerVariant
 
 
-class StridedAttentionVariant(SWATransformerVariant):
+class StridedSelfAttentionVariant(SWATransformerVariant):
     """Single-pass Transformer control with sparse fixed-position SWA keys.
 
     Selected decoder layers reuse their pretrained self-attention projections
@@ -13,7 +13,7 @@ class StridedAttentionVariant(SWATransformerVariant):
     older strided keys. The variant adds no parameters and no cross-attention.
     """
 
-    variant_name = "strided_attention"
+    variant_name = "strided_self_attention"
 
     def __init__(
         self,
@@ -37,7 +37,4 @@ class StridedAttentionVariant(SWATransformerVariant):
         self.sparse_attention_window = int(sparse_attention_window)
         self.sparse_attention_layers = selected
 
-
-SparseSWAVariant = StridedAttentionVariant
-
-__all__ = ["StridedAttentionVariant", "SparseSWAVariant"]
+__all__ = ["StridedSelfAttentionVariant"]

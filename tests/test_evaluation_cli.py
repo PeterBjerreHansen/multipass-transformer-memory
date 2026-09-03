@@ -53,7 +53,7 @@ def test_packed_cli_resolves_defaults_overrides_and_checkpoint_identity(tmp_path
     ])
     module.main()
     doc = json.loads(output_path.read_text())
-    assert doc["schema_version"] == 2
+    assert doc["schema_version"] == (3 if script == "evaluate_memory_interventions" else 2)
     assert doc["provenance"]["normalized_config"]["autocast_dtype"] == "bfloat16"
     assert doc["provenance"]["weights"]["checkpoint_sha256"] == file_sha256(checkpoint)
     result = doc["results"][0] if "results" in doc else doc["result"]

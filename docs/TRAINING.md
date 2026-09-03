@@ -39,10 +39,9 @@ L = sum_k w_k L_k
 `pass_schedule` independently controls the sampled pass count. Its RNG/state is
 checkpointed, so fixed or mixed K schedules resume exactly.
 
-The active frozen comparison samples K=2 on 90% of batches and K=3 on 10%,
-with final-pass-only loss and 2.1 average passes. K=4 validation retains per-pass
-results. Historical Phase-B objectives must not silently define the future
-unfrozen study; its loss weights remain to be specified.
+The pass scheduler samples K per microbatch, not per optimizer update or token.
+See the [study protocols](../benchmarks/README.md) for probabilities and loss weights.
+Historical Phase-B objectives do not define the future unfrozen study.
 
 ## Supported training execution
 
@@ -119,6 +118,9 @@ token_equivalent_compute += physical positions * effective passes
 `max_unique_tokens`, pass scheduling, and LR scheduling use linguistic tokens.
 Training metrics additionally report linguistic tokens/s and model positions/s.
 This keeps data dose comparable while making the extra MEM computation visible.
+Despite its name, `unique_tokens_seen` counts consumed linguistic positions.
+It is not a corpus-wide deduplication counter. The sampler reshuffles and repeats
+the artifact if the requested budget exceeds its stored training split.
 
 When `train_log_every_tokens` aggregates multiple optimizer updates, throughput
 is total interval tokens divided by total measured optimizer-update time. Pass
@@ -127,27 +129,9 @@ K=2 updates. Each record includes those counts, an interval pass histogram, and
 the interval duration. A graceful signal flushes the unfinished interval with
 `log_interval_partial: true` before checkpointing.
 
-## Memory-token loss
-
-MEM uses input ID V, where V is the base vocabulary size, but the LM head remains
-V classes. The Memory Attention model constructs position-aligned labels over linguistic
-tokens. For:
-
-```text
-physical: A  <MEM>  B  C
-labels:   B  IGNORE C  IGNORE
-```
-
-A predicts B; MEM predicts nothing. See `MEMORY_ATTENTION.md` for the public
-vocabulary and `BANK_MEMORY.md` for the full compatibility contract.
-
-## Phase A and MEM
-
-Dense and strided Memory Attention Phase A can discard the frozen pass-1 graph because no
-added parameter occurs in pass 1. Memory-token Phase A cannot: the added MEM
-embedding participates in pass 1 and must receive gradient through later
-recurrent/Memory Attention loss. The backbone remains frozen, but pass-1 autograd stays
-enabled for that mode.
+See [Memory Attention](MEMORY_ATTENTION.md) for MEM labels and the Phase-A
+embedding gradient path. See [evaluation precision](../evaluation/README.md#precision)
+for FP32 storage, autocast and overrides.
 
 ## Checkpoint cadence and validation
 
@@ -203,20 +187,12 @@ validation metric or its early-stopping decisions.
 
 ## Selected-checkpoint feedback validation
 
-Feedback NLL is disabled unless `feedback_eval_at_tokens` is nonempty. These
-thresholds must be a subset of `snapshot_at_tokens`. For example, add these
-fields to an active frozen arm's config; keep its other snapshot thresholds:
-
-```yaml
-feedback_eval_at_tokens: [3276800, 100007936]
-feedback_eval_max_blocks: 1
-feedback_eval_autocast_dtype: float32
-```
-
-This example explicitly chooses FP32 feedback even if routine validation uses
-BF16. The precision field defaults to `config`; `bfloat16` is also accepted.
-The A6000 qualification motivates testing FP32 cached decoding, but does not
-establish a universal speed advantage.
+Feedback NLL is disabled unless `feedback_eval_at_tokens` is nonempty.
+These thresholds must be a subset of `snapshot_at_tokens`.
+`feedback_eval_max_blocks` sets the number of complete prefix blocks.
+`feedback_eval_autocast_dtype` selects the [evaluation precision](../evaluation/README.md#precision).
+The [main frozen protocol](../benchmarks/development/frozen_backbone_comparison/README.md)
+documents the enabled milestones. The LR sweep leaves this schedule off.
 
 After crossing a selected threshold, the trainer commits resumable state,
 publishes the durable snapshot, then evaluates full-block BOS-only feedback NLL
@@ -240,5 +216,4 @@ Rolling checkpoint retention never removes snapshots or feedback reports.
 
 Schedule edits apply to future thresholds and work still pending in the resumed
 checkpoint. They do not scan older snapshots retroactively. Use the standalone
-command for an older snapshot. Existing study YAMLs remain opt-in: this change
-does not select milestones or launch new runs on their behalf.
+command for an older snapshot. Editing a schedule does not launch a run.

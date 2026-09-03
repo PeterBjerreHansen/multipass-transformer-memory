@@ -1,8 +1,8 @@
 # Exploratory runs
 
-This archive contains one-off FBT diagnostics, backbone learning-rate sweeps,
-and the standard-schedule FBT pilot. They informed development but are not
-members of the current paper comparison.
+This archive retains the [backbone learning-rate sweep](backbone_lr_sweep/README.md).
+The separate FBT investigation has been removed. This archive does not define
+the current frozen or future unfrozen comparison.
 
 Original config paths are retained as provenance. Raw results remain local and
 ignored.

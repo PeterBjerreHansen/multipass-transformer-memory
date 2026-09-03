@@ -47,7 +47,7 @@ DEFAULT_CONFIGS = (
     "benchmarks/development/frozen_backbone_comparison/recurrent_recirculation_multipass_100m.yaml",
     "benchmarks/development/frozen_backbone_comparison/dense_memory_attention_multipass_100m.yaml",
     "benchmarks/development/frozen_backbone_comparison/strided_memory_attention_multipass_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/multiscale_memory_attention_multipass_100m.yaml",
+    "benchmarks/development/frozen_backbone_comparison/dense_and_strided_memory_attention_multipass_100m.yaml",
 )
 DEFAULT_PROMPT_LENGTHS = (1, 256)
 DEFAULT_HORIZONS = (1, 16, 64, 256, 512, 1024, 2047)
@@ -607,6 +607,9 @@ def _run_variant(
         "config": str(config_path),
         "variant": cfg.variant,
         "recurrent_merger": cfg.recurrent_merger,
+        "recurrent_layers": cfg.recurrent_layers,
+        "memory_pattern": cfg.memory_pattern,
+        "memory_layers": cfg.memory_layers,
         "model_load_ms": load_ms,
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
     }

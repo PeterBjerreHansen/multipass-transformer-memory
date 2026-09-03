@@ -37,8 +37,7 @@ optimizer_batch_tokens = batch_size * grad_accum_steps * T
 ```
 
 Small retained JSON summaries belong under `results/`; generated measurements
-may remain local. Suites tied to the superseded Stage-5 architecture set are in
-`../historical/efficiency/`.
+may remain local. The separate historical efficiency directory has been removed.
 
 Feedback-evaluation timing is recorded separately in the
 [A6000 report](../development/inference_efficiency/README.md). Its expensive

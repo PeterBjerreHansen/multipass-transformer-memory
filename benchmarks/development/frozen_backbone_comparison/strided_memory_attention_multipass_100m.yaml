@@ -38,5 +38,8 @@ checkpoint_every_tokens: 3276800
 checkpoint_every_seconds: 900.0
 checkpoint_keep_last: 2
 snapshot_at_tokens: [3276800, 5013504, 10027008, 20021248, 50003968, 100007936]
+feedback_eval_at_tokens: [5013504, 20021248, 100007936]
+feedback_eval_max_blocks: 1
+feedback_eval_autocast_dtype: config
 resume_from: null
 init_from: null

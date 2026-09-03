@@ -89,8 +89,9 @@ This means every standard backing block remains 2048
 That extra compute is intentional and separately accounted; it avoids silently
 reducing the text/data dose for MEM experiments.
 
-The model's maximum position range must be large enough for the expanded block;
-training preflight checks this.
+The model's maximum position range must fit the expanded block.
+The trainer validates this before training. The cloud preflight reports expanded
+batching but does not replace the trainer's checks.
 
 ## Historical staged-run split ownership
 
@@ -110,3 +111,8 @@ source offset. Final evaluation artifacts must be checked against all relevant
 wiring and training artifacts with `scripts/verify_data_disjointness.py`. The
 Stage-5 and Stage-6 training validation streams overlap earlier wiring training
 and are monitoring-only.
+
+The disjointness tool compares exact complete BOS-delimited tokenized documents.
+It excludes leading and trailing fragments. It does not detect every shared
+passage or near-duplicate document. A passing report is not proof of no possible
+contamination. Retain the artifact identities and the report's coverage limits.

@@ -20,10 +20,10 @@ arms:
   - {id: strided_memory_attention_lr1e-4_5m, config: strided_memory_attention_lr1e-4_5m.yaml}
   - {id: strided_memory_attention_lr3e-4_5m, config: strided_memory_attention_lr3e-4_5m.yaml}
   - {id: strided_memory_attention_lr1e-3_5m, config: strided_memory_attention_lr1e-3_5m.yaml}
-  - {id: multiscale_memory_attention_lr3e-5_5m, config: multiscale_memory_attention_lr3e-5_5m.yaml}
-  - {id: multiscale_memory_attention_lr1e-4_5m, config: multiscale_memory_attention_lr1e-4_5m.yaml}
-  - {id: multiscale_memory_attention_lr3e-4_5m, config: multiscale_memory_attention_lr3e-4_5m.yaml}
-  - {id: multiscale_memory_attention_lr1e-3_5m, config: multiscale_memory_attention_lr1e-3_5m.yaml}
+  - {id: dense_and_strided_memory_attention_lr3e-5_5m, config: dense_and_strided_memory_attention_lr3e-5_5m.yaml}
+  - {id: dense_and_strided_memory_attention_lr1e-4_5m, config: dense_and_strided_memory_attention_lr1e-4_5m.yaml}
+  - {id: dense_and_strided_memory_attention_lr3e-4_5m, config: dense_and_strided_memory_attention_lr3e-4_5m.yaml}
+  - {id: dense_and_strided_memory_attention_lr1e-3_5m, config: dense_and_strided_memory_attention_lr1e-3_5m.yaml}
 comparisons:
   - name: recurrent_recirculation_added_learning_rate
     arms: [recurrent_recirculation_lr3e-5_5m, recurrent_recirculation_lr1e-4_5m, recurrent_recirculation_lr3e-4_5m, recurrent_recirculation_lr1e-3_5m]
@@ -37,8 +37,8 @@ comparisons:
     arms: [strided_memory_attention_lr3e-5_5m, strided_memory_attention_lr1e-4_5m, strided_memory_attention_lr3e-4_5m, strided_memory_attention_lr1e-3_5m]
     experimental_axes: [added_learning_rate]
     allowed_differences: []
-  - name: multiscale_memory_attention_added_learning_rate
-    arms: [multiscale_memory_attention_lr3e-5_5m, multiscale_memory_attention_lr1e-4_5m, multiscale_memory_attention_lr3e-4_5m, multiscale_memory_attention_lr1e-3_5m]
+  - name: dense_and_strided_memory_attention_added_learning_rate
+    arms: [dense_and_strided_memory_attention_lr3e-5_5m, dense_and_strided_memory_attention_lr1e-4_5m, dense_and_strided_memory_attention_lr3e-4_5m, dense_and_strided_memory_attention_lr1e-3_5m]
     experimental_axes: [added_learning_rate]
     allowed_differences: []
   - name: recurrent_projected_residual_added_learning_rate

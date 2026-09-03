@@ -12,7 +12,6 @@ from tiny_mistral.modeling import LayerKVCache, MistralForCausalLM
 class DecoderRun:
     hidden_states: torch.Tensor
     past_key_values: tuple[LayerKVCache, ...] | None
-    captured_hidden: torch.Tensor | None = None
 
 
 def run_memory_decoder(
@@ -23,13 +22,11 @@ def run_memory_decoder(
     past_key_values: tuple[LayerKVCache, ...] | None,
     use_cache: bool,
     attention_mask: torch.Tensor | None = None,
-    post_layer: Callable[[int, torch.Tensor], torch.Tensor] | None = None,
-    capture_layer: int | None = None,
 ) -> DecoderRun:
     """Apply memory reads after self-attention and before each layer's MLP.
 
     Cached and full-sequence runs share the same ordering, absolute positions,
-    and final normalization. Optional post-layer capture supports legacy hybrids.
+    and final normalization.
     """
     if embeddings.ndim != 3:
         raise ValueError("embeddings must be [B,T,D]")
@@ -47,7 +44,6 @@ def run_memory_decoder(
     )[None, :].expand(batch, -1)
     hidden = embeddings
     caches = [] if use_cache else None
-    captured = None
     for index, layer in enumerate(backbone.model.layers):
         attended, cache = layer.self_attn(
             layer.input_layernorm(hidden),
@@ -63,14 +59,7 @@ def run_memory_decoder(
             if cache is None:
                 raise RuntimeError("cached memory decoder did not return KV state")
             caches.append(cache)
-        if post_layer is not None:
-            hidden = post_layer(index, hidden)
-        if index == capture_layer:
-            captured = hidden
-    if capture_layer is not None and captured is None:
-        raise RuntimeError("requested recurrence source layer was not reached")
     return DecoderRun(
         backbone.model.norm(hidden),
         tuple(caches) if caches is not None else None,
-        captured,
     )

@@ -61,7 +61,7 @@ def test_memory_attention_ignores_current_future_and_too_old_memory():
     torch.testing.assert_close(perturbed[:, :, 6], baseline[:, :, 6], atol=0, rtol=0)
 
 
-def dense_bank_reference(query, key, value):
+def dense_memory_reference(query, key, value):
     bsz, hq, query_len, dim = query.shape
     hkv = key.shape[1]
     memory_len = key.shape[-2]
@@ -82,62 +82,62 @@ def dense_bank_reference(query, key, value):
     return torch.softmax(scores, dim=-1) @ value
 
 
-def test_memory_bank_attention_matches_dense_gqa_reference():
-    from tiny_mistral_mptt.attention.memory_local import memory_bank_attention
+def test_memory_attention_matches_dense_gqa_reference():
+    from tiny_mistral_mptt.attention.memory_local import memory_attention
 
     torch.manual_seed(6)
     q = torch.randn(2, 4, 3, 8)
     k = torch.randn(2, 2, 5, 8)
     v = torch.randn(2, 2, 5, 8)
-    actual = memory_bank_attention(q, k, v)
-    expected = dense_bank_reference(q, k, v)
+    actual = memory_attention(q, k, v)
+    expected = dense_memory_reference(q, k, v)
     torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-6)
 
 
-def test_memory_bank_attention_matches_strict_past_last_query():
-    from tiny_mistral_mptt.attention.memory_local import memory_bank_attention
+def test_memory_attention_matches_strict_past_last_query():
+    from tiny_mistral_mptt.attention.memory_local import memory_attention
 
     torch.manual_seed(7)
     q = torch.randn(1, 4, 9, 8)
     k = torch.randn(1, 2, 9, 8)
     v = torch.randn(1, 2, 9, 8)
     strict = strict_past_local_attention(q, k, v, window=4)
-    bank = memory_bank_attention(
+    memory = memory_attention(
         q[:, :, -1:, :],
         k[:, :, -5:-1, :],
         v[:, :, -5:-1, :],
     )
-    torch.testing.assert_close(bank[:, :, 0], strict[:, :, -1], atol=1e-6, rtol=1e-6)
+    torch.testing.assert_close(memory[:, :, 0], strict[:, :, -1], atol=1e-6, rtol=1e-6)
 
 
-def test_memory_bank_attention_empty_bank_is_exact_zero():
-    from tiny_mistral_mptt.attention.memory_local import memory_bank_attention
+def test_memory_attention_empty_memory_is_exact_zero():
+    from tiny_mistral_mptt.attention.memory_local import memory_attention
 
     q = torch.randn(2, 4, 1, 8)
     k = torch.empty(2, 2, 0, 8)
     v = torch.empty(2, 2, 0, 8)
-    actual = memory_bank_attention(q, k, v)
+    actual = memory_attention(q, k, v)
     torch.testing.assert_close(actual, torch.zeros_like(q), atol=0, rtol=0)
 
 
-def test_masked_memory_bank_returns_zero_for_empty_rows_without_nan():
-    from tiny_mistral_mptt.attention.memory_local import memory_bank_attention
+def test_masked_memory_attention_returns_zero_for_empty_rows_without_nan():
+    from tiny_mistral_mptt.attention.memory_local import memory_attention
 
     torch.manual_seed(2)
     q = torch.randn(2, 4, 1, 3)
     k = torch.randn(2, 2, 4, 3)
     v = torch.randn(2, 2, 4, 3)
     mask = torch.tensor([[False, False, False, False], [True, False, True, False]])
-    out = memory_bank_attention(q, k, v, memory_mask=mask)
+    out = memory_attention(q, k, v, memory_mask=mask)
     assert torch.isfinite(out).all()
     torch.testing.assert_close(out[0], torch.zeros_like(out[0]), atol=0, rtol=0)
     assert out[1].abs().sum() > 0
 
 
-def test_bank_attention_c1_matches_strict_local_attention():
+def test_memory_attention_c1_matches_strict_local_attention():
     from tiny_mistral_mptt.attention.memory_local import (
         strict_past_local_attention,
-        strict_past_bank_attention,
+        strict_past_memory_attention,
     )
 
     torch.manual_seed(3)
@@ -147,14 +147,14 @@ def test_bank_attention_c1_matches_strict_local_attention():
     writes_before = torch.arange(7)[None, :]
     mask = torch.ones(1, 7, dtype=torch.bool)
     dense = strict_past_local_attention(q, k, v, window=4)
-    bank = strict_past_bank_attention(
+    memory = strict_past_memory_attention(
         q, k, v, writes_before=writes_before, memory_mask=mask, window=4
     )
-    torch.testing.assert_close(bank, dense, atol=0, rtol=0)
+    torch.testing.assert_close(memory, dense, atol=0, rtol=0)
 
 
-def test_bank_attention_window_counts_records_not_source_distance():
-    from tiny_mistral_mptt.attention.memory_local import strict_past_bank_attention
+def test_memory_attention_window_counts_records_not_source_distance():
+    from tiny_mistral_mptt.attention.memory_local import strict_past_memory_attention
 
     # One query head/KV head and scalar head dimension makes the retention test
     # easy to audit. Query t=5 has four committed records, but W=2 means only
@@ -164,7 +164,7 @@ def test_bank_attention_window_counts_records_not_source_distance():
     v = torch.tensor([[[[100.0], [200.0], [3.0], [5.0]]]])
     writes_before = torch.tensor([[0, 1, 1, 2, 3, 4]])
     mask = torch.ones(1, 4, dtype=torch.bool)
-    out = strict_past_bank_attention(
+    out = strict_past_memory_attention(
         q, k, v, writes_before=writes_before, memory_mask=mask, window=2
     )
     # Equal keys => uniform attention over the two retained records: (3+5)/2.

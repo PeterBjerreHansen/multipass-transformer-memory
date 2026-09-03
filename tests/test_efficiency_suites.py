@@ -33,11 +33,10 @@ def test_efficiency_suite_cases_have_required_dimensions():
             merged = {**defaults, **case}
             assert merged["variant"] in {
                 "swa_transformer",
-                "strided_attention",
+                "strided_self_attention",
                 "recirculation",
                 "memory_attention",
-                "multiscale_memory_attention",
-                "recirculation_strided_memory_attention",
+                "dense_and_strided_memory_attention",
             }
             assert merged["passes"] in {1, 2, 3}
             assert merged["sequence_length"] > 0

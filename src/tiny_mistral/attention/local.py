@@ -176,7 +176,7 @@ def _multiresolution_local_attention(
         include_current=True,
     )
     if query.device.type == "mps":
-        key_bank, value_bank, valid = fast_multiresolution_key_value_windows(
+        key_records, value_records, valid = fast_multiresolution_key_value_windows(
             key,
             value,
             positions,
@@ -194,8 +194,8 @@ def _multiresolution_local_attention(
         gather_index = safe_indices[:, None, :, :, None].expand(
             -1, hkv, -1, -1, head_dim
         )
-        key_bank = torch.gather(key_expanded, dim=3, index=gather_index)
-        value_bank = torch.gather(value_expanded, dim=3, index=gather_index)
+        key_records = torch.gather(key_expanded, dim=3, index=gather_index)
+        value_records = torch.gather(value_expanded, dim=3, index=gather_index)
 
         valid = index_valid
         if key_padding_mask is not None:
@@ -209,7 +209,7 @@ def _multiresolution_local_attention(
     groups = hq // hkv
     grouped_query = query.reshape(bsz, hkv, groups, seq_len, head_dim)
     q_for_mm = grouped_query.permute(0, 1, 3, 2, 4)
-    scores = torch.matmul(q_for_mm, key_bank.transpose(-2, -1))
+    scores = torch.matmul(q_for_mm, key_records.transpose(-2, -1))
     scores = scores.permute(0, 1, 3, 2, 4) / math.sqrt(head_dim)
     scores = scores.masked_fill(
         ~valid[:, None, None, :, :], torch.finfo(scores.dtype).min
@@ -227,6 +227,6 @@ def _multiresolution_local_attention(
         probs = F.dropout(probs, p=dropout_p, training=training)
 
     probs_for_mm = probs.permute(0, 1, 3, 2, 4)
-    output = torch.matmul(probs_for_mm, value_bank)
+    output = torch.matmul(probs_for_mm, value_records)
     output = output.permute(0, 1, 3, 2, 4).contiguous()
     return output.reshape(bsz, hq, seq_len, head_dim)

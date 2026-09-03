@@ -1,4 +1,4 @@
-# Exact incremental and collapsed recurrent inference
+# Cached and feedback inference
 
 This document defines cached inference for `recurrent_memory`, Memory Attention,
 and supported legacy multipass variants. Prompt
@@ -67,10 +67,19 @@ Dense writes every ordinary position. Strided writes use the absolute physical
 position and configured stride. Memory-token mode writes only when the observed
 input token is ID V.
 
-Multiscale Memory Attention also writes every ordinary position, but its bounded state is
+Dense-and-strided Memory Attention also writes every ordinary position, but its bounded state is
 the chronological union of the last `D` positions and the last `S` older
 fixed-stride positions. Every append recomputes retention relative to the
 next query coordinate while preserving cached per-reader projected K/V.
+
+## Optional hybrid state
+
+The general late-memory hybrid stores `HybridFeedbackState` with
+`recurrent_memory` (the preceding ordinary token's emitted record) and
+`memory_attention` (the bounded attention state). Both use one shared writer.
+A MEM step may append an attention record but preserves `recurrent_memory`.
+An ordinary step updates recurrence even when no attention write is due.
+Exact K=1 conversion preserves both channels without applying the writer twice.
 
 ## Memory-token decode
 
@@ -115,21 +124,10 @@ Dedicated `prefill_exact`, `prefill_recurrent`, `exact_decode_step`, and
 `recurrent_decode_step` helpers are also exported. State objects are immutable;
 decode returns a new state.
 
-## Required gates
+## Correctness and evaluation
 
-Before interpreting recurrent quality:
-
-- exact cached K-pass must match full-prefix recomputation;
-- exact K=1 and K=1 standard decode must reduce to cached TinyMistral;
-- K=1 feedback decode must retain a real feedback state and remain distinct
-  from standard decode;
-- for K>1, the first collapsed recurrent transition must match exact K-pass;
-- Memory Attention state must remain bounded and strict-past;
-- multiscale Memory Attention state must retain the exact sparse-old/dense-recent union;
-- write-only MEM validity must survive KV caching without changing physical
-  positions;
-- cached absolute positions must remain correct beyond the self-attention
-  sliding window.
+See [validation gates](VALIDATION.md) for cache equivalence, strict-past routing,
+bounded memory and MEM visibility checks.
 
 Held-out training-distribution NLL and downstream generation answer different
 questions. Whole-block NLL reports every parallel pass through the configured
@@ -144,16 +142,8 @@ one BOS token, `passes=1`, `decode_mode="feedback"`, then teacher-forces every
 data target. Full and aligned scores distinguish 2048 targets from the ordinary
 2047-target next-token comparison. See [evaluation](../evaluation/README.md).
 
-## Cleanup 3 completed
+## Compatibility
 
-K=1 exact decoding now updates architecture-specific feedback memory after each
-token, so later conversion to feedback preserves a learned, non-identity writer.
-Regression tests cover both recurrent mergers, BOS-only and contextual prefill,
-and strict-past decoding. Prefill depth never chooses the continuation mechanism.
-
-New diagnostic JSON uses `standard_k1_nll`, `standard_k1_nll_by_offset`, and
-`recurrent_minus_standard_k1`, replacing misleading `vanilla` field names.
-This is the same checkpoint with feedback disabled, not a separately trained
-vanilla arm. Historical reports are unchanged; consumers must map the old keys
-when reading them. See [the evaluation contract](../evaluation/README.md) and
-[the issue ledger](CLEANUP_STATUS.md).
+Exact K=1 decoding updates architecture-specific feedback memory after each token.
+Conversion to feedback therefore preserves a learned, non-identity writer.
+See [evaluation](../evaluation/README.md) for result keys and historical JSON compatibility.

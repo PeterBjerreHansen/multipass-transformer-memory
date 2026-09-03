@@ -32,10 +32,10 @@ def multiresolution_key_indices(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Return compact chronological key indices and their validity.
 
-    Positions are zero-based and the dense key bank is assumed to contain one
+    Positions are zero-based and the dense key memory is assumed to contain one
     entry per absolute position. ``include_current=True`` gives ordinary causal
     self-attention semantics: a recent window of W contains the query plus W-1
-    preceding keys. ``False`` gives strict-past Bank semantics: the recent
+    preceding keys. ``False`` gives strict-past Memory semantics: the recent
     window contains exactly the preceding W keys.
     """
     recent_window, sparse_stride, sparse_window = _validate_windows(
@@ -150,7 +150,7 @@ def retained_multiresolution_indices(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Select a bounded strict-past cache for the next query position.
 
-    The input bank may already be sparse, but it must be chronological. Returned
+    The input memory may already be sparse, but it must be chronological. Returned
     indices are chronological, padded on the right, and have fixed capacity
     ``recent_window + sparse_window``.
     """
@@ -235,7 +235,7 @@ def fast_multiresolution_key_value_windows(
     """Build compact multiresolution K/V windows without an expanded gather.
 
     This path targets packed full-sequence attention, where the dense source
-    bank contains one record per query position. The recent region uses
+    memory contains one record per query position. The recent region uses
     ``unfold`` and the sparse region uses ``index_select`` over the flattened
     strided indices. Both operations map well to CPU, MPS, and CUDA. The
     returned tensors have shape ``[B,Hkv,Q,W,D]`` and preserve the ordering

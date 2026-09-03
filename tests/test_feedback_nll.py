@@ -10,21 +10,35 @@ from tiny_mistral.modeling import MistralForCausalLM
 from tiny_mistral_mptt.evaluation import feedback
 from tiny_mistral_mptt.evaluation.nll import evaluate_nll
 from tiny_mistral_mptt.inference import prefill_recurrent, recurrent_decode_step
-from tiny_mistral_mptt.variants.bank import BankVariant
-from tiny_mistral_mptt.variants.bank_multiscale import MultiscaleBankVariant
+from tiny_mistral_mptt.model_factory import build_variant
+from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionVariant
 from tiny_mistral_mptt.variants.recurrent_memory import RecurrentMemoryVariant
 
 
 @pytest.mark.parametrize("kind", ["memory_add", "memory_token", "projected_residual", "recirculation",
-                                  "dense", "strided", "multiscale"])
+                                  "dense", "strided", "dense_and_strided",
+                                  "hybrid_projected_residual", "hybrid_recirculation"])
 def test_bos_feedback_matches_observed_token_reference_and_model_owned_targets(kind, monkeypatch):
-    if kind == "multiscale":
-        model = MultiscaleBankVariant(
+    if kind.startswith("hybrid_"):
+        model = build_variant("dense_and_strided_memory_attention",
             MistralForCausalLM(micro_config(), attention_backend="reference"),
+            memory_layers=[1], recurrent_layers=[1],
+            recurrent_merger=kind.removeprefix("hybrid_"),
+            memory_dense_window=2, memory_sparse_window=2, memory_sparse_stride=2,
+        )
+        with torch.no_grad():
+            model.writer.proj.weight.add_(0.05 * torch.randn_like(model.writer.proj.weight))
+            model.memory_readers["1"].o_proj.weight.copy_(torch.eye(model.config.hidden_size))
+            if model.recurrent_merger == "projected_residual":
+                model.memory_mergers["1"].projection.weight.fill_(0.03)
+    elif kind == "dense_and_strided":
+        model = MemoryAttentionVariant(
+            MistralForCausalLM(micro_config(), attention_backend="reference"),
+            memory_pattern="dense_and_strided",
             memory_dense_window=2, memory_sparse_window=2, memory_sparse_stride=2,
         )
     elif kind in {"dense", "strided"}:
-        model = BankVariant(MistralForCausalLM(micro_config(), attention_backend="reference"),
+        model = MemoryAttentionVariant(MistralForCausalLM(micro_config(), attention_backend="reference"),
                             memory_write_mode=kind, memory_write_stride=2, memory_window=3)
     else:
         model = make_model(kind)

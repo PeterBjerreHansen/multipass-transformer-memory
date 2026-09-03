@@ -20,7 +20,8 @@ from tiny_mistral_mptt.evaluation.pass_depth import evaluate_pass_depth
 from tiny_mistral_mptt.evaluation.recurrent import evaluate_recurrent_continuation
 from tiny_mistral_mptt.evaluation.settings import resolve_evaluation_settings
 from tiny_mistral_mptt.training.trainer import Trainer
-from tiny_mistral_mptt.variants.bank import BankVariant
+from tiny_mistral_mptt.model_factory import build_variant
+from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionVariant
 from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
 from tiny_mistral_mptt.variants.recurrent_memory import RecurrentMemoryVariant
 from tiny_mistral_mptt.variants.vanilla import VanillaVariant
@@ -48,13 +49,29 @@ class Rows:
         return index
 
 
+@pytest.mark.parametrize("merger", ["projected_residual", "recirculation"])
+def test_hybrid_interventions_use_explicit_attention_channel_names(merger):
+    backbone = MistralForCausalLM(micro_config(num_hidden_layers=2), attention_backend="reference")
+    model = build_variant("dense_memory_attention", backbone, memory_layers=[1],
+                          recurrent_merger=merger, recurrent_layers=[0])
+    label = "recurrent"
+    result = evaluate_memory_interventions(model, Rows(), device="cpu", max_blocks=1)
+    expected = {
+        "real_memory", "zero_memory", "mismatched_memory",
+        f"zero_{label}_real_attention", f"mismatched_{label}_real_attention",
+        f"real_{label}_zero_attention", f"real_{label}_mismatched_attention",
+    }
+    assert set(result["evaluation"]["policy"]["interventions"]) == expected
+    assert all(result[name]["predicted_tokens"] == 7 for name in expected)
+
+
 def make_model(kind="memory_add"):
     torch.manual_seed(48)
     backbone = MistralForCausalLM(micro_config(), attention_backend="reference")
     if kind == "vanilla":
         return VanillaVariant(backbone)
     if kind == "memory_token":
-        return BankVariant(
+        return MemoryAttentionVariant(
             backbone, memory_write_mode="memory_token", memory_write_stride=2,
             memory_token_visibility="write_only", memory_window=3,
         )

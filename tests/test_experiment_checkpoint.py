@@ -44,7 +44,7 @@ def test_checkpoint_restores_model_optimizer_sampler_and_all_counters(tmp_path):
         optimizer=optimizer,
         sampler_state=sampler.state_dict(),
         train_state=state,
-        experiment_config={"variant": "bank", "memory_write_mode": "memory_token"},
+        experiment_config={"variant": "memory_attention", "memory_write_mode": "memory_token"},
         data_manifest_sha256="manifest-hash",
     )
     expected_parameters = {name: tensor.detach().clone() for name, tensor in model.state_dict().items()}
@@ -169,7 +169,7 @@ def test_evaluation_checkpoint_rejects_semantic_config_changes(tmp_path):
         sampler_state=sampler.state_dict(),
         train_state=TrainState(),
         experiment_config={
-            "variant": "bank",
+            "variant": "memory_attention",
             "memory_write_mode": "dense",
             "memory_layers": [3, 7],
         },
@@ -182,7 +182,7 @@ def test_evaluation_checkpoint_rejects_semantic_config_changes(tmp_path):
             model=replacement,
             expected_manifest_sha256="same",
             expected_experiment_config={
-                "variant": "bank",
+                "variant": "memory_attention",
                 "memory_write_mode": "periodic",
                 "memory_layers": [3, 7],
             },
@@ -223,7 +223,7 @@ def test_evaluation_checkpoint_accepts_public_variant_alias(tmp_path):
         optimizer=optimizer,
         sampler_state=sampler.state_dict(),
         train_state=TrainState(),
-        experiment_config={"variant": "bank", "memory_write_mode": "dense"},
+        experiment_config={"variant": "memory_attention", "memory_write_mode": "dense"},
         data_manifest_sha256="same",
     )
     replacement, _ = _objects()
@@ -267,6 +267,7 @@ def test_constant_lr_resume_may_extend_stopping_budget(tmp_path):
         },
     )
     assert state.unique_tokens_seen == 4
+
 
 
 def test_scheduled_resume_rejects_changed_horizon(tmp_path):
@@ -364,3 +365,53 @@ def test_clean_break_rejects_old_checkpoint_format(tmp_path):
             optimizer=replacement_optimizer,
             expected_manifest_sha256="same",
         )
+
+
+@pytest.mark.parametrize("field,value", [
+    ("memory_pattern", "strided"),
+    ("memory_layers", [1]),
+    ("recurrent_merger", "recirculation"),
+    ("recurrent_layers", [1]),
+])
+def test_checkpoint_semantics_do_not_collapse_with_shared_attention_dispatch(tmp_path, field, value):
+    model, optimizer = _objects()
+    config = {
+        "variant": "memory_attention", "memory_pattern": "dense",
+        "memory_layers": [0], "recurrent_merger": "projected_residual",
+        "recurrent_layers": [0],
+    }
+    path = save_checkpoint(
+        tmp_path / "hybrid.pt", model=model, optimizer=optimizer,
+        sampler_state=StatefulBlockSampler(5, seed=3).state_dict(),
+        train_state=TrainState(), data_manifest_sha256="same", experiment_config=config,
+    )
+    changed = {**config, field: value}
+    # Deliberately identical tensor structure: semantic checks must catch it first.
+    with pytest.raises(ValueError, match=field):
+        load_model_weights(path, model=model, expected_experiment_config=changed)
+    with pytest.raises(ValueError, match=field):
+        load_checkpoint(path, model=model, optimizer=optimizer,
+                        expected_manifest_sha256="same", expected_experiment_config=changed)
+
+
+@pytest.mark.parametrize("alias,explicit", [
+    ("dense_memory_attention", {"memory_pattern": "dense"}),
+    ("strided_memory_attention", {"memory_pattern": "strided", "memory_write_stride": 2}),
+    ("dense_and_strided_memory_attention", {
+        "memory_pattern": "dense_and_strided", "memory_dense_window": 2,
+        "memory_sparse_window": 2, "memory_sparse_stride": 2,
+    }),
+])
+def test_attention_preset_and_explicit_config_resume_equally(tmp_path, alias, explicit):
+    model, optimizer = _objects()
+    fields = {key: value for key, value in explicit.items() if key != "memory_pattern"}
+    path = save_checkpoint(
+        tmp_path / "attention.pt", model=model, optimizer=optimizer,
+        sampler_state=StatefulBlockSampler(5, seed=3).state_dict(),
+        train_state=TrainState(), data_manifest_sha256="same",
+        experiment_config={"variant": alias, **fields},
+    )
+    target = {"variant": "memory_attention", **explicit}
+    load_model_weights(path, model=model, expected_experiment_config=target)
+    load_checkpoint(path, model=model, optimizer=optimizer,
+                    expected_manifest_sha256="same", expected_experiment_config=target)
