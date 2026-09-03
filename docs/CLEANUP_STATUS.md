@@ -28,13 +28,15 @@ No new unfrozen study, inference algorithm or training run was introduced.
 An opt-in selected-checkpoint feedback schedule is now available, but the current
 frozen configs and their per-model LR grid are unchanged and do not enable it.
 
-Verification: 469 tests passed and 10 MPS-dependent tests skipped (24.72 seconds
+Verification: 471 tests passed and 10 MPS-dependent tests skipped (25.24 seconds
 with CPU thread counts limited to one). Both active
 study manifests validate; byte-compilation and `git diff --check` pass. The CLI
 regressions exercise checkpoint identity, default resolution, precision overrides
 and downstream scoring counts. Added coverage includes full 2048-position BOS
 feedback, precision dispatch, actual mid-decode signals, snapshot/report recovery,
 retention, unchanged training state and final-validation de-duplication.
+The inference-efficiency defaults and arm-separated cost summaries also have
+regression coverage. Compact original A6000 reports are retained unchanged.
 No GPU qualification or new hardware timing run was performed.
 
 ## Inference contract to preserve
@@ -168,6 +170,7 @@ appears. A one-block result is not a statistically reliable ranking.
 | 11. K=1 feedback-memory conversion | Fixed and regression-tested in cleanup 3 |
 | 12. Merger interpretation / diagnostics | Preserve current architecture; add initial K=4 and depth-aligned memory-use diagnostics later |
 | 13. Directory-layout test | Fixed: test manifests, not all development directories |
+| 14. Timing-tool integration after arm replacement | Fixed: active default paths, distinct recurrent arm IDs, regression tests; direct BOS timing remains qualification work |
 
 ## Remaining additions
 
@@ -176,3 +179,7 @@ initial-state/K=4 memory interventions, and a fresh 2048-token unfrozen study
 with per-model backbone/added-parameter LR sweeps and aligned snapshots. The
 unfrozen run may begin briefly frozen, but must not continue the frozen study.
 Review loss weights explicitly. Do not add more merger candidates at this stage.
+
+The ordered [development plan](DEVELOPMENT_PLAN.md) turns these items into bounded
+work packages, separates optional optimization from experiment prerequisites,
+and lists the unfrozen protocol choices that still need a decision.

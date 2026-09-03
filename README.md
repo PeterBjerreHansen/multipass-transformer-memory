@@ -34,6 +34,8 @@ Start with the [study contract](benchmarks/README.md),
 [architectures](docs/RECURRENT_MEMORY.md), [evaluation contract](evaluation/README.md),
 and [training/recovery contract](docs/TRAINING.md).
 [Cleanup status](docs/CLEANUP_STATUS.md) tracks completed work and remaining additions.
+[The development plan](docs/DEVELOPMENT_PLAN.md) orders the next diagnostics,
+hardware qualification, LR selection and fresh unfrozen experiment decisions.
 
 ## Historical architecture screen
 
