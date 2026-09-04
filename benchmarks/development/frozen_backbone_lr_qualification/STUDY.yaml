@@ -3,6 +3,8 @@ status: planned
 question: >-
   Which added-module learning rate gives each frozen-backbone feedback mechanism
   stable and efficient Phase-A adaptation under one common 5M-token budget?
+data_artifacts:
+  data/dolmino/gpu_2048: f631956c92f94bdd61e4c073359e9e0e7c20e8ddc5bb3cd1a378954e93fa2fcb
 arms:
   - {id: recurrent_projected_residual_lr3e-5_5m, config: recurrent_projected_residual_lr3e-5_5m.yaml}
   - {id: recurrent_projected_residual_lr1e-4_5m, config: recurrent_projected_residual_lr1e-4_5m.yaml}

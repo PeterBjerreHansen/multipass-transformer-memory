@@ -14,7 +14,10 @@ been removed from this checkout. The compatibility implementations remain.
 
 Files inside these studies retain their original paths and commands. Those
 references document how the runs were made and are not expected to resolve
-after archival. Do not edit a historical config to make it runnable in the new
+after archival. The former pilot, staged-100M, 2.5B continuation, and Stage-6
+data recipes were also deleted from `data/dolmino/`; historical configs that
+mention them are therefore provenance records, not runnable data preparation
+commands. Do not edit a historical config to make it runnable in the new
 layout; copy it into a new active study if a follow-up experiment is needed.
 
 Large `results/<arm>/` payloads remain ignored by Git but are kept locally in

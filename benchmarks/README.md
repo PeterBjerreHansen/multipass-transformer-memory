@@ -23,15 +23,27 @@ The active scientific program is intentionally small:
    while the pretrained backbone remains frozen. Both recurrent mergers use the
    same late memory emission rule as the three attention variants.
 
-These studies use 2048-token blocks and parallel K=4 validation. Downstream
+These studies use 2048-token blocks and parallel K=4 validation. The nominal
+optimizer batch is 65,536 tokens per update: standard arms use batch 8 with
+four accumulation steps, while the memory-heavy
+`dense_and_strided_memory_attention` arm uses batch 4 with eight accumulation
+steps. Downstream
 tasks use K=4 context prefill followed by ordinary feedback decoding. Paper
 replay/BPTT execution is deleted. The old 1024-token studies and their associated
 efficiency suite have been deleted rather than archived in the repo.
+The active data inputs are `data/dolmino/gpu_2048` for these studies and
+`data/dolmino/wiring_2048` for wiring/pre-training checks. Former staged and
+long-run data recipes were retired with the clean-slate reset.
 A future unfrozen study must start fresh and qualify per-model learning rates.
 
-The active studies remain planned until hardware and learning-rate qualification
-is complete. Promotion means moving the reviewed
-study definition to `core/` and setting `status: locked` after review.
+The previous GPU qualification and comparison trajectories were discarded after
+the tokenizer-padding audit. The clean artifact must be regenerated and the
+qualification restarted before any frozen result is promoted. Promotion means
+moving the reviewed study definition to `core/` and setting `status: locked`
+after review.
+Each active `STUDY.yaml` pins the regenerated data manifest hash; the study
+runner verifies that exact artifact before wiring or training. The 100M
+comparison remains blocked until its per-model learning rates are qualified.
 Before its first retained run, update each `output_dir` to the new arm-local
 path and verify the manifest. Do not move a live or resumable trajectory.
 
@@ -62,12 +74,21 @@ Required top-level fields are:
 Core studies must use `status: locked`. A non-planned study must declare at
 least one runnable arm.
 
+Before execution, every non-planned study must declare `data_artifacts`, mapping
+every arm's `data_dir` to the exact SHA-256 of its verified `manifest.json`.
+Planned studies may omit the mapping while data materialization is still
+pending. A study whose final rates still await qualification sets
+`learning_rates_qualified: false`; the runner then permits wiring-only checks
+but refuses training.
+
 Example:
 
 ```yaml
 name: k_selection
 status: complete
 question: Does K=3 justify its extra compute for adaptive Recirculation?
+data_artifacts:
+  data/dolmino/wiring_2048: <64-character manifest SHA-256>
 arms:
   - {id: recirculation_k2, config: recirculation_k2.yaml}
   - {id: recirculation_k3, config: recirculation_k3.yaml}
@@ -108,7 +129,14 @@ study directories explicitly. The verifier checks that:
 - no runnable config is silently omitted from the manifest;
 - each arm writes under its own `results/<arm>/` path;
 - compared arms differ only on declared fields;
-- core studies are locked before execution.
+- core studies are locked before execution;
+- active and locked studies declare data pins before execution;
+- declared data pins cover exactly the data directories used by the arms.
+
+At execution time, `run_study.py` verifies the complete artifact, checks its
+manifest against the pinned hash, and enforces the learning-rate gate.
+`run-cloud-study` enforces the same gate and makes the remote launcher check the
+remote manifest hash before it starts training.
 
 `make check` includes this gate.
 

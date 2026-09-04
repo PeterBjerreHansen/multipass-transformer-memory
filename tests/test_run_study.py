@@ -12,6 +12,7 @@ assert _SPEC is not None and _SPEC.loader is not None
 _RUN_STUDY = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_RUN_STUDY)
 _should_resume_auto = _RUN_STUDY._should_resume_auto
+_verify_pinned_data_artifacts = _RUN_STUDY._verify_pinned_data_artifacts
 _wire_arm = _RUN_STUDY._wire_arm
 
 
@@ -105,3 +106,33 @@ def test_wiring_executes_the_declared_training_forward(monkeypatch, tmp_path):
     assert observed["loss_weights"] == [0.0, 1.0]
     assert observed["batch_indices"] == [0, 1, 2]
     assert model.weight.grad is not None
+
+
+def test_study_execution_checks_pinned_manifest_hash(monkeypatch, tmp_path):
+    config_path = tmp_path / "arm.yaml"
+    _write_config(config_path, output_dir="results/arm", init_from=None)
+    data_dir = tmp_path / "data" / "dolmino" / "wiring_2048"
+    data_dir.mkdir(parents=True)
+    (data_dir / "manifest.json").write_text("{}\n", encoding="utf-8")
+    expected = "a" * 64
+    verification = SimpleNamespace(
+        data_artifacts=(("data/dolmino/wiring_2048", expected),)
+    )
+    monkeypatch.setattr(_RUN_STUDY, "verify_artifact", lambda path: None)
+    monkeypatch.setattr(_RUN_STUDY, "file_sha256", lambda path: expected)
+
+    _verify_pinned_data_artifacts(
+        verification,
+        {"arm": config_path},
+        ["arm"],
+        root=tmp_path,
+    )
+
+    monkeypatch.setattr(_RUN_STUDY, "file_sha256", lambda path: "b" * 64)
+    with pytest.raises(RuntimeError, match="data manifest hash mismatch"):
+        _verify_pinned_data_artifacts(
+            verification,
+            {"arm": config_path},
+            ["arm"],
+            root=tmp_path,
+        )

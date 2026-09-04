@@ -66,6 +66,28 @@ def test_checkpoint_restores_model_optimizer_sampler_and_all_counters(tmp_path):
         torch.testing.assert_close(tensor, expected_parameters[name], atol=0, rtol=0)
 
 
+def test_checkpoint_refuses_resume_with_regenerated_data_manifest(tmp_path):
+    model, optimizer = _objects()
+    path = save_checkpoint(
+        tmp_path / "old-data.pt",
+        model=model,
+        optimizer=optimizer,
+        sampler_state={"position": 0},
+        train_state=TrainState(),
+        experiment_config={"variant": "vanilla"},
+        data_manifest_sha256="old-padded-data",
+    )
+    replacement, replacement_optimizer = _objects()
+
+    with pytest.raises(ValueError, match="data manifest changed across resume"):
+        load_checkpoint(
+            path,
+            model=replacement,
+            optimizer=replacement_optimizer,
+            expected_manifest_sha256="new-unpadded-data",
+        )
+
+
 def test_current_checkpoint_without_elapsed_counter_resumes_at_zero(tmp_path):
     model, optimizer = _objects()
     sampler = StatefulBlockSampler(5, seed=3)

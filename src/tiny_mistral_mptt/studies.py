@@ -45,6 +45,8 @@ class StudyVerification:
     status: str
     arm_ids: tuple[str, ...]
     comparison_names: tuple[str, ...]
+    data_artifacts: tuple[tuple[str, str], ...]
+    learning_rates_qualified: bool | None
 
 
 def _repo_root(path: Path) -> Path:
@@ -114,7 +116,16 @@ def verify_study(path: str | Path) -> StudyVerification:
     raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
     raw = _mapping(raw, label="study manifest")
     unknown_top = sorted(
-        set(raw) - {"name", "status", "question", "arms", "comparisons"}
+        set(raw)
+        - {
+            "name",
+            "status",
+            "question",
+            "arms",
+            "comparisons",
+            "data_artifacts",
+            "learning_rates_qualified",
+        }
     )
     if unknown_top:
         raise StudyValidationError(f"unknown STUDY.yaml fields: {unknown_top}")
@@ -130,6 +141,11 @@ def verify_study(path: str | Path) -> StudyVerification:
         )
     if not question:
         raise StudyValidationError("study question must be non-empty")
+    learning_rates_qualified = raw.get("learning_rates_qualified")
+    if learning_rates_qualified is not None and not isinstance(
+        learning_rates_qualified, bool
+    ):
+        raise StudyValidationError("learning_rates_qualified must be true or false")
 
     study_dir = manifest_path.parent.resolve()
     repo_root = _repo_root(study_dir)
@@ -179,6 +195,40 @@ def verify_study(path: str | Path) -> StudyVerification:
             )
         arms[arm_id] = StudyArm(arm_id, config_path, config)
         declared_config_paths.add(config_path.resolve())
+
+    declared_artifacts = _mapping(
+        raw.get("data_artifacts", {}), label="data_artifacts"
+    )
+    data_artifacts: dict[str, str] = {}
+    for directory, expected_sha256 in declared_artifacts.items():
+        normalized_directory = Path(str(directory)).as_posix()
+        resolved_directory = (repo_root / normalized_directory).resolve()
+        try:
+            resolved_directory.relative_to(repo_root.resolve())
+        except ValueError as exc:
+            raise StudyValidationError(
+                f"data artifact escapes the repository: {directory}"
+            ) from exc
+        if Path(normalized_directory).is_absolute():
+            raise StudyValidationError(
+                f"data artifact path must be repository-relative: {directory}"
+            )
+        digest = str(expected_sha256).strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise StudyValidationError(
+                f"data artifact {directory!r} must declare a SHA-256 manifest hash"
+            )
+        data_artifacts[normalized_directory] = digest
+    if status != "planned" and not data_artifacts:
+        raise StudyValidationError(
+            f"{status} studies must pin every arm data_dir in data_artifacts"
+        )
+    if data_artifacts:
+        arm_data_dirs = {Path(arm.config.data_dir).as_posix() for arm in arms.values()}
+        if set(data_artifacts) != arm_data_dirs:
+            raise StudyValidationError(
+                "data_artifacts must exactly match the data_dir values used by study arms"
+            )
 
     # Runnable configs should not silently exist outside the manifest.
     yaml_files = {
@@ -279,6 +329,8 @@ def verify_study(path: str | Path) -> StudyVerification:
         status=status,
         arm_ids=tuple(arms),
         comparison_names=tuple(comparison_names),
+        data_artifacts=tuple(sorted(data_artifacts.items())),
+        learning_rates_qualified=learning_rates_qualified,
     )
 
 

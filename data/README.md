@@ -4,23 +4,23 @@ Dataset preparation recipes live beside the generated artifacts they define.
 Only the small source recipes are tracked; token binaries, manifests, and other
 materialized dataset files are ignored.
 
-The 1024-token study recipe has been deleted. `gpu_2048` serves the active
-frozen comparison and LR sweep; the other recipes retain their separate roles:
+The 1024-token study and the former staged-pipeline recipes have been deleted.
+Only two recipes remain in the active data namespace:
 
-- `dolmino/wiring_2048/config.yaml`: one unique 5M-token wiring epoch.
-- `dolmino/pilot_2048/config.yaml`: the following unique 10M-token pilot epoch.
-  It skips the full wiring slice and shares its separate 256-block validation
-  set.
-- `dolmino/gpu_2048/config.yaml`: separate 100M-token serious-run artifact;
-  training may repeat it when a declared campaign budget exceeds one epoch.
-- `dolmino/gpu_2048_staged/config.yaml`: shared validation plus non-overlapping
-  wiring and Phase-B slices for initialized serious-run controls.
-- `dolmino/gpu_2048_long_2p5b/config.yaml`: the pinned 2.5B-token continuation
-  recipe for the Stage-6 long plastic study; it preserves the 5M wiring offset
-  and the shared validation construction while extending the training stream
-  beyond the Stage-5 100M artifact.
-- `dolmino/stage_6_evaluation_2048/config.yaml`: an independent Stage-6
-  evaluation stream placed after the complete long-run source range. Its
-  materialized validation split must still pass the document-disjointness gate.
+- `dolmino/wiring_2048/config.yaml`: the small, one-epoch wiring and
+  pre-training check (5M training tokens and 0.5M validation tokens).
+- `dolmino/gpu_2048/config.yaml`: the canonical 100M-token artifact for the
+  frozen comparison, LR qualification, and GPU substrate control.
+
+All previously materialized binaries were removed after the tokenizer-padding
+audit. The old pilot, staged-100M, 2.5B continuation, and Stage-6 evaluation
+recipes are no longer part of the repository contract. Their benchmark files
+remain only as historical provenance and are not runnable current studies.
 Use `scripts/prepare_data.py` and `scripts/verify_data.py` rather than editing a
 generated artifact in place.
+
+Preparation explicitly disables the tokenizer's persisted padding and
+truncation settings before encoding. The packer, not the tokenizer, owns the
+2048-token boundary. New manifests use the raw unpadded packing policy; do not
+reuse an artifact with an older manifest format. Verification scans the token
+files and requires zero occurrences of the tokenizer's recorded padding ID.

@@ -5,21 +5,20 @@ pinned slice of `allenai/dolmino-mix-1124` into deterministic local token blocks
 Every architecture therefore starts from the same linguistic IDs and block
 order.
 
-Checked-in preparation recipes live beside their local generated artifacts:
+The two checked-in preparation recipes live beside their local generated
+artifacts:
 
 ```text
 data/dolmino/wiring_2048/config.yaml
-data/dolmino/pilot_2048/config.yaml
 data/dolmino/gpu_2048/config.yaml
-data/dolmino/gpu_2048_staged/config.yaml
-data/dolmino/gpu_2048_long_2p5b/config.yaml
-data/dolmino/stage_6_evaluation_2048/config.yaml
 ```
 
 `gpu_2048` is the active frozen-study artifact: 2048-token blocks, approximately
-100M training tokens and 2M validation tokens. The 1024-token studies and their
-preparation recipe have been deleted. Other
-2048-token recipes retain their separate wiring, staged and evaluation roles.
+100M training tokens and 2M validation tokens. `wiring_2048` is the small
+pre-training and wiring-check artifact. The former pilot, staged, long-run, and
+Stage-6 evaluation recipes were deleted during the clean-slate data reset; the
+corresponding benchmark files are archival provenance only, not active runnable
+studies.
 
 Evaluation now records the selected prefix blocks, split and manifest identity,
 physical/linguistic lengths, control cadence and target counts. Do not assume
@@ -40,17 +39,16 @@ shuffled streaming iterator; the final partially used validation document is
 discarded. Training then continues from the next document. Thus train and
 validation are source-document-disjoint **within one materialized artifact**.
 An optional `train_skip_tokens` consumes and discards complete source-balanced
-blocks after validation and before the stored training split. When related
-recipes use identical validation budgets, this can place purpose-specific
-training artifacts on successive source ranges while preserving shared
-validation bytes.
+blocks after validation and before the stored training split. The active
+recipes use no skip; a future purpose-specific artifact may use this field only
+when its split ownership is documented and verified.
 
-An optional `validation_skip_tokens` advances each source before constructing
-validation. The Stage-6 evaluation recipe uses it to move evaluation beyond the
-complete long-run source range without writing discarded skip blocks to disk.
-
-Documents are tokenized with the pinned TinyMistral tokenizer, with BOS used as
-an explicit document separator. Packed blocks are fixed-length and unpadded.
+Documents are tokenized with the pinned TinyMistral tokenizer after explicitly
+disabling its persisted padding and truncation settings. BOS is used as an
+explicit document separator. The packer owns the fixed 2048-token boundary, so
+published blocks contain raw document IDs plus BOS separators, not tokenizer
+padding. New artifacts use manifest format 2 and the
+`raw_unpadded_document_stream_v1` packing policy.
 
 ## On-disk format
 
@@ -65,7 +63,12 @@ artifact/
 
 The binary token IDs are ordinary vocabulary IDs only. The manifest records the
 vocabulary size, source allocation, tokenizer hash, requested/resolved dataset
-revision, recipe, shuffle settings, seed, split-stream offsets, and file hashes.
+revision, recipe, shuffle settings, seed, split-stream offsets, forbidden
+control-token IDs, and file hashes. Verification scans the token files while
+checking their hashes and rejects any recorded padding/control ID. Training and
+the packed-data evaluation CLIs run this complete verification before consuming
+an artifact; lightweight dataset construction still checks the manifest
+contract and expected file sizes.
 
 ## Memory-token data view
 
@@ -93,24 +96,18 @@ The model's maximum position range must fit the expanded block.
 The trainer validates this before training. The cloud preflight reports expanded
 batching but does not replace the trainer's checks.
 
-## Historical staged-run split ownership
+## Active split ownership
 
 The document-disjoint guarantee belongs to one materialized artifact.
-Development wiring uses `wiring_2048` exactly once per arm. Development pilots
-use `pilot_2048` exactly once when continued to their full 10M endpoint. Both
-share the same held-out validation split; the pilot recipe skips the complete
-5M wiring slice before storing its following 10M training slice. The larger
-`gpu_2048` artifact supports ordinary serious runs. The `gpu_2048_staged`
-recipe stores non-overlapping wiring and Phase-B slices with a shared validation
-set for initialized controls. A run may reshuffle and repeat its assigned slice
-when its budget exceeds the stored token count.
+`wiring_2048` is reserved for wiring and pre-training checks. The larger
+`gpu_2048` artifact is the sole source for the active frozen studies and GPU
+substrate control. A run may reshuffle and repeat its assigned slice when its
+budget exceeds the stored token count.
 
-That within-artifact property does not prove disjointness across separately
-materialized artifacts: changing the validation budget changes every later
-source offset. Final evaluation artifacts must be checked against all relevant
-wiring and training artifacts with `scripts/verify_data_disjointness.py`. The
-Stage-5 and Stage-6 training validation streams overlap earlier wiring training
-and are monitoring-only.
+The within-artifact property does not prove disjointness across separately
+materialized artifacts. If a future independent evaluation artifact is added,
+it must be checked against all relevant wiring and training artifacts with
+`scripts/verify_data_disjointness.py`.
 
 The disjointness tool compares exact complete BOS-delimited tokenized documents.
 It excludes leading and trailing fragments. It does not detect every shared

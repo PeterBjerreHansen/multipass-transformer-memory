@@ -22,10 +22,10 @@ See [data](../docs/DATA.md), [study organization](../benchmarks/README.md) and
 | Command | Purpose |
 | --- | --- |
 | `train.py` | Train one config, optionally restoring a durable trajectory |
-| `run_study.py` | Verify a study, run forward/backward checks, then train selected arms sequentially |
+| `run_study.py` | Verify pinned study data, run forward/backward checks, then train selected arms sequentially |
 | `cloud_preflight.py` | Check CUDA, input integrity, source/run compatibility and persistent storage |
-| `start-and-watch` | Start or observe a remote run, transfer verified outputs, then apply requested Verda cleanup |
-| `run-cloud-study` | Apply that lifecycle to selected arms of a locked study |
+| `start-and-watch` | Start or observe a remote run, optionally check its data-manifest hash, transfer verified outputs, then apply requested Verda cleanup |
+| `run-cloud-study` | Apply that lifecycle to selected arms of a locked study and enforce its data/rate gates |
 
 `run_study.py --wire-only` does not perform an optimizer step.
 It does not replace the [real-trainer preflight](../docs/CLOUD.md#pre-training-checks).
@@ -50,6 +50,8 @@ These guides define resume and cleanup behavior. The script index does not dupli
 The checkpoint evaluators require explicit weights or `--initialized-baseline`.
 Parameter drift requires its checkpoint and reference.
 `generate.py` loads the pretrained backbone directly.
+The packed-data evaluation CLIs verify the selected artifact's manifest, file
+sizes, checksums, and forbidden control-token audit before loading it.
 See [evaluation](../evaluation/README.md) for defaults, precision, target sets and result identity.
 See [cached inference](../docs/RECURRENT_INFERENCE.md) for the lower-level feedback interface.
 

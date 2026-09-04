@@ -20,6 +20,15 @@ def _lazy_dependencies():
     return load_dataset, HfApi, Tokenizer
 
 
+def configure_tokenizer_for_packing(tokenizer):
+    """Disable persisted tokenizer padding/truncation before stream packing."""
+    # tokenizer.json is also used by serving and carries fixed-length settings;
+    # dataset preparation must let the packer own the 2048-token boundary.
+    tokenizer.no_padding()
+    tokenizer.no_truncation()
+    return tokenizer
+
+
 def prepare_dolmino(
     *,
     output_dir: str | Path,
@@ -39,6 +48,11 @@ def prepare_dolmino(
     tokenizer_path = model_dir / "tokenizer.json"
     config = MistralConfig.from_json_file(model_dir / "config.json")
     tokenizer = Tokenizer.from_file(str(tokenizer_path))
+    persisted_padding = tokenizer.padding
+    if not persisted_padding or persisted_padding.get("pad_id") is None:
+        raise ValueError("tokenizer does not declare the padding token required for the data audit")
+    pad_token_id = int(persisted_padding["pad_id"])
+    tokenizer = configure_tokenizer_for_packing(tokenizer)
     resolved = HfApi().dataset_info(dataset_repo, revision=revision).sha
 
     iterators: dict[str, Iterator[str]] = {}
@@ -76,6 +90,7 @@ def prepare_dolmino(
         tokenizer_sha256=file_sha256(tokenizer_path),
         vocab_size=config.vocab_size,
         bos_token_id=config.bos_token_id,
+        forbidden_token_ids=(pad_token_id,),
         recipe_name="dolmino_50b",
         shuffle_buffer=shuffle_buffer,
     )

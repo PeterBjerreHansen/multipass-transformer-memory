@@ -6,7 +6,7 @@ import random
 import numpy as np
 import torch
 
-from .manifest import DataManifest
+from .manifest import DataManifest, validate_manifest_contract, verify_artifact
 
 
 class PackedTokenDataset:
@@ -15,6 +15,7 @@ class PackedTokenDataset:
     def __init__(self, artifact_dir: str | Path, split: str):
         self.artifact_dir = Path(artifact_dir)
         self.manifest = DataManifest.read(self.artifact_dir / "manifest.json")
+        validate_manifest_contract(self.manifest)
         if split not in {"train", "validation"}:
             raise ValueError("split must be 'train' or 'validation'")
         self.split = split
@@ -207,7 +208,11 @@ def load_packed_dataset_for_experiment(
     *,
     memory_write_mode: str | None = None,
     memory_write_stride: int | None = None,
+    verify_integrity: bool = False,
 ) -> PackedTokenDataset | MemoryTokenPackedDataset:
+    artifact_dir = Path(artifact_dir)
+    if verify_integrity:
+        verify_artifact(artifact_dir)
     base = PackedTokenDataset(artifact_dir, split)
     if memory_write_mode in {"memory_token"}:
         if memory_write_stride is None:

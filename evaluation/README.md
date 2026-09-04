@@ -102,6 +102,12 @@ experiment default, not an implementation limit. Zero memory is not equivalent
 to bypassing an adaptive recirculation merger, which can still rescale its input.
 See [the development plan](../docs/DEVELOPMENT_PLAN.md).
 
+All four packed-data CLI evaluators run complete artifact verification before
+loading the validation split. This checks the current manifest contract, token
+file sizes, token and source hashes, and the forbidden control-token audit.
+Direct calls to the lower-level evaluator functions do not perform this scan;
+verify the artifact explicitly when using those APIs.
+
 Intervention reports use schema version 3. Hybrid channel keys explicitly name
 both channels, for example `zero_recurrent_real_attention` and `real_recurrent_zero_attention`;
 the combined `real_memory`, `zero_memory` and `mismatched_memory` conditions are unchanged.
@@ -179,8 +185,9 @@ Retained JSON includes checkpoint/config/source hashes, seeds and package
 versions. Packed results add the split, manifest hash, declared artifact hashes,
 exact prefix selection, physical/linguistic lengths, control-slot cadence,
 resolved computation policy, precision and scored-token counts. Declared binary
-hashes identify the artifact; routine validation does not re-hash multi-GB token
-files. Verify artifacts separately before comparing runs.
+hashes identify the artifact. Trainer routine validation does not re-hash
+multi-GB token files; the packed-data CLI evaluators do the complete scan before
+scoring. Verify artifacts explicitly when using lower-level evaluator APIs.
 
 Trainer records identify live weights by run, segment, optimizer step and token
 count, rather than claiming that an unsaved state is a checkpoint. Downstream

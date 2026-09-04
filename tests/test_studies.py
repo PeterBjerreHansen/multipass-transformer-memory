@@ -5,6 +5,16 @@ import pytest
 from tiny_mistral_mptt.studies import StudyValidationError, verify_study
 
 
+def _with_data_pin(manifest: str) -> str:
+    return manifest.replace(
+        "question:",
+        "data_artifacts:\n"
+        f"  data/dolmino/wiring_2048: {'a' * 64}\n"
+        "question:",
+        1,
+    )
+
+
 def _write_config(
     path: Path,
     *,
@@ -71,7 +81,7 @@ def test_study_allows_only_declared_experimental_axes(tmp_path):
     _write_config(study / "k2.yaml", output_dir=f"{prefix}/k2", passes=2)
     _write_config(study / "k3.yaml", output_dir=f"{prefix}/k3", passes=3)
     (study / "STUDY.yaml").write_text(
-        """name: example
+        _with_data_pin("""name: example
 status: complete
 question: Does K matter?
 arms:
@@ -81,7 +91,7 @@ comparisons:
   - name: k
     arms: [k2, k3]
     experimental_axes: [pass_schedule, pass_loss_weights]
-""",
+"""),
         encoding="utf-8",
     )
     result = verify_study(study)
@@ -94,7 +104,7 @@ def test_study_rejects_undeclared_execution_difference(tmp_path):
     _write_config(study / "a.yaml", output_dir=f"{prefix}/a", batch_size=1)
     _write_config(study / "b.yaml", output_dir=f"{prefix}/b", batch_size=2)
     (study / "STUDY.yaml").write_text(
-        """name: example
+        _with_data_pin("""name: example
 status: complete
 question: Compare arms.
 arms:
@@ -104,7 +114,7 @@ comparisons:
   - name: pair
     arms: [a, b]
     experimental_axes: []
-""",
+"""),
         encoding="utf-8",
     )
     with pytest.raises(StudyValidationError, match="batch_size"):
@@ -117,13 +127,13 @@ def test_study_rejects_orphan_runnable_config(tmp_path):
     _write_config(study / "a.yaml", output_dir=f"{prefix}/a")
     _write_config(study / "orphan.yaml", output_dir=f"{prefix}/orphan")
     (study / "STUDY.yaml").write_text(
-        """name: example
+        _with_data_pin("""name: example
 status: complete
 question: Compare arm.
 arms:
   - {id: a, config: a.yaml}
 comparisons: []
-""",
+"""),
         encoding="utf-8",
     )
     with pytest.raises(StudyValidationError, match="orphan.yaml"):
@@ -137,7 +147,7 @@ def test_study_requires_initialization_match_unless_explicitly_allowed(tmp_path)
     _write_config(study / "b.yaml", output_dir=f"{prefix}/b", init_from="b.pt")
     manifest = study / "STUDY.yaml"
     manifest.write_text(
-        """name: example
+        _with_data_pin("""name: example
 status: complete
 question: Compare initialization handling.
 arms:
@@ -147,14 +157,14 @@ comparisons:
   - name: pair
     arms: [a, b]
     experimental_axes: []
-""",
+"""),
         encoding="utf-8",
     )
     with pytest.raises(StudyValidationError, match="init_from"):
         verify_study(study)
 
     manifest.write_text(
-        """name: example
+        _with_data_pin("""name: example
 status: complete
 question: Compare initialization handling.
 arms:
@@ -165,7 +175,7 @@ comparisons:
     arms: [a, b]
     experimental_axes: []
     allowed_differences: [init_from]
-""",
+"""),
         encoding="utf-8",
     )
     verify_study(study)
@@ -190,4 +200,69 @@ comparisons: []
         encoding="utf-8",
     )
     with pytest.raises(StudyValidationError, match="status=locked"):
+        verify_study(study)
+
+
+def test_study_records_exact_data_manifest_hash(tmp_path):
+    study = _repo(tmp_path)
+    prefix = "benchmarks/development/example/results"
+    _write_config(study / "arm.yaml", output_dir=f"{prefix}/arm")
+    digest = "a" * 64
+    (study / "STUDY.yaml").write_text(
+        f"""name: example
+status: planned
+question: Is the data identity pinned?
+data_artifacts:
+  data/dolmino/wiring_2048: {digest}
+learning_rates_qualified: false
+arms:
+  - {{id: arm, config: arm.yaml}}
+comparisons: []
+""",
+        encoding="utf-8",
+    )
+
+    result = verify_study(study)
+
+    assert result.data_artifacts == (("data/dolmino/wiring_2048", digest),)
+    assert result.learning_rates_qualified is False
+
+
+def test_study_rejects_unpinned_arm_data_directory(tmp_path):
+    study = _repo(tmp_path)
+    prefix = "benchmarks/development/example/results"
+    _write_config(study / "arm.yaml", output_dir=f"{prefix}/arm")
+    (study / "STUDY.yaml").write_text(
+        f"""name: example
+status: planned
+question: Is every arm data input pinned?
+data_artifacts:
+  data/dolmino/other: {'a' * 64}
+arms:
+  - {{id: arm, config: arm.yaml}}
+comparisons: []
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StudyValidationError, match="exactly match"):
+        verify_study(study)
+
+
+def test_active_study_requires_data_manifest_pins(tmp_path):
+    study = _repo(tmp_path)
+    prefix = "benchmarks/development/example/results"
+    _write_config(study / "arm.yaml", output_dir=f"{prefix}/arm")
+    (study / "STUDY.yaml").write_text(
+        """name: example
+status: active
+question: Is the active data identity pinned?
+arms:
+  - {id: arm, config: arm.yaml}
+comparisons: []
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StudyValidationError, match="must pin every arm data_dir"):
         verify_study(study)

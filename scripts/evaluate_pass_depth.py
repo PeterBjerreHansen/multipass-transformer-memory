@@ -55,6 +55,7 @@ def main() -> None:
         "validation",
         memory_write_mode=cfg.memory_write_mode,
         memory_write_stride=cfg.memory_write_stride,
+        verify_integrity=True,
     )
     result = evaluate_pass_depth(
         model,

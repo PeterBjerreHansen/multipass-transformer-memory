@@ -47,7 +47,10 @@ def test_frozen_study_flop_report_uses_authoritative_arm_batching():
     assert {
         (row["batch_size"], row["grad_accum_steps"])
         for row in rows.values()
+        if row["arm"] != "dense_and_strided_memory_attention_multipass_100m"
     } == {(8, 4)}
+    combined = rows["dense_and_strided_memory_attention_multipass_100m"]
+    assert (combined["batch_size"], combined["grad_accum_steps"]) == (4, 8)
     assert {row["optimizer_batch_tokens"] for row in rows.values()} == {65_536}
     assert all(row["estimated_training_flops_total"] > 0 for row in rows.values())
     assert rows["recurrent_recirculation_multipass_100m"]["training_forward"] == "parallel_multipass"

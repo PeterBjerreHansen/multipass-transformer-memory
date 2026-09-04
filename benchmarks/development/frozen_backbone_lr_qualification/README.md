@@ -5,9 +5,10 @@ feedback mechanisms before interpreting the frozen-backbone wiring comparison.
 The backbone remains frozen throughout each run; only the added writer and
 merger or Memory Attention parameters are optimized. The recurrent arms use
 late emitted memory with projected-residual and adaptive-recirculation mergers.
-This qualification uses the same
-2,048-token `gpu_2048` artifact and 8x4 default optimizer batching as the
-comparison study.
+This qualification will use the regenerated clean 2,048-token `gpu_2048` artifact and nominal
+65,536-token optimizer batch as the comparison study. The dense-and-strided
+arms use a 4x8 microbatch/accumulation split to fit the A6000; the other arms
+use the 8x4 default split.
 
 The attention arms all read at `[3, 7]`; the recurrent pair reads at `[3]`.
 The combined attention arm uses the `dense_and_strided_memory_attention` preset
@@ -22,16 +23,16 @@ the selected 5M/20M/100M feedback schedule applies only to the main 100M runs.
 | --- | --- |
 | `phase` | `A` |
 | `max_unique_tokens` | `5013504` |
-| `batch_size` | `8` |
-| `grad_accum_steps` | `4` |
+| `batch_size` | `8` (all arms except dense-and-strided: `4`) |
+| `grad_accum_steps` | `4` (dense-and-strided: `8`) |
 | `eval_passes` | `4` |
 | `eval_batches` | `64` |
 | `eval_every_tokens` | `1048576` |
 | `feedback_eval_at_tokens` | `null` |
 
 Every arm consumes exactly 5,013,504 unique linguistic tokens. With 2,048-token
-blocks and the nominal 8x4 policy this is 77 optimizer updates, with the final
-update using the remaining partial accumulation. The pass schedule
+blocks and either 8x4 or 4x8 batching this is 77 optimizer updates, with the
+final update using the remaining partial accumulation. The pass schedule
 is the shared wiring schedule: K=2 with probability 0.9 and K=3 with probability
 0.1, with final-pass-only NTP loss weights. Validation uses deterministic K=4
 whole-block pass-depth NLL on 64 held-out blocks; generation is not part of this
@@ -70,5 +71,6 @@ may use different selected rates per mechanism; retain `added_learning_rate` as
 an explicit allowed difference in the long comparison and report the qualification budget.
 
 The 2,048-token qualification supersedes the earlier 1,024-token rate sweep.
-The checked-in 100M rates remain provisional until the new qualification is
-run.
+The earlier qualification was invalidated with the padded artifact. Repeat the
+20 fresh arms after regenerating and verifying the clean artifact; do not carry
+the earlier selections into the reset comparison without requalification.

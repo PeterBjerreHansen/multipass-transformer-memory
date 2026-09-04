@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.machinery
 import importlib.util
 import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
+import pytest
 import torch
 
 from tiny_mistral_mptt.training.checkpoint import TrainState, save_checkpoint_generation
@@ -73,7 +76,14 @@ def test_remote_identity_helpers_reject_config_or_run_path_mismatch(tmp_path):
     config = tmp_path / "arm.yaml"
     output = tmp_path / "results" / "arm"
     output.mkdir(parents=True)
-    config.write_text("output_dir: results/arm\n", encoding="utf-8")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    manifest = data_dir / "manifest.json"
+    manifest.write_text("{}\n", encoding="utf-8")
+    manifest_sha256 = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    config.write_text(
+        "output_dir: results/arm\ndata_dir: data\n", encoding="utf-8"
+    )
     (output / "run.json").write_text(
         json.dumps({"config": {"output_dir": "results/arm"}}),
         encoding="utf-8",
@@ -87,6 +97,7 @@ def test_remote_identity_helpers_reject_config_or_run_path_mismatch(tmp_path):
             str(tmp_path),
             str(config),
             str(output),
+            manifest_sha256,
         ],
         check=True,
     )
@@ -102,7 +113,9 @@ def test_remote_identity_helpers_reject_config_or_run_path_mismatch(tmp_path):
         check=True,
     )
 
-    config.write_text("output_dir: results/other\n", encoding="utf-8")
+    config.write_text(
+        "output_dir: results/other\ndata_dir: data\n", encoding="utf-8"
+    )
     failed = subprocess.run(
         [
             sys.executable,
@@ -111,7 +124,58 @@ def test_remote_identity_helpers_reject_config_or_run_path_mismatch(tmp_path):
             str(tmp_path),
             str(config),
             str(output),
+            manifest_sha256,
         ],
         check=False,
     )
     assert failed.returncode != 0
+
+
+def test_remote_config_helper_rejects_unpinned_data_manifest(tmp_path):
+    controller = _load_extensionless("start_and_watch_hash_test", "start-and-watch")
+    output = tmp_path / "results" / "arm"
+    output.mkdir(parents=True)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "manifest.json").write_text("{}\n", encoding="utf-8")
+    config = tmp_path / "arm.yaml"
+    config.write_text(
+        "output_dir: results/arm\ndata_dir: data\n", encoding="utf-8"
+    )
+
+    failed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            controller._config_output_code(),
+            str(tmp_path),
+            str(config),
+            str(output),
+            "a" * 64,
+        ],
+        check=False,
+    )
+
+    assert failed.returncode != 0
+
+
+def test_cloud_study_blocks_unqualified_learning_rates(monkeypatch, tmp_path):
+    campaign = _load_extensionless("run_cloud_study_gate_test", "run-cloud-study")
+    study = tmp_path / "benchmarks" / "development" / "comparison"
+    study.mkdir(parents=True)
+    (study / "STUDY.yaml").write_text(
+        "arms:\n  - {id: arm, config: arm.yaml}\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(campaign, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        campaign,
+        "verify_study",
+        lambda path: SimpleNamespace(
+            status="locked",
+            learning_rates_qualified=False,
+            data_artifacts=(("data/dolmino/gpu_2048", "a" * 64),),
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="learning-rate qualification"):
+        campaign._study_plan("benchmarks/development/comparison")

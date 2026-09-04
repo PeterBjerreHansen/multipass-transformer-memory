@@ -147,10 +147,11 @@ print(json.dumps({
 
 
 def _config_output_code() -> str:
-    return r'''import pathlib, sys, yaml
+    return r'''import hashlib, pathlib, sys, yaml
 root = pathlib.Path(sys.argv[1]).resolve()
 config = pathlib.Path(sys.argv[2])
 expected = pathlib.Path(sys.argv[3]).resolve()
+expected_manifest_sha256 = sys.argv[4]
 raw = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
 configured = pathlib.Path(str(raw["output_dir"]))
 if not configured.is_absolute():
@@ -158,14 +159,28 @@ if not configured.is_absolute():
 if configured != expected:
     raise SystemExit(
         f"config output_dir resolves to {configured}, but controller watches {expected}"
-    )'''
+    )
+if expected_manifest_sha256:
+    data_dir = pathlib.Path(str(raw["data_dir"]))
+    if not data_dir.is_absolute():
+        data_dir = (root / data_dir).resolve()
+    manifest = data_dir / "manifest.json"
+    if not manifest.is_file():
+        raise SystemExit(f"data manifest does not exist: {manifest}")
+    actual_manifest_sha256 = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    if actual_manifest_sha256 != expected_manifest_sha256:
+        raise SystemExit(
+            f"data manifest hash mismatch for {data_dir}: "
+            f"expected {expected_manifest_sha256}, got {actual_manifest_sha256}"
+        )'''
 
 
 def _validate_remote_config(args: argparse.Namespace, config: str, output: str) -> None:
     """Validate config/output identity before inspecting or launching a run."""
     command = (
         f"set -eu; cd {_q(args.remote_root)}; test -f {_q(config)}; "
-        f"python3 -c {_q(_config_output_code())} . {_q(config)} {_q(output)}"
+        f"python3 -c {_q(_config_output_code())} . {_q(config)} {_q(output)} "
+        f"{_q(args.expected_data_manifest_sha256 or '')}"
     )
     _ssh(args, command)
 
@@ -437,6 +452,11 @@ def _parser() -> argparse.ArgumentParser:
         help="output path relative to --remote-root; must match config output_dir",
     )
     parser.add_argument("--local-output", type=Path, required=True)
+    parser.add_argument(
+        "--expected-data-manifest-sha256",
+        default=None,
+        help="refuse launch unless the remote config uses this exact data manifest",
+    )
     parser.add_argument("--until-unique-tokens", type=int, default=None)
     parser.add_argument("--start-vm", action="store_true", help="start the VM before waiting for SSH")
     parser.add_argument(
@@ -470,6 +490,14 @@ def main() -> int:
     args = _parser().parse_args()
     args.ssh_key = args.ssh_key.expanduser()
     args.local_output = args.local_output.expanduser().resolve()
+    if args.expected_data_manifest_sha256 is not None:
+        digest = args.expected_data_manifest_sha256.lower()
+        invalid_digest = len(digest) != 64 or any(
+            character not in "0123456789abcdef" for character in digest
+        )
+        if invalid_digest:
+            raise SystemExit("--expected-data-manifest-sha256 must be a SHA-256 digest")
+        args.expected_data_manifest_sha256 = digest
     if args.until_unique_tokens is not None and args.until_unique_tokens <= 0:
         raise SystemExit("--until-unique-tokens must be positive")
     if args.poll_seconds <= 0 or args.max_ssh_failures < 0:

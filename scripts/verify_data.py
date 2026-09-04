@@ -13,7 +13,7 @@ def main() -> None:
     args = parser.parse_args()
     manifest = verify_artifact(args.data_dir)
     print(json.dumps(manifest.to_dict(), indent=2, sort_keys=True))
-    print("PASS: prepared data artifact checksums match manifest")
+    print("PASS: prepared data artifact integrity and forbidden-token checks passed")
 
 
 if __name__ == "__main__":

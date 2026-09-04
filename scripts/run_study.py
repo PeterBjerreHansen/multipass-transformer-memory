@@ -16,6 +16,7 @@ import yaml
 
 from tiny_mistral.device import resolve_device, synchronize
 from tiny_mistral_mptt.config import load_experiment_config
+from tiny_mistral_mptt.data.manifest import file_sha256, verify_artifact
 from tiny_mistral_mptt.data.packed_dataset import load_packed_dataset_for_experiment
 from tiny_mistral_mptt.model_factory import load_variant_from_config
 from tiny_mistral_mptt.precision import autocast_context
@@ -61,6 +62,34 @@ def _should_resume_auto(config_path: Path, *, root: Path) -> bool:
     if cfg.init_from is not None and not _has_training_trajectory(config_path, root=root):
         return False
     return True
+
+
+def _verify_pinned_data_artifacts(
+    verification,
+    configs: dict[str, Path],
+    selected: list[str],
+    *,
+    root: Path,
+) -> None:
+    pinned = dict(verification.data_artifacts)
+    if not pinned:
+        raise RuntimeError("study must pin its data manifest hash before execution")
+    selected_data_dirs = {
+        Path(load_experiment_config(configs[arm_id]).data_dir).as_posix()
+        for arm_id in selected
+    }
+    missing = sorted(selected_data_dirs - set(pinned))
+    if missing:
+        raise RuntimeError(f"study does not pin data artifacts used by selected arms: {missing}")
+    for relative in sorted(selected_data_dirs):
+        artifact_dir = root / relative
+        verify_artifact(artifact_dir)
+        actual = file_sha256(artifact_dir / "manifest.json")
+        if actual != pinned[relative]:
+            raise RuntimeError(
+                f"data manifest hash mismatch for {relative}: "
+                f"expected {pinned[relative]}, got {actual}"
+            )
 
 
 def _wire_arm(config_path: Path, *, wire_device: str | None) -> None:
@@ -193,6 +222,20 @@ def main() -> None:
         raise SystemExit(
             f"unknown arm(s): {unknown}; available arms: {list(verification.arm_ids)}"
         )
+    if verification.learning_rates_qualified is False and not args.wire_only:
+        raise SystemExit(
+            "study training is blocked until learning-rate qualification is complete; "
+            "wire-only checks remain available"
+        )
+    try:
+        _verify_pinned_data_artifacts(
+            verification,
+            configs,
+            selected,
+            root=root,
+        )
+    except Exception as exc:
+        raise SystemExit(f"study data verification failed: {exc}") from exc
 
     print(f"PASS: verified {verification.name} arms={','.join(selected)}")
     if not args.skip_wire:

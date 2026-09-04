@@ -8,7 +8,13 @@ import shutil
 
 import numpy as np
 
-from .manifest import DataManifest, PackedSplitInfo, file_sha256
+from .manifest import (
+    DATA_FORMAT_VERSION,
+    PACKING_POLICY,
+    DataManifest,
+    PackedSplitInfo,
+    file_sha256,
+)
 from .recipes import DOLMINO_50B_SOURCES, allocate_blocks, normalized_weights
 
 
@@ -29,6 +35,7 @@ class PreparationRequest:
     tokenizer_sha256: str
     vocab_size: int
     bos_token_id: int
+    forbidden_token_ids: tuple[int, ...]
     recipe_name: str = "dolmino_50b"
     shuffle_buffer: int | None = None
     train_skip_tokens: int = 0
@@ -54,6 +61,14 @@ class PreparationRequest:
             raise ValueError("vocab_size does not fit uint16 artifact format")
         if not 0 <= self.bos_token_id < self.vocab_size:
             raise ValueError("invalid BOS token id")
+        if any(not 0 <= token < self.vocab_size for token in self.forbidden_token_ids):
+            raise ValueError("forbidden token id is outside the declared vocabulary")
+        if not self.forbidden_token_ids:
+            raise ValueError("at least one forbidden control-token id must be declared")
+        if len(set(self.forbidden_token_ids)) != len(self.forbidden_token_ids):
+            raise ValueError("forbidden control-token ids must be unique")
+        if self.bos_token_id in self.forbidden_token_ids:
+            raise ValueError("BOS cannot also be a forbidden control token")
 
 
 def _write_source_blocks(
@@ -65,6 +80,7 @@ def _write_source_blocks(
     bos_token_id: int,
     tokenize: TokenizerFn,
     vocab_size: int,
+    forbidden_token_ids: tuple[int, ...] = (),
 ) -> Path | None:
     """Consume one source quota, optionally writing its packed blocks."""
     if blocks <= 0:
@@ -93,6 +109,10 @@ def _write_source_blocks(
             continue
         if any(token < 0 or token >= vocab_size for token in ids):
             raise ValueError("tokenizer emitted an id outside the declared vocabulary")
+        if any(token in forbidden_token_ids for token in ids):
+            raise ValueError(
+                "tokenizer emitted a forbidden control token; disable tokenizer padding"
+            )
         # Explicit document separator. If the quota is reached inside this
         # document, its unused suffix is intentionally discarded. The next
         # split therefore starts from the following document.
@@ -217,6 +237,7 @@ def materialize_from_document_iterators(
                     bos_token_id=request.bos_token_id,
                     tokenize=tokenize,
                     vocab_size=request.vocab_size,
+                    forbidden_token_ids=request.forbidden_token_ids,
                 )
             # Consume validation first from each persistent shuffled iterator.
             validation_path = _write_source_blocks(
@@ -227,6 +248,7 @@ def materialize_from_document_iterators(
                 bos_token_id=request.bos_token_id,
                 tokenize=tokenize,
                 vocab_size=request.vocab_size,
+                forbidden_token_ids=request.forbidden_token_ids,
             )
             assert validation_path is not None
             val_files[name] = validation_path
@@ -239,6 +261,7 @@ def materialize_from_document_iterators(
                     bos_token_id=request.bos_token_id,
                     tokenize=tokenize,
                     vocab_size=request.vocab_size,
+                    forbidden_token_ids=request.forbidden_token_ids,
                 )
             train_path = _write_source_blocks(
                 iterators[name],
@@ -248,6 +271,7 @@ def materialize_from_document_iterators(
                 bos_token_id=request.bos_token_id,
                 tokenize=tokenize,
                 vocab_size=request.vocab_size,
+                forbidden_token_ids=request.forbidden_token_ids,
             )
             assert train_path is not None
             train_files[name] = train_path
@@ -269,7 +293,7 @@ def materialize_from_document_iterators(
 
     weights = normalized_weights()
     manifest = DataManifest(
-        format_version=1,
+        format_version=DATA_FORMAT_VERSION,
         dataset_repo=request.dataset_repo,
         requested_revision=request.requested_revision,
         resolved_revision=request.resolved_revision,
@@ -277,12 +301,14 @@ def materialize_from_document_iterators(
         tokenizer_sha256=request.tokenizer_sha256,
         vocab_size=request.vocab_size,
         bos_token_id=request.bos_token_id,
+        forbidden_token_ids=request.forbidden_token_ids,
         sequence_length=request.sequence_length,
         preparation_seed=request.seed,
         recipe_name=request.recipe_name,
         shuffle_buffer=request.shuffle_buffer,
         train_skip_tokens=request.train_skip_tokens,
         validation_skip_tokens=request.validation_skip_tokens,
+        packing_policy=PACKING_POLICY,
         source_ids=source_ids,
         mixture_weights={source.name: weight for source, weight in zip(DOLMINO_50B_SOURCES, weights)},
         train=train,

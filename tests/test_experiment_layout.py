@@ -27,13 +27,48 @@ def test_default_experiment_config_uses_active_2048_context_and_local_output():
     assert cfg.output_dir == "benchmarks/controls/smoke/results/vanilla"
 
 
-def test_data_recipes_live_beside_materialized_artifacts():
-    for name in ("wiring_2048", "pilot_2048", "gpu_2048", "gpu_2048_staged"):
+def test_active_data_recipes_live_beside_materialized_artifacts():
+    for name in ("wiring_2048", "gpu_2048"):
         path = ROOT / "data" / "dolmino" / name / "config.yaml"
         assert path.exists()
         cfg = load_data_config(path)
         assert cfg.output_dir == f"data/dolmino/{name}"
         assert cfg.sequence_length == 2048
+
+
+def test_retired_data_recipes_are_removed_from_active_namespace():
+    data_dir = ROOT / "data" / "dolmino"
+    retired = {
+        "pilot_2048",
+        "gpu_2048_staged",
+        "gpu_2048_long_2p5b",
+        "stage_6_evaluation_2048",
+    }
+    assert {path.name for path in data_dir.iterdir() if path.is_dir()} == {
+        "wiring_2048", "gpu_2048",
+    }
+    assert all(not (data_dir / name / "config.yaml").exists() for name in retired)
+
+
+def test_current_docs_do_not_advertise_retired_data_recipes():
+    retired = (
+        "pilot_2048",
+        "gpu_2048_staged",
+        "gpu_2048_long_2p5b",
+        "stage_6_evaluation_2048",
+    )
+    current = [
+        ROOT / "README.md",
+        ROOT / "data" / "README.md",
+        ROOT / "docs" / "DATA.md",
+        ROOT / "benchmarks" / "README.md",
+        ROOT / "benchmarks" / "development",
+    ]
+    for path in current:
+        files = [path] if path.is_file() else sorted(path.rglob("*.md"))
+        for file in files:
+            text = file.read_text(encoding="utf-8")
+            assert not any(f"data/dolmino/{name}" in text for name in retired), file
 
 
 def test_evaluation_suites_are_reusable_assets_not_data_recipes():
@@ -107,9 +142,13 @@ def test_frozen_backbone_comparison_has_two_recurrent_mergers_and_three_attentio
         "dense_and_strided_memory_attention_multipass_100m",
     }
     assert all(cfg.phase == "A" for cfg in configs.values())
-    assert {(cfg.batch_size, cfg.grad_accum_steps) for cfg in configs.values()} == {
-        (8, 4)
-    }
+    combined = configs["dense_and_strided_memory_attention_multipass_100m"]
+    assert (combined.batch_size, combined.grad_accum_steps) == (4, 8)
+    assert {
+        (cfg.batch_size, cfg.grad_accum_steps)
+        for cfg in configs.values()
+        if cfg.variant != "dense_and_strided_memory_attention"
+    } == {(8, 4)}
     assert {
         cfg.batch_size * cfg.grad_accum_steps * 2048
         for cfg in configs.values()
@@ -142,6 +181,12 @@ def test_frozen_backbone_comparison_has_two_recurrent_mergers_and_three_attentio
     assert (combined.memory_dense_window, combined.memory_sparse_window) == (32, 32)
     assert combined.memory_sparse_stride == 32
     assert {cfg.added_learning_rate for cfg in configs.values()} == {3.0e-4}
+    study = yaml.safe_load(
+        (ROOT / "benchmarks/development/frozen_backbone_comparison/STUDY.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert study["learning_rates_qualified"] is False
     recurrent = [cfg for cfg in configs.values() if cfg.variant == "recurrent_memory"]
     assert {cfg.recurrent_merger for cfg in recurrent} == {"recirculation", "projected_residual"}
     assert all(cfg.memory_layers == [3] and cfg.memory_window == 1 for cfg in recurrent)
@@ -156,9 +201,16 @@ def test_frozen_backbone_lr_qualification_uses_2048_sweep():
     for merger in ("recirculation", "projected_residual"):
         assert sum(cfg.recurrent_merger == merger for cfg in configs.values()) == 4
     assert {cfg.data_dir for cfg in configs.values()} == {"data/dolmino/gpu_2048"}
-    assert {(cfg.batch_size, cfg.grad_accum_steps) for cfg in configs.values()} == {
-        (8, 4)
-    }
+    assert {
+        (cfg.batch_size, cfg.grad_accum_steps)
+        for cfg in configs.values()
+        if cfg.variant == "dense_and_strided_memory_attention"
+    } == {(4, 8)}
+    assert {
+        (cfg.batch_size, cfg.grad_accum_steps)
+        for cfg in configs.values()
+        if cfg.variant != "dense_and_strided_memory_attention"
+    } == {(8, 4)}
     assert {cfg.added_learning_rate for cfg in configs.values()} == {
         3.0e-5,
         1.0e-4,
@@ -250,24 +302,6 @@ def test_gpu_substrate_preserves_validated_2048_token_optimizer_batch():
     assert data.train_tokens % (8 * data.sequence_length) == 0
     assert data.validation_tokens > 0
     assert data.train_skip_tokens == 0
-
-
-def test_stage6_evaluation_stream_starts_after_the_long_training_range():
-    long_run = load_data_config(
-        ROOT / "data" / "dolmino" / "gpu_2048_long_2p5b" / "config.yaml"
-    )
-    evaluation = load_data_config(
-        ROOT / "data" / "dolmino" / "stage_6_evaluation_2048" / "config.yaml"
-    )
-    assert evaluation.validation_skip_tokens == (
-        long_run.validation_tokens
-        + long_run.train_skip_tokens
-        + long_run.train_tokens
-    )
-    assert evaluation.seed == long_run.seed
-    assert evaluation.dataset_repo == long_run.dataset_repo
-    assert evaluation.revision == long_run.revision
-    assert evaluation.shuffle_buffer == long_run.shuffle_buffer
 
 
 def test_ci_runs_canonical_check_gate():

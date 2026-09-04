@@ -8,6 +8,7 @@ incomplete arm is handed to start-and-watch for remote resume/transfer.
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import fcntl
 import hashlib
 import json
@@ -25,6 +26,12 @@ from tiny_mistral_mptt.training.checkpoint import inspect_checkpoint
 DEFAULT_REMOTE_ROOT = "/root/multipass-transformer-memory"
 DEFAULT_LOCK = "/tmp/tinymistral-cloud-study.lock"
 TRANSFER_MANIFEST = ".transfer-manifest.sha256"
+
+
+@dataclass(frozen=True, slots=True)
+class CloudStudyArm:
+    config: str
+    data_manifest_sha256: str
 
 
 def _repo_root() -> Path:
@@ -137,7 +144,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _study_arms(study_dir: str) -> dict[str, str]:
+def _study_plan(study_dir: str) -> dict[str, CloudStudyArm]:
     relative = Path(study_dir)
     if relative.is_absolute():
         raise SystemExit("--study-dir must be relative to the repository root")
@@ -153,12 +160,40 @@ def _study_arms(study_dir: str) -> dict[str, str]:
         raise SystemExit(f"study validation failed: {exc}") from exc
     if verification.status != "locked":
         raise SystemExit(f"cloud study must be locked before execution: {manifest_path}")
+    if verification.learning_rates_qualified is False:
+        raise SystemExit(
+            "cloud study is blocked until learning-rate qualification is complete"
+        )
+    pinned_data = dict(verification.data_artifacts)
+    if not pinned_data:
+        raise SystemExit("cloud study must pin its data manifest hash before execution")
     raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-    return {str(arm["id"]): str(arm["config"]) for arm in raw["arms"]}
+    plan: dict[str, CloudStudyArm] = {}
+    for arm in raw["arms"]:
+        config_name = str(arm["config"])
+        config_raw = yaml.safe_load(
+            (study_path / config_name).read_text(encoding="utf-8")
+        ) or {}
+        data_dir = Path(str(config_raw["data_dir"])).as_posix()
+        expected_sha256 = pinned_data.get(data_dir)
+        if expected_sha256 is None:
+            raise SystemExit(
+                f"cloud study does not pin the data manifest used by {config_name}: {data_dir}"
+            )
+        plan[str(arm["id"])] = CloudStudyArm(config_name, expected_sha256)
+    return plan
+
+
+def _study_arms(study_dir: str) -> dict[str, str]:
+    """Return the config names after applying all cloud execution gates."""
+    return {arm_id: arm.config for arm_id, arm in _study_plan(study_dir).items()}
 
 
 def _controller_command(
-    args: argparse.Namespace, arm: str, config_name: str
+    args: argparse.Namespace,
+    arm: str,
+    config_name: str,
+    expected_data_manifest_sha256: str | None = None,
 ) -> list[str]:
     config = f"{args.study_dir}/{config_name}"
     remote_output = f"{args.study_dir}/results/{arm}"
@@ -191,6 +226,10 @@ def _controller_command(
         "--poll-seconds",
         str(args.poll_seconds),
     ]
+    if expected_data_manifest_sha256 is not None:
+        command.extend(
+            ["--expected-data-manifest-sha256", expected_data_manifest_sha256]
+        )
     if args.no_notify:
         command.append("--no-notify")
     return command
@@ -232,13 +271,13 @@ def _best_effort_shutdown(args: argparse.Namespace) -> None:
 
 def main() -> int:
     args = _parser().parse_args()
-    study_arms = _study_arms(args.study_dir)
+    study_plan = _study_plan(args.study_dir)
     if args.local_root is None:
         args.local_root = Path(args.study_dir) / "results"
     args.local_root = args.local_root.expanduser().resolve()
     args.ssh_key = args.ssh_key.expanduser()
-    arms = tuple(args.arms or study_arms)
-    unknown_arms = sorted(set(arms) - set(study_arms))
+    arms = tuple(args.arms or study_plan)
+    unknown_arms = sorted(set(arms) - set(study_plan))
     if unknown_arms:
         raise SystemExit(f"unknown study arms: {', '.join(unknown_arms)}")
     if args.poll_seconds <= 0:
@@ -251,7 +290,13 @@ def main() -> int:
     print(f"INFO: final VM action: {'keep' if args.keep_vm else 'delete compute instance'}")
     if args.dry_run:
         for arm in arms:
-            command = _controller_command(args, arm, study_arms[arm])
+            planned = study_plan[arm]
+            command = _controller_command(
+                args,
+                arm,
+                planned.config,
+                planned.data_manifest_sha256,
+            )
             print("DRY-RUN: " + " ".join(_quote(item) for item in command))
         return 0
 
@@ -272,7 +317,15 @@ def main() -> int:
                     print(f"SKIP: local artifacts are already complete: {local_output}", flush=True)
                     continue
                 print(f"RUN: transferring full artifacts to {local_output}", flush=True)
-                _run(_controller_command(args, arm, study_arms[arm]))
+                planned = study_plan[arm]
+                _run(
+                    _controller_command(
+                        args,
+                        arm,
+                        planned.config,
+                        planned.data_manifest_sha256,
+                    )
+                )
                 if not _local_complete(local_output, expected_output=remote_output):
                     raise RuntimeError(f"controller returned success but local arm is incomplete: {local_output}")
                 print(f"PASS: local artifacts complete: {local_output}", flush=True)

@@ -1,7 +1,10 @@
 # Frozen-backbone comparison
 
-This planned exploratory study trains five memory pathways while the pretrained backbone stays frozen.
-It is not locked or GPU-qualified. Each arm starts fresh from the common pretrained checkpoint.
+This exploratory study defines five memory pathways while the pretrained
+backbone stays frozen. It is not a locked paper study; each arm starts fresh
+from the common pretrained checkpoint. Earlier GPU trajectories were stopped
+and discarded after the tokenizer-padding audit. Regenerate the clean artifact,
+rerun qualification, and then launch these trajectories from token zero.
 
 ## Arms
 
@@ -30,7 +33,10 @@ retired 1024-token frozen study. Packing, sequence length, optimizer batching,
 update count and the combined reader layout changed. Do not overlay those curves
 as a continuous trajectory or attribute cross-protocol differences to the merger alone.
 All five current arms share the artifact, effective batch, pass schedule,
-validation, snapshot schedule and precision specified below.
+validation, snapshot schedule and precision specified below. The combined
+dense-and-strided arm uses a 4x8 microbatch/accumulation split for A6000
+memory, while the other arms use 8x4; both yield the same 65,536-token
+optimizer batch.
 
 The selected BOS feedback checks are diagnostics, not a change to the K=2/3
 training objective. The recorded optimizer-update timer excludes validation.
@@ -46,8 +52,8 @@ These shared values mirror the runnable YAML files. Documentation tests check th
 | --- | --- |
 | `phase` | `A` |
 | `data_dir` | `data/dolmino/gpu_2048` |
-| `batch_size` | `8` |
-| `grad_accum_steps` | `4` |
+| `batch_size` | `8` (dense-and-strided: `4`) |
+| `grad_accum_steps` | `4` (dense-and-strided: `8`) |
 | `max_unique_tokens` | `100007936` |
 | `dtype` | `float32` |
 | `autocast_dtype` | `bfloat16` |
@@ -64,16 +70,21 @@ These shared values mirror the runnable YAML files. Documentation tests check th
 | `feedback_eval_max_blocks` | `1` |
 | `feedback_eval_autocast_dtype` | `config` |
 
-Blocks contain 2048 linguistic tokens. The nominal optimizer batch is 32 sequences,
-or 65,536 tokens. If needed, use 4×8, 2×16 or 1×32 microbatch/accumulation after preflight.
-Record the resolved settings and preserve the effective batch.
+Clean blocks contain 2048 linguistic tokens. The nominal optimizer batch is 32 sequences,
+or 65,536 tokens. The combined dense-and-strided arm is fixed at 4×8 for the
+A6000; other arms use 8×4. If another host requires it, use 2×16 or 1×32
+microbatch/accumulation after preflight. Record the resolved settings and
+preserve the effective batch.
 
 Each microbatch samples K=2 with probability 0.9 or K=3 with probability 0.1.
 NTP loss uses only the final pass: `[0, 1]` or `[0, 0, 1]`.
-The learning-rate schedule is constant.
-All checked-in added-parameter rates remain provisional at `3e-4`.
-Apply each model's [qualification selection](../frozen_backbone_lr_qualification/README.md) before the main runs.
-The runner does not select rates or continue qualification checkpoints automatically.
+The learning-rate schedule is constant. The reset qualification must select the
+rate for each mechanism before the five 100M configs are launched.
+The checked-in `3e-4` values are placeholders, and `STUDY.yaml` blocks training
+while `learning_rates_qualified` is false. After recording the selected rates,
+update the configs and set that gate to true.
+The runner does not select rates or continue qualification checkpoints
+automatically.
 
 ## Snapshots and evaluation
 

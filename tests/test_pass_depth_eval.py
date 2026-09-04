@@ -33,6 +33,7 @@ def make_artifact(root: Path):
             tokenizer_sha256="fake",
             vocab_size=97,
             bos_token_id=1,
+            forbidden_token_ids=(96,),
         ),
         iterators={source.name: iter(fake_docs(i)) for i, source in enumerate(DOLMINO_50B_SOURCES)},
         tokenize=lambda text: [3 + (ord(ch) % 80) for ch in text],

@@ -4,6 +4,12 @@
 > Use the [current documentation map](README.md) and [development plan](DEVELOPMENT_PLAN.md)
 > for the implemented contract and the latest user decisions.
 
+The historical data settings discussed in this transcript were retired during
+the clean-slate reset on 2026-09-04. The active data namespace now contains
+only `data/dolmino/wiring_2048` and `data/dolmino/gpu_2048`; references below to
+pilot, staged, long-run, or Stage-6 recipes are preserved as conversation
+context, not as preparation instructions.
+
 This transcript contains the substantive exchange about the frozen-wiring experiments. Internal tool-call payloads and environment metadata are omitted.
 
 ## Opening request
@@ -788,7 +794,7 @@ C. Run all evaluation modes on every checkpoint regardless of cost.
 
 ## Round 9 — Resolve the sequence and evaluation contract
 
-The current frozen-wiring configs did not train on 2,048-token chunks. They used `data/dolmino/paper_1024`. The repository also contains 2,048-token artifacts: `gpu_2048`, `gpu_2048_staged`, `gpu_2048_long_2p5b`, and `wiring_2048`.
+At the time of this exchange, the current frozen-wiring configs did not train on 2,048-token chunks. They used `data/dolmino/paper_1024`. The repository then also contained 2,048-token artifacts: `gpu_2048`, `gpu_2048_staged`, `gpu_2048_long_2p5b`, and `wiring_2048`.
 
 The feedback diagnostic was clarified as held-out ordinary text rather than downstream QA. A prefix/continuation split can be arbitrary in a language-model stream; the question is whether online teacher-forced feedback reproduces the intended generation semantics.
 
@@ -849,13 +855,13 @@ C. Recurrence is unnecessary for state tracking.
 
 ## Round 10 — Final decisions before implementation
 
-The repository facts were checked:
+At the time of this exchange, the repository facts were checked:
 
-- `gpu_2048` is a 100M-token, 2,048-token serious-run artifact.
-- `gpu_2048_staged` is a 100M-token 2,048-token artifact with a 5M-token offset.
-- `gpu_2048_long_2p5b` is a 2.5B-token 2,048-token continuation artifact.
-- `wiring_2048` is a 5M-token 2,048-token artifact.
-- The current development frozen-wiring studies were the inconsistent part because they still pointed to `paper_1024`.
+- `gpu_2048` was a 100M-token, 2,048-token serious-run artifact.
+- `gpu_2048_staged` was a 100M-token 2,048-token artifact with a 5M-token offset.
+- `gpu_2048_long_2p5b` was a 2.5B-token 2,048-token continuation artifact.
+- `wiring_2048` was a 5M-token 2,048-token artifact.
+- The development frozen-wiring studies were then inconsistent because they still pointed to `paper_1024`.
 
 ### Q57 — 2,048 data artifact
 
@@ -924,9 +930,9 @@ We have enough shared understanding to act. The frozen-wiring comparison and its
 - Frozen comparison configs now use `batch_size: 8` and `grad_accum_steps: 4`.
 - The LR qualification configs use the same 2,048-token and 8×4 setup.
 - Four 1e-3 LR arms were added, bringing the qualification study to 16 arms.
-- Frozen-wiring documentation now describes the 2,048-token protocol, provisional per-mechanism LR selection, optional full validation, and the new batching policy.
+- Frozen-wiring documentation described the 2,048-token protocol, provisional per-mechanism LR selection, optional full validation, and the new batching policy.
 - Stale tests were updated to distinguish the 2,048-token frozen-wiring studies from the separate 1,024-token studies.
-- `paper_1024` was retained because it is still used by the separate common-checkpoint and forward-policy studies.
+- `paper_1024` was retained because it was then used by the separate common-checkpoint and forward-policy studies.
 
 ### Verification
 

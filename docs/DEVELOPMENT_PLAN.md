@@ -1,13 +1,16 @@
 # Development plan
 
-Updated 2026-09-03. This plan records the agreed frozen-study settings and next
+Updated 2026-09-04. This plan records the agreed frozen-study settings and next
 tasks. It does not authorize paid runs or select an unfrozen protocol on the
 user's behalf.
 
 ## Current position
 
-The code supports the intended comparison, but the restructured five-arm study
-is still planned, not GPU-qualified or scientifically concluded.
+The code supports the intended comparison, but the previous materialized
+dataset and GPU trajectories were discarded after a tokenizer-padding audit.
+The program is reset to a clean-artifact gate: fix and test preparation, build
+and verify the new 2048-token artifact, then repeat qualification before any
+scientific frozen run.
 
 - Active arms: two late-memory recurrent mergers (`projected_residual` and
   adaptive `recirculation`), plus dense, strided and dense-and-strided Memory Attention.
@@ -21,7 +24,8 @@ is still planned, not GPU-qualified or scientifically concluded.
   `recurrent_merger` and `recurrent_layers`, without adding a study arm.
 - The frozen configs use 2048-token blocks, K=2/3 final-pass training, K=4
   routine validation, and a four-rate qualification grid for each model.
-  Long-run rates are still provisional.
+  Qualification must be repeated on the clean artifact; earlier `1e-3`
+  selections are retained only as historical observations.
 - Shared evaluators record precision, scored targets, subset and weight identity.
   BOS-only feedback NLL is available standalone and after selected snapshots;
   it reports full and aligned target sets. All five 100M configs enable one full
@@ -97,19 +101,18 @@ Precision currently inherits BF16. Keep any subsequently agreed precision change
 explicit and common across arms. No full-split feedback campaign is implied.
 Unfrozen hardware checks follow only after that separate protocol is agreed.
 
-### 3. Finish frozen qualification and run the comparison
+### 3. Repeat frozen qualification and run the comparison
 
-Use the existing five-model, four-rate, 5,013,504-token qualification. Select each
-model's added-parameter LR using K=4 validation NLL and basic stability evidence,
-recording the equal tuning budget. Do not reuse old middle-layer/1024 selections
-as qualification of the new recurrent arms.
+Run the five-model, four-rate, 5,013,504-token qualification only after the
+clean artifact passes verification. Select each constant added-module LR using
+K=4 validation NLL and basic stability evidence, with the equal tuning budget
+recorded in the results. Do not reuse the earlier `1e-3` observations or old
+middle-layer/1024 selections as qualification of the new artifact.
 
-Update the five long-run configs with the selected rates, retaining the agreed
-feedback milestones. Keep one trajectory per arm, durable snapshots, the same data and
-routine target set. If LR candidates remain indistinguishable, decide whether a
-small finalist extension is worth its cost; do not silently expand one model's
-search budget. An individual 5M qualification trajectory is not automatically
-the first segment of the final 100M run.
+After selection, update the five long-run configs and launch one fresh trajectory
+per arm with durable snapshots, the same data and routine target set. An
+individual 5M qualification trajectory is not the first segment of the final
+100M run.
 
 ### 4. Define the fresh unfrozen experiment
 
@@ -181,9 +184,9 @@ profile system or parallel study-specific evaluator unless a concrete need appea
 
 ## Immediate next task
 
-Confirm the bounded GPU execution budget and carry out the pre-training check,
-using the production BOS evaluator for timing. Then run the existing LR sweep,
-apply its selections and launch the main comparison when qualified. Use existing
-simple ablations at early trained snapshots; defer token-zero evaluation and
-expanded diagnostics. Hold the required grill session separately before
-implementing or launching the unfrozen protocol.
+Regenerate and verify the clean `gpu_2048` artifact, then run the actual-GPU
+pre-training check and repeat the per-model LR qualification. Do not resume the
+discarded trajectories. The production BOS evaluator still needs a dedicated
+timing check; defer token-zero evaluation and expanded diagnostics. Hold the
+required grill session separately before implementing or launching the unfrozen
+protocol.
