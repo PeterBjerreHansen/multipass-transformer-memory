@@ -352,12 +352,24 @@ def _memory_breakdown(
     write_positions: tuple[int, ...],
     memory_window: int,
     reader_layers: int,
+    memory_num_key_value_heads: int | None = None,
     memory_dense_window: int | None = None,
     memory_sparse_stride: int | None = None,
     memory_sparse_window: int | None = None,
 ) -> FlopBreakdown:
     hidden_size = int(config.hidden_size)
-    kv_width = int(config.num_key_value_heads) * int(config.head_dim)
+    kv_heads = (
+        int(config.num_key_value_heads)
+        if memory_num_key_value_heads is None
+        else _validate_positive(
+            "memory_num_key_value_heads", memory_num_key_value_heads
+        )
+    )
+    if kv_heads > int(config.num_attention_heads) or int(config.num_attention_heads) % kv_heads:
+        raise ValueError(
+            "memory_num_key_value_heads must divide num_attention_heads"
+        )
+    kv_width = kv_heads * int(config.head_dim)
     memory_length = len(write_positions)
     dense_and_strided = memory_dense_window is not None
     if dense_and_strided:
@@ -381,6 +393,8 @@ def _memory_breakdown(
     )
     reader_products = FLOPS_PER_MATMUL * hidden_size * pairs * 2
     return FlopBreakdown(
+        # Full-sequence training compacts the selected source records before
+        # applying the writer, so striding also reduces writer work.
         memory_writer=_linear_flops(memory_length, hidden_size, hidden_size),
         memory_reader_projections=int(reader_layers) * reader_projections,
         memory_reader_products=int(reader_layers) * reader_products,
@@ -424,6 +438,7 @@ def estimate_pass(
     memory_write_stride: int | None = None,
     memory_token_visibility: str = "visible",
     memory_layers: Iterable[int] | str = "all",
+    memory_num_key_value_heads: int | None = None,
     memory_dense_window: int | None = None,
     memory_sparse_window: int | None = None,
     memory_sparse_stride: int | None = None,
@@ -432,6 +447,7 @@ def estimate_pass(
     sparse_attention_layers: Iterable[int] | str = "all",
     recirculation_mode: str = "fixed",
     recurrent_merger: str | None = None,
+    recurrent_controller_hidden_size: int | None = None,
     recurrent_layers: Iterable[int] | None = None,
 ) -> PassFlopEstimate:
     """Estimate forward/training FLOPs for one fixed K-pass optimizer step."""
@@ -449,6 +465,7 @@ def estimate_pass(
         "strided_self_attention",
         "memory_add",
         "recirculation",
+        "no_memory_adapter",
         "recurrent_memory",
         *MEMORY_ATTENTION_VARIANTS,
     }:
@@ -532,6 +549,7 @@ def estimate_pass(
                 if memory_layers == "all"
                 else len(tuple(memory_layers))
             ),
+            memory_num_key_value_heads=memory_num_key_value_heads,
             memory_dense_window=memory_dense_window if dense_and_strided_memory else None,
             memory_sparse_stride=memory_sparse_stride if dense_and_strided_memory else None,
             memory_sparse_window=memory_sparse_window if dense_and_strided_memory else None,
@@ -546,10 +564,18 @@ def estimate_pass(
         adaptive_recirculation=recirculation_mode == "adaptive",
     )
     per_pass_extra = memory + recurrent
-    if variant == "recurrent_memory" or (uses_memory and recurrent_merger is not None):
+    if variant in {"recurrent_memory", "no_memory_adapter"} or (
+        uses_memory and recurrent_merger is not None
+    ):
+        if variant == "no_memory_adapter":
+            recurrent_merger = "projected_residual"
         if recurrent_merger not in {"projected_residual", "recirculation"}:
             raise ValueError("recurrent_merger must be projected_residual or recirculation")
-        merger_layers = memory_layers if variant == "recurrent_memory" else recurrent_layers
+        merger_layers = (
+            memory_layers
+            if variant in {"recurrent_memory", "no_memory_adapter"}
+            else recurrent_layers
+        )
         if merger_layers is None or merger_layers == "all":
             raise ValueError("recurrent memory_layers must be an explicit non-empty list")
         layers = tuple(merger_layers)
@@ -559,12 +585,38 @@ def estimate_pass(
             raise ValueError("recurrent memory_layers must be unique valid decoder indices")
         linear = _linear_flops(physical_length, config.hidden_size, config.hidden_size)
         # One shared late writer, then one merger at each declared read layer.
+        if recurrent_merger == "recirculation":
+            controller_width = (
+                int(config.hidden_size)
+                if recurrent_controller_hidden_size is None
+                else _validate_positive(
+                    "recurrent_controller_hidden_size",
+                    recurrent_controller_hidden_size,
+                )
+            )
+            controller = len(layers) * (
+                _linear_flops(
+                    physical_length,
+                    2 * int(config.hidden_size),
+                    controller_width,
+                )
+                + _linear_flops(
+                    physical_length, controller_width, controller_width
+                )
+                + _linear_flops(
+                    physical_length,
+                    controller_width,
+                    2 * int(config.hidden_size),
+                )
+            )
+            projection = 0
+        else:
+            controller = len(layers) * linear * 2
+            projection = len(layers) * linear
         per_pass_extra = per_pass_extra + FlopBreakdown(
             memory_writer=linear,
-            recurrent_controller=len(layers) * linear * (
-                5 if recurrent_merger == "recirculation" else 2
-            ),
-            recurrent_projection=(len(layers) * linear if recurrent_merger == "projected_residual" else 0),
+            recurrent_controller=controller,
+            recurrent_projection=projection,
         )
     total = FlopBreakdown()
     for pass_index in range(passes):
@@ -594,6 +646,7 @@ def estimate_schedule(
     memory_write_stride: int | None = None,
     memory_token_visibility: str = "visible",
     memory_layers: Iterable[int] | str = "all",
+    memory_num_key_value_heads: int | None = None,
     memory_dense_window: int | None = None,
     memory_sparse_window: int | None = None,
     memory_sparse_stride: int | None = None,
@@ -602,6 +655,7 @@ def estimate_schedule(
     sparse_attention_layers: Iterable[int] | str = "all",
     recirculation_mode: str = "fixed",
     recurrent_merger: str | None = None,
+    recurrent_controller_hidden_size: int | None = None,
     recurrent_layers: Iterable[int] | None = None,
 ) -> ScheduledFlopEstimate:
     """Estimate a pass schedule and normalize it to SWA Transformer K=1."""
@@ -629,6 +683,7 @@ def estimate_schedule(
             memory_write_stride=memory_write_stride,
             memory_token_visibility=memory_token_visibility,
             memory_layers=memory_layers,
+            memory_num_key_value_heads=memory_num_key_value_heads,
             memory_dense_window=memory_dense_window,
             memory_sparse_window=memory_sparse_window,
             memory_sparse_stride=memory_sparse_stride,
@@ -637,6 +692,7 @@ def estimate_schedule(
             sparse_attention_layers=sparse_attention_layers,
             recirculation_mode=recirculation_mode,
             recurrent_merger=recurrent_merger,
+            recurrent_controller_hidden_size=recurrent_controller_hidden_size,
             recurrent_layers=recurrent_layers,
         )
         for passes in probabilities

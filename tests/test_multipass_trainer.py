@@ -55,12 +55,12 @@ def make_fbt(seed=123):
 def make_adaptive_recirculation(seed=123):
     torch.manual_seed(17)
     return build_variant(
-        "recirculation",
+        "recurrent_memory",
         MistralForCausalLM(micro_config(), attention_backend="reference"),
         architecture_seed=seed,
-        recirculation_source_layer=1,
-        recirculation_destination_layer=0,
-        recirculation_mode="adaptive",
+        memory_window=1,
+        memory_layers=[0],
+        recurrent_merger="recirculation",
     )
 
 
@@ -140,10 +140,10 @@ def test_integrated_freeze_unfreezes_without_resetting_added_optimizer_state(
     val = PackedTokenDataset(data_dir, "validation")
     run_dir = tmp_path / "integrated-freeze"
     cfg = ExperimentConfig(
-        variant="recirculation",
-        recirculation_source_layer=1,
-        recirculation_destination_layer=0,
-        recirculation_mode="adaptive",
+        variant="recurrent_memory",
+        memory_window=1,
+        memory_layers=[0],
+        recurrent_merger="recirculation",
         training_forward="parallel_multipass",
         pass_schedule=[{"probabilities": {2: 1.0}}],
         freeze_pretrained_until_tokens=16,

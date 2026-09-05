@@ -31,6 +31,7 @@ class RecurrentMemoryVariant(MultiPassVariant):
         *,
         memory_layers: list[int] | tuple[int, ...],
         merger: str,
+        controller_hidden_size: int | None = None,
         initialization_seed: int = 4242,
     ):
         super().__init__(backbone)
@@ -51,7 +52,11 @@ class RecurrentMemoryVariant(MultiPassVariant):
         hidden_size = int(backbone.config.hidden_size)
         self.writer = MemoryWriter(hidden_size)
         self.memory_mergers = build_recurrent_mergers(
-            backbone.config, layers=layers, merger=merger, initialization_seed=initialization_seed
+            backbone.config,
+            layers=layers,
+            merger=merger,
+            controller_hidden_size=controller_hidden_size,
+            initialization_seed=initialization_seed,
         )
 
     def added_parameters(self) -> Iterable[nn.Parameter]:

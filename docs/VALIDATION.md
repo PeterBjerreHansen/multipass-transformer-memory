@@ -85,12 +85,12 @@ interrupted recovery and unchanged training weights/optimizer/sampler state.
 Batching and general depth-configurable memory interventions remain later work. See
 [CLEANUP_STATUS.md](CLEANUP_STATUS.md).
 
-## Cached/recurrent gates
+## Cached exact and Live Feedback gates
 
-- exact incremental K-pass equals full-prefix recomputation for multiple K;
+- cached exact K-pass equals full-prefix recomputation for multiple K;
 - snapshot-before-update prevents same-position feedback leakage;
-- recurrent prefill starts from the exact K-pass boundary;
-- for K>1, the first recurrent continuation transition equals exact K-pass;
+- Live Feedback prefill starts from the exact K-pass boundary;
+- for K>1, the first Live Feedback continuation transition equals exact K-pass;
 - Memory Attention state remains chronological and bounded;
 - write-only cache validity persists across decode;
 - exact K=1 and K=1 standard decode remain the SWA Transformer cached boundary;

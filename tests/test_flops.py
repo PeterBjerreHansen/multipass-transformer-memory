@@ -37,17 +37,22 @@ def test_frozen_study_flop_report_uses_authoritative_arm_batching():
     )
     report = json.loads(completed.stdout)
     rows = {row["arm"]: row for row in report["results"]}
-    assert set(rows) == {
+    assert {
+        "no_memory_adapter_one_site_100m",
         "recurrent_recirculation_multipass_100m",
         "recurrent_projected_residual_multipass_100m",
+        "dense_memory_attention_one_site_100m",
+        "no_memory_adapter_two_site_100m",
+        "recurrent_projected_residual_two_site_100m",
+        "recurrent_recirculation_two_site_100m",
         "dense_memory_attention_multipass_100m",
         "strided_memory_attention_multipass_100m",
         "dense_and_strided_memory_attention_multipass_100m",
-    }
+    } <= set(rows)
     assert {
         (row["batch_size"], row["grad_accum_steps"])
         for row in rows.values()
-        if row["arm"] != "dense_and_strided_memory_attention_multipass_100m"
+        if "dense_and_strided" not in row["arm"]
     } == {(8, 4)}
     combined = rows["dense_and_strided_memory_attention_multipass_100m"]
     assert (combined["batch_size"], combined["grad_accum_steps"]) == (4, 8)
@@ -55,6 +60,47 @@ def test_frozen_study_flop_report_uses_authoritative_arm_batching():
     assert all(row["estimated_training_flops_total"] > 0 for row in rows.values())
     assert rows["recurrent_recirculation_multipass_100m"]["training_forward"] == "parallel_multipass"
     assert rows["recurrent_recirculation_multipass_100m"]["relative_training_flops"] > 1.0
+
+
+def test_wiring_budget_report_instantiates_matched_groups_and_stride_spans():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "report_wiring_budgets.py"),
+            "--study",
+            str(
+                ROOT
+                / "benchmarks"
+                / "development"
+                / "frozen_backbone_comparison"
+                / "STUDY.yaml"
+            ),
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads(completed.stdout)
+    assert all(
+        group["within_ten_percent"]
+        for group in report["matched_groups"].values()
+    )
+    rows = {row["arm"]: row for row in report["arms"]}
+    expected = {
+        8: (256, 256),
+        16: (128, 512),
+        32: (64, 1024),
+        64: (32, 2048),
+    }
+    for stride, (writes, span) in expected.items():
+        arm = (
+            "strided_memory_attention_multipass_100m"
+            if stride == 32
+            else f"strided_memory_attention_stride{stride}_two_site_100m"
+        )
+        assert rows[arm]["physical_write_count"] == writes
+        assert rows[arm]["effective_memory_span_tokens"] == span
 
 
 def test_recurrent_memory_counts_shared_writer_and_each_merger():

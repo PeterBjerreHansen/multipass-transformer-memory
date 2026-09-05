@@ -21,7 +21,7 @@ from tiny_mistral_mptt.evaluation.settings import add_execution_arguments, resol
 
 SUPPORTED = {
     "memory_add",
-    "recirculation",
+    "no_memory_adapter",
     "recurrent_memory",
     "memory_attention",
 }
@@ -30,8 +30,8 @@ SUPPORTED = {
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Run real/zero/mismatched recurrence interventions. The hybrid also "
-            "reports recurrent and Memory Attention channel interventions independently."
+            "Run pass-indexed real/zero/mismatched/true-bypass feedback "
+            "interventions. Hybrid channels are also intervened on independently."
         )
     )
     parser.add_argument("--config", required=True)
@@ -39,6 +39,14 @@ def main() -> None:
     add_execution_arguments(parser)
     parser.add_argument("--evaluation-data-dir", default=None)
     parser.add_argument("--max-blocks", type=int, default=None)
+    parser.add_argument("--passes", type=int, default=4)
+    parser.add_argument(
+        "--transitions",
+        type=int,
+        nargs="+",
+        default=None,
+        help="pass transitions to test; default: every transition through --passes",
+    )
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
@@ -47,7 +55,7 @@ def main() -> None:
     cfg = load_experiment_config(args.config)
     if canonical_variant_name(cfg.variant) not in SUPPORTED:
         raise SystemExit(
-            "evaluate_memory_interventions requires a recurrent-memory or Memory Attention variant"
+            "loaded variant is not supported by the feedback intervention diagnostic"
         )
     device = resolve_device(cfg.device if args.device is None else args.device)
     model = load_variant_from_config(cfg, device=device)
@@ -69,14 +77,15 @@ def main() -> None:
         verify_integrity=True,
     )
     result = evaluate_memory_interventions(
-        model, dataset, device=device, max_blocks=args.max_blocks,
+        model, dataset, device=device, passes=args.passes,
+        transitions=args.transitions, max_blocks=args.max_blocks,
         autocast_dtype=settings.autocast_dtype,
     )
     result["variant"] = cfg.variant
 
     document = {
-        "schema_version": 3,
-        "evaluation_kind": "single_feedback_transition_interventions",
+        "schema_version": 4,
+        "evaluation_kind": "pass_indexed_feedback_interventions",
         "provenance": evaluation_provenance(
             config_path=args.config,
             config=cfg,

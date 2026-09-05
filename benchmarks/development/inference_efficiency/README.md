@@ -88,8 +88,9 @@ arm. It does not run at every routine validation. This implementation has not
 been re-timed on the A6000. See
 [the cleanup tracker](../../../docs/CLEANUP_STATUS.md) for remaining additions.
 
-The current script defaults to the five active arms and emits schema-2 rows and
-cost summaries keyed by arm, so the two `recurrent_memory` mergers remain
-distinct. The retained JSON files predate this change; they have not been
-rewritten or relabelled. Timing the actual BOS-only NLL evaluator is the next
-qualification task, separate from the synthetic cached-continuation curves.
+The current script defaults to all 15 declared frozen-comparison arms and emits
+rows and cost summaries keyed by arm, so site count, stride, and the two
+`recurrent_memory` mergers remain distinct. The retained JSON files predate
+this change; they have not been rewritten or relabelled. Timing the actual
+BOS-only NLL evaluator is the next qualification task, separate from the
+synthetic cached-continuation curves.

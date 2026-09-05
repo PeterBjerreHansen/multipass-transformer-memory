@@ -1,0 +1,33 @@
+phase: A
+training_forward: parallel_multipass
+model_dir: checkpoints/TinyMistral-248M-v3
+data_dir: data/dolmino/gpu_2048
+device: cuda
+dtype: float32
+autocast_dtype: bfloat16
+attention_backend: auto
+seed: 1337
+architecture_seed: 4242
+batch_size: 8
+grad_accum_steps: 4
+max_unique_tokens: 5013504
+learning_rate: 1.0e-6
+lr_schedule: {type: constant}
+weight_decay: 1.0e-4
+grad_clip: 1.0
+pass_schedule:
+  - probabilities: {2: 0.9, 3: 0.1}
+ntp_pass_loss_weights_by_k:
+  2: [0.0, 1.0]
+  3: [0.0, 0.0, 1.0]
+train_log_every_tokens: 327680
+validation_forward: parallel_multipass
+eval_every_tokens: 1048576
+eval_passes: 4
+eval_batches: 64
+checkpoint_every_tokens: 1048576
+checkpoint_every_seconds: 900.0
+checkpoint_keep_last: 2
+snapshot_at_tokens: [5013504]
+resume_from: null
+init_from: null

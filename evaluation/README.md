@@ -79,7 +79,7 @@ next linguistic token. Loss is summed in FP32, then divided by the number of
 scored tokens, globally and per source. Sources with different target counts
 are not equally weighted. Empty target selections fail explicitly.
 
-`scripts/evaluate_recurrent_inference.py` compares exact cached K-stream
+`scripts/evaluate_feedback_inference.py` compares exact cached K-stream
 decoding, feedback decoding, and standard K=1 decoding from the **same checkpoint**.
 It scores only the selected continuation after a data-prefix prompt.
 `--prompt-tokens 1` takes the first data token; it does not insert BOS. Results
@@ -88,19 +88,15 @@ actual prompt/continuation lengths. Exact K-pass is a correctness reference,
 not the default downstream continuation policy.
 
 New diagnostic keys are `standard_k1_nll`, `standard_k1_nll_by_offset`, and
-`recurrent_minus_standard_k1`. These replace the old `vanilla` names, which did
+`live_feedback_minus_standard_k1`. These replace the old `vanilla` names, which did
 not denote a separately trained vanilla model. Historical JSON is not rewritten.
 
-`scripts/evaluate_memory_interventions.py` still tests one pass-1-to-pass-2
-transition with real, zero and mismatched memory. It now uses the shared scorer,
-precision context and per-source aggregation. The mismatch donor is the next
-block modulo the full artifact length, even when the scored subset is smaller;
-this rule is recorded. Use this simple check on early trained snapshots first;
-dedicated token-zero evaluation and deeper diagnostics are deferred. General
-depth-configurable memory diagnostics remain later work; K=4 will be an
-experiment default, not an implementation limit. Zero memory is not equivalent
-to bypassing an adaptive recirculation merger, which can still rescale its input.
-See [the development plan](../docs/DEVELOPMENT_PLAN.md).
+`scripts/evaluate_memory_interventions.py` tests configurable transitions into
+passes 2 through 4 with real, zero, mismatched, and true-bypass feedback. A
+mismatch donor is the next block modulo the full artifact length and is processed
+normally to the same source-pass depth. True bypass omits the feedback pathway;
+it is not a zero record passed through an adaptive merger. These are separate
+snapshot diagnostics, not routine validation or stopping criteria.
 
 All four packed-data CLI evaluators run complete artifact verification before
 loading the validation split. This checks the current manifest contract, token

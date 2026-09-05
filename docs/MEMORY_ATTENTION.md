@@ -242,17 +242,17 @@ A <MEM> B
 `h_MEM` may write a memory record, and B is the first physical position that can
 read that record.
 
-## 8. Full-sequence versus recurrent execution
+## 8. Full-sequence versus Live Feedback execution
 
 During training and exact K-pass evaluation, pass k reads memory-attention/recurrent feedback
 constructed from completed pass k-1. The same-position source state is never
 visible. This preserves parallel sequence training.
 
-Exact incremental K-pass inference keeps K self-attention streams and updates
+Cached exact K-pass inference keeps K self-attention streams and updates
 feedback only after all streams process the current physical position. It is
 tested against full-prefix recomputation.
 
-Feedback decoding starts from the exact K-pass prompt prefill. For K>1 its first
+Live Feedback decoding starts from the exact K-pass prompt prefill. For K>1 its first
 continuation transition therefore matches exact K-pass inference; after that,
 the final live stream feeds its own newly produced states into the feedback
 machinery. K=1 feedback is also supported and uses a real prompt memory. Prompt

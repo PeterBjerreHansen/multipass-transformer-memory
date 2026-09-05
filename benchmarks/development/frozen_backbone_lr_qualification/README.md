@@ -1,7 +1,8 @@
 # Frozen-backbone learning-rate qualification
 
-This planned qualification selects the Phase-A learning rate for all five
-feedback mechanisms before interpreting the frozen-backbone wiring comparison.
+This planned qualification selects the Phase-A learning rate for every
+architecture/site setting in the frozen-backbone wiring comparison before its
+trajectory is interpreted.
 The backbone remains frozen throughout each run; only the added writer and
 merger or Memory Attention parameters are optimized. The recurrent arms use
 late emitted memory with projected-residual and adaptive-recirculation mergers.
@@ -10,12 +11,14 @@ This qualification will use the regenerated clean 2,048-token `gpu_2048` artifac
 arms use a 4x8 microbatch/accumulation split to fit the A6000; the other arms
 use the 8x4 default split.
 
-The attention arms all read at `[3, 7]`; the recurrent pair reads at `[3]`.
-The combined attention arm uses the `dense_and_strided_memory_attention` preset
-of `memory_attention`. These settings match the main comparison. Complete the bounded
-real-trainer GPU preflight before this sweep; token-zero evaluation and expanded
-memory diagnostics are not prerequisites. Feedback NLL remains disabled here;
-the selected 5M/20M/100M feedback schedule applies only to the main 100M runs.
+The primary dense mechanisms are qualified separately at one site `[3]` and
+two sites `[3, 7]`. The attention extensions retain matching one-site and
+two-site layouts; the stride-length ablation reuses the selected two-site
+Strided Memory Attention rate because stride changes retention rather than
+trainable parameterization. Complete the bounded real-trainer GPU preflight
+before this sweep; token-zero evaluation and expanded memory diagnostics are
+not prerequisites. Feedback NLL remains disabled here; the selected
+5M/20M/100M feedback schedule applies only to the main 100M runs.
 
 ## Protocol
 
@@ -23,8 +26,8 @@ the selected 5M/20M/100M feedback schedule applies only to the main 100M runs.
 | --- | --- |
 | `phase` | `A` |
 | `max_unique_tokens` | `5013504` |
-| `batch_size` | `8` (all arms except dense-and-strided: `4`) |
-| `grad_accum_steps` | `4` (dense-and-strided: `8`) |
+| `batch_size` | `8` (dense-and-strided arms: `4`) |
+| `grad_accum_steps` | `4` (dense-and-strided arms: `8`) |
 | `eval_passes` | `4` |
 | `eval_batches` | `64` |
 | `eval_every_tokens` | `1048576` |
@@ -44,12 +47,13 @@ The candidate grid is the same for every mechanism:
 3e-5, 1e-4, 3e-4, 1e-3
 ```
 
-This is 20 independent fresh runs: five mechanisms times four constant
-added-parameter learning rates, with one seed (`1337`) per setting. Each run
-starts from the common pretrained checkpoint, not another qualification run.
-The total tuning dose is 100,270,080 linguistic training tokens across the
-20 runs; they reuse the same artifact, so this is not that many distinct corpus
-tokens. The backbone is frozen and has no trained optimizer group in this sweep.
+This is 48 independent fresh runs: twelve architecture/site configurations times
+four constant added-parameter learning rates, with one seed (`1337`) per
+setting. Each run starts from the common pretrained checkpoint, not another
+qualification run. The total tuning dose is 240,648,192 linguistic training
+tokens across the 48 runs; they reuse the same artifact, so this is not that
+many distinct corpus tokens. The backbone is frozen and has no trained
+optimizer group in this sweep.
 
 Validation is recorded every 1,048,576 tokens and at the final 5,013,504-token
 state. Training records are 327,680-token aggregates. A short run is enough to
@@ -57,7 +61,7 @@ reject unstable rates and identify large optimization differences, but it is
 not evidence that the selected rate is globally optimal. If candidates remain
 close, extend the finalists before locking the 100M wiring study.
 
-Run all twenty arms sequentially on the target CUDA host:
+Run all 48 arms sequentially on the target CUDA host:
 
 ```bash
 uv run python scripts/run_study.py \
@@ -72,5 +76,5 @@ an explicit allowed difference in the long comparison and report the qualificati
 
 The 2,048-token qualification supersedes the earlier 1,024-token rate sweep.
 The earlier qualification was invalidated with the padded artifact. Repeat the
-20 fresh arms after regenerating and verifying the clean artifact; do not carry
+48 fresh arms after regenerating and verifying the clean artifact; do not carry
 the earlier selections into the reset comparison without requalification.

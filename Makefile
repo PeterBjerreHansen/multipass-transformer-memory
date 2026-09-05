@@ -3,7 +3,7 @@
   efficiency-mps efficiency-cuda efficiency-mps-training efficiency-mps-precision \
   efficiency-mps-context efficiency-mps-batch efficiency-cuda-training \
   efficiency-cuda-precision efficiency-cuda-context efficiency-cuda-batch \
-  estimate-flops-frozen-backbone cloud-preflight
+  estimate-flops-frozen-backbone report-wiring-budgets cloud-preflight
 
 test:
 	uv run pytest -q
@@ -106,6 +106,11 @@ estimate-flops-frozen-backbone:
 		--study benchmarks/development/frozen_backbone_comparison/STUDY.yaml \
 		--model-config checkpoints/TinyMistral-248M-v3/config.json \
 		--output benchmarks/development/frozen_backbone_comparison/results/training_flops.json
+
+report-wiring-budgets:
+	uv run python scripts/report_wiring_budgets.py \
+		--study benchmarks/development/frozen_backbone_comparison/STUDY.yaml \
+		--output benchmarks/development/frozen_backbone_comparison/results/wiring_budgets.json
 
 # Usage: make cloud-preflight CONFIG=path/to/config.yaml
 cloud-preflight:

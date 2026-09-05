@@ -1,0 +1,5 @@
+extends: qualification_base.yml
+variant: no_memory_adapter
+memory_layers: [3, 7]
+added_learning_rate: 1.0e-3
+output_dir: benchmarks/development/frozen_backbone_lr_qualification/results/no_memory_adapter_two_site_lr1e-3_5m

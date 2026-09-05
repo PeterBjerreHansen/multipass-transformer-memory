@@ -7,8 +7,8 @@ import torch.nn.functional as F
 
 from ..inference import (
     DecodeMode,
-    prefill_recurrent,
-    recurrent_decode_step,
+    prefill_live_feedback,
+    live_feedback_decode_step,
 )
 from ..variants.multipass import MultiPassVariant
 from .common import evaluation_context, score_targets
@@ -45,8 +45,13 @@ def score_token_continuation(
     ids = torch.tensor([prompt + targets[:-1]], dtype=torch.long, device=device)
     labels = torch.tensor([targets], dtype=torch.long, device=device)
     with evaluation_context(model, device=device, autocast_dtype=autocast_dtype):
-        output = model(ids, use_cache=False)
-        logits = output.logits[:, len(prompt) - 1:, :]
+        if isinstance(model, MultiPassVariant):
+            all_logits = model.backbone.lm_head(
+                model._run_first_state(ids).hidden_states
+            ).float()
+        else:
+            all_logits = model(ids, use_cache=False).logits
+        logits = all_logits[:, len(prompt) - 1:, :]
         loss, _ = score_targets(logits, labels)
         greedy = bool(torch.equal(logits.argmax(dim=-1), labels))
     return -loss, greedy
@@ -61,7 +66,7 @@ def _truncate_token_pair(
     """Return a cached prompt and the continuation targets to score.
 
     The non-cached harness path scores ``combined[:-1]`` against
-    ``combined[1:]``.  Recurrent inference needs the same causal boundary, but
+    ``combined[1:]``. Live Feedback needs the same causal boundary, but
     can only prefill a non-empty prompt and then consume targets one at a time.
     ``prompt`` therefore ends immediately before the first scored target.
     """
@@ -87,12 +92,12 @@ def _truncate_token_pair(
         return input_tokens, []
     prompt = combined[: start + 1]
     if not prompt:
-        raise ValueError("recurrent scoring requires a non-empty prompt")
+        raise ValueError("live-feedback scoring requires a non-empty prompt")
     return prompt, target_tokens[start:]
 
 
 @torch.no_grad()
-def score_token_continuation_recurrent(
+def score_token_continuation_feedback(
     model: MultiPassVariant,
     *,
     device: str | torch.device,
@@ -103,11 +108,11 @@ def score_token_continuation_recurrent(
     continuation_enc: list[int],
     autocast_dtype: str | None = None,
 ) -> tuple[float, bool]:
-    """Score a continuation with recurrent cached inference.
+    """Score a continuation with one cached Live Feedback stream.
 
     The prompt is refined ``prefill_passes`` times.  Each continuation target
     is scored from the current cached logits, then observed once through
-    ``recurrent_decode_step`` to advance the one-stream state.  The final
+    ``live_feedback_decode_step`` to advance the one-stream state. The final
     target is not decoded because no later prediction depends on it, which
     keeps the observed sequence within the model position limit.
     """
@@ -123,7 +128,7 @@ def score_token_continuation_recurrent(
 
     with evaluation_context(model, device=device, autocast_dtype=autocast_dtype):
         prompt_ids = torch.tensor([prompt], dtype=torch.long, device=device)
-        state = prefill_recurrent(
+        state = prefill_live_feedback(
             model,
             prompt_ids,
             passes=prefill_passes,
@@ -142,12 +147,12 @@ def score_token_continuation_recurrent(
             # consumed.  Avoiding that extra cache write preserves max_length + 1
             # harness scoring semantics.
             if index + 1 < len(targets):
-                state = recurrent_decode_step(model, state, target)
+                state = live_feedback_decode_step(model, state, target)
         return total, greedy
 
 
 @torch.no_grad()
-def generate_recurrent(
+def generate_feedback(
     model: MultiPassVariant,
     input_ids: torch.Tensor,
     max_new_tokens: int,
@@ -159,11 +164,11 @@ def generate_recurrent(
     eos_token_id: int | None = None,
     autocast_dtype: str | None = None,
 ) -> torch.Tensor:
-    """Generate with one recurrent cached stream after multipass prefill."""
+    """Generate with one Live Feedback stream after exact multipass prefill."""
     if input_ids.ndim != 2 or input_ids.shape[1] == 0:
         raise ValueError("input_ids must be non-empty [B,T]")
     if input_ids.shape[0] != 1:
-        raise ValueError("recurrent generation currently supports batch size 1")
+        raise ValueError("live-feedback generation currently supports batch size 1")
     if max_new_tokens < 0:
         raise ValueError("max_new_tokens must be non-negative")
     if top_k is not None and top_k <= 0:
@@ -172,7 +177,7 @@ def generate_recurrent(
         return input_ids
 
     with evaluation_context(model, device=input_ids.device, autocast_dtype=autocast_dtype):
-        state = prefill_recurrent(
+        state = prefill_live_feedback(
             model,
             input_ids,
             passes=prefill_passes,
@@ -196,7 +201,7 @@ def generate_recurrent(
                 break
             if step == max_new_tokens - 1:
                 break
-            state = recurrent_decode_step(model, state, next_token)
+            state = live_feedback_decode_step(model, state, next_token)
         return result
 
 
@@ -305,7 +310,7 @@ def _build_lm_eval_class():
             results: list[tuple[float, bool]] = []
             for cache_key, context_enc, continuation_enc in requests:
                 if isinstance(self.model, MultiPassVariant):
-                    answer = score_token_continuation_recurrent(
+                    answer = score_token_continuation_feedback(
                         self.model,
                         device=self._device,
                         max_length=self.max_length,
@@ -380,7 +385,7 @@ def _build_lm_eval_class():
                 context_ids = context_ids[-max_prompt:]
                 prompt = torch.tensor([context_ids], dtype=torch.long, device=self._device)
                 if isinstance(self.model, MultiPassVariant):
-                    generated = generate_recurrent(
+                    generated = generate_feedback(
                         self.model,
                         prompt,
                         max_new,

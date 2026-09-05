@@ -1,6 +1,6 @@
 # Frozen-backbone comparison
 
-This exploratory study defines five memory pathways while the pretrained
+This exploratory study compares matched feedback wiring while the pretrained
 backbone stays frozen. It is not a locked paper study; each arm starts fresh
 from the common pretrained checkpoint. Earlier GPU trajectories were stopped
 and discarded after the tokenizer-padding audit. Regenerate the clean artifact,
@@ -8,17 +8,24 @@ rerun qualification, and then launch these trajectories from token zero.
 
 ## Arms
 
-| Arm ID | Memory mechanism | Reader layers | Retained records |
+| Group | Memory mechanism | Reader layers | Added parameters |
 | --- | --- | --- | --- |
-| `recurrent_projected_residual_multipass_100m` | Gated projected residual | `[3]` | 1 |
-| `recurrent_recirculation_multipass_100m` | Adaptive recirculation merger | `[3]` | 1 |
-| `dense_memory_attention_multipass_100m` | Dense Memory Attention | `[3, 7]` | 32 |
-| `strided_memory_attention_multipass_100m` | Strided Memory Attention, stride 32 | `[3, 7]` | 32 |
-| `dense_and_strided_memory_attention_multipass_100m` | Dense recent plus older stride-32 memory | `[3, 7]` | 32 + 32 |
+| One-site | No-memory Adapter | `[3]` | 4,197,376 |
+| One-site | Projected-residual fixed route | `[3]` | 4,197,376 |
+| One-site | Recirculation-inspired fixed route | `[3]` | 4,195,000 |
+| One-site | Dense Memory Attention | `[3]` | 4,196,352 |
+| Two-site | No-memory Adapter | `[3, 7]` | 7,346,176 |
+| Two-site | Projected-residual fixed route | `[3, 7]` | 7,346,176 |
+| Two-site | Recirculation-inspired fixed route | `[3, 7]` | 7,341,424 |
+| Two-site | Dense Memory Attention | `[3, 7]` | 7,344,128 |
 
-Layers are zero-based. All arms share the late writer rule, not learned writer weights.
-The recurrent pair differs only in merger. The five-arm comparison also varies
-reader placement, capacity, parameter count and access pattern.
+Layers are zero-based. Groups are compared separately. The no-memory arm uses
+the same writer-plus-merger parameter structure without a previous-pass input.
+Memory Attention uses 16 KV heads; the Recirculation-inspired controller has
+width 660. These real dimensions put every primary arm within 0.1% of its
+site-count group's added-parameter budget. Generate the checked table with
+`make report-wiring-budgets`; it writes the ignored, reproducible
+`results/wiring_budgets.json` report.
 See [architectures](../../../docs/ARCHITECTURES.md) for the mechanism contracts.
 
 The earlier combined attention layout had readers at `[4, 7]`.
@@ -32,7 +39,7 @@ This is a new experimental protocol, not a continuation or drop-in rerun of the
 retired 1024-token frozen study. Packing, sequence length, optimizer batching,
 update count and the combined reader layout changed. Do not overlay those curves
 as a continuous trajectory or attribute cross-protocol differences to the merger alone.
-All five current arms share the artifact, effective batch, pass schedule,
+All current arms share the artifact, effective batch, pass schedule,
 validation, snapshot schedule and precision specified below. The combined
 dense-and-strided arm uses a 4x8 microbatch/accumulation split for A6000
 memory, while the other arms use 8x4; both yield the same 65,536-token
@@ -79,7 +86,7 @@ preserve the effective batch.
 Each microbatch samples K=2 with probability 0.9 or K=3 with probability 0.1.
 NTP loss uses only the final pass: `[0, 1]` or `[0, 0, 1]`.
 The learning-rate schedule is constant. The reset qualification must select the
-rate for each mechanism before the five 100M configs are launched.
+rate for each mechanism and site count before the 100M configs are launched.
 The checked-in `3e-4` values are placeholders, and `STUDY.yaml` blocks training
 while `learning_rates_qualified` is false. After recording the selected rates,
 update the configs and set that gate to true.
@@ -114,13 +121,15 @@ pending-work recovery and actual snapshot counters.
 
 Dedicated token-zero evaluation is deferred.
 Compare absolute trained-checkpoint NLL, not improvement from an unmeasured initial loss.
-Start with existing pass-depth and real/zero/mismatched-memory checks on an early trained snapshot.
-Expanded interventions are not a pre-training gate.
+Start with pass-depth and real/zero/mismatched/true-bypass checks on an early
+trained snapshot. Interventions into passes 2, 3, and 4 are separate diagnostics,
+not a pre-training gate.
 
 ## Execution and reporting
 
 Complete the [GPU pre-training checks](../../../docs/CLOUD.md#pre-training-checks) and LR qualification first.
-Then run the declared arms sequentially:
+Then run selected primary arms sequentially. The attention extensions are
+declared now but run only after the dense groups pass preflight:
 
 ```bash
 uv run python scripts/run_study.py \

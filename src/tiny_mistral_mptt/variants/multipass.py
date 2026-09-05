@@ -159,6 +159,30 @@ class MultiPassVariant(ExperimentalVariant):
         hidden = self._run_feedback_hidden(input_ids, token_embeddings, previous_source)
         return HiddenRun(hidden, hidden)
 
+    def run_feedback_transition(
+        self,
+        input_ids: torch.Tensor,
+        previous_source: torch.Tensor | HybridPassSource,
+        *,
+        bypass: bool = False,
+    ) -> HiddenRun:
+        """Run one explicit pass transition through the variant boundary.
+
+        Intervention tools use this seam so they do not need to know how a
+        particular reader/merger is wired. ``bypass=True`` executes the
+        architecture's ordinary first-pass path, including any control-token
+        masking, while omitting the feedback pathway completely.
+        """
+        if input_ids.ndim != 2 or input_ids.shape[1] < 1:
+            raise ValueError("input_ids must be non-empty [B,T]")
+        if bypass:
+            return self._run_first_state(input_ids)
+        return self._run_feedback_state(
+            input_ids,
+            self.input_embeddings(input_ids),
+            previous_source,
+        )
+
     def _run_first_state_cached(self, input_ids: torch.Tensor) -> HiddenRun:
         hidden, cache = self._run_first_hidden_cached(input_ids)
         return HiddenRun(hidden, hidden, cache)
@@ -357,10 +381,17 @@ class MultiPassVariant(ExperimentalVariant):
             metrics=metrics,
         )
 
-    # Default public model semantics remain the exact one-pass vanilla model.
-    # Multipass evaluation is explicit through compute_passes/pass-depth tools.
     def forward(self, *args, **kwargs):
-        return self.backbone(*args, **kwargs)
+        del args, kwargs
+        raise RuntimeError(
+            "MultiPassVariant.forward() has no unambiguous temporal semantics. "
+            "Use compute_passes(...), prefill_exact_k_pass(...), or "
+            "prefill_live_feedback(...) explicitly."
+        )
 
     def generate(self, *args, **kwargs):
-        return self.backbone.generate(*args, **kwargs)
+        del args, kwargs
+        raise RuntimeError(
+            "MultiPassVariant.generate() has no unambiguous temporal semantics. "
+            "Use the explicit exact-K-pass or live-feedback inference helpers."
+        )

@@ -14,7 +14,7 @@ from .variants import (
     ExperimentalVariant,
     FBTVariant,
     MemoryAddVariant,
-    RecirculationVariant,
+    NoMemoryAdapterVariant,
     RecurrentMemoryVariant,
     MemoryAttentionRecurrentHybridVariant,
     MemoryAttentionVariant,
@@ -38,6 +38,7 @@ def build_variant(
     memory_token_visibility: str | None = None,
     memory_layers: str | list[int] = "all",
     memory_position_encoding: str = "rope",
+    memory_num_key_value_heads: int | None = None,
     memory_dense_window: int = 32,
     memory_sparse_window: int = 32,
     memory_sparse_stride: int = 32,
@@ -52,10 +53,16 @@ def build_variant(
     recirculation_alpha: float = 0.1,
     recirculation_mode: str = "fixed",
     recurrent_merger: str | None = None,
+    recurrent_controller_hidden_size: int | None = None,
     recurrent_layers: list[int] | None = None,
 ) -> ExperimentalVariant:
     requested_name = normalize_legacy_variant_name(str(name))
     name = canonical_variant_name(requested_name)
+    if name == "recirculation":
+        raise ValueError(
+            "the middle-layer RecirculationVariant is archived; use "
+            "variant=recurrent_memory with recurrent_merger=recirculation"
+        )
     memory_write_mode = canonical_memory_write_mode(memory_write_mode)
     if name != "memory_attention":
         if memory_pattern is not None or recurrent_layers is not None:
@@ -91,25 +98,18 @@ def build_variant(
         )
     elif name == "memory_add":
         variant = MemoryAddVariant(backbone)
+    elif name == "no_memory_adapter":
+        variant = NoMemoryAdapterVariant(
+            backbone,
+            memory_layers=memory_layers,
+            initialization_seed=architecture_seed,
+        )
     elif name == "recurrent_memory":
         variant = RecurrentMemoryVariant(
             backbone,
             memory_layers=memory_layers,
             merger=recurrent_merger,
-            initialization_seed=architecture_seed,
-        )
-    elif name == "recirculation":
-        if recirculation_source_layer is None or recirculation_destination_layer is None:
-            raise ValueError(
-                "recirculation requires recirculation_source_layer and "
-                "recirculation_destination_layer"
-            )
-        variant = RecirculationVariant(
-            backbone,
-            source_layer=recirculation_source_layer,
-            destination_layer=recirculation_destination_layer,
-            alpha=recirculation_alpha,
-            mode=recirculation_mode,
+            controller_hidden_size=recurrent_controller_hidden_size,
             initialization_seed=architecture_seed,
         )
     elif name == "memory_attention":
@@ -144,6 +144,7 @@ def build_variant(
             memory_token_visibility=visibility,
             memory_layers=memory_layers,
             memory_position_encoding=memory_position_encoding,
+            memory_num_key_value_heads=memory_num_key_value_heads,
             memory_dense_window=memory_dense_window,
             memory_sparse_window=memory_sparse_window,
             memory_sparse_stride=memory_sparse_stride,
@@ -155,8 +156,11 @@ def build_variant(
             variant = MemoryAttentionVariant(backbone, **kwargs)
         else:
             variant = MemoryAttentionRecurrentHybridVariant(
-                backbone, recurrent_merger=recurrent_merger,
-                recurrent_layers=recurrent_layers, **kwargs,
+                backbone,
+                recurrent_merger=recurrent_merger,
+                recurrent_layers=recurrent_layers,
+                recurrent_controller_hidden_size=recurrent_controller_hidden_size,
+                **kwargs,
             )
     else:
         raise ValueError(f"unknown variant {name!r}")
@@ -184,6 +188,7 @@ def load_variant(
     memory_token_visibility: str | None = None,
     memory_layers: str | list[int] = "all",
     memory_position_encoding: str = "rope",
+    memory_num_key_value_heads: int | None = None,
     memory_dense_window: int = 32,
     memory_sparse_window: int = 32,
     memory_sparse_stride: int = 32,
@@ -198,6 +203,7 @@ def load_variant(
     recirculation_alpha: float = 0.1,
     recirculation_mode: str = "fixed",
     recurrent_merger: str | None = None,
+    recurrent_controller_hidden_size: int | None = None,
     recurrent_layers: list[int] | None = None,
 ) -> ExperimentalVariant:
     backbone = load_model(
@@ -218,6 +224,7 @@ def load_variant(
         memory_token_visibility=memory_token_visibility,
         memory_layers=memory_layers,
         memory_position_encoding=memory_position_encoding,
+        memory_num_key_value_heads=memory_num_key_value_heads,
         memory_dense_window=memory_dense_window,
         memory_sparse_window=memory_sparse_window,
         memory_sparse_stride=memory_sparse_stride,
@@ -232,21 +239,14 @@ def load_variant(
         recirculation_alpha=recirculation_alpha,
         recirculation_mode=recirculation_mode,
         recurrent_merger=recurrent_merger,
+        recurrent_controller_hidden_size=recurrent_controller_hidden_size,
         recurrent_layers=recurrent_layers,
     )
 
 
-def load_variant_from_config(
-    cfg: "ExperimentConfig",
-    *,
-    device: str | torch.device | None = None,
-) -> ExperimentalVariant:
-    return load_variant(
-        cfg.variant,
-        cfg.model_dir,
-        device=cfg.device if device is None else device,
-        dtype=cfg.dtype,
-        attention_backend=cfg.attention_backend,
+def _architecture_kwargs(cfg: "ExperimentConfig") -> dict:
+    """Translate one normalized experiment config at the factory boundary."""
+    return dict(
         architecture_seed=cfg.architecture_seed,
         memory_window=cfg.memory_window,
         memory_pattern=cfg.memory_pattern,
@@ -257,6 +257,7 @@ def load_variant_from_config(
         memory_position_encoding=(
             "rope" if cfg.memory_position_encoding is None else cfg.memory_position_encoding
         ),
+        memory_num_key_value_heads=cfg.memory_num_key_value_heads,
         memory_dense_window=(
             32 if cfg.memory_dense_window is None else cfg.memory_dense_window
         ),
@@ -281,5 +282,28 @@ def load_variant_from_config(
         recirculation_alpha=cfg.recirculation_alpha,
         recirculation_mode=cfg.recirculation_mode,
         recurrent_merger=cfg.recurrent_merger,
+        recurrent_controller_hidden_size=cfg.recurrent_controller_hidden_size,
         recurrent_layers=cfg.recurrent_layers,
     )
+
+
+def build_variant_from_config(
+    cfg: "ExperimentConfig",
+    backbone: MistralForCausalLM,
+) -> ExperimentalVariant:
+    """Build configured wiring around an already-created backbone."""
+    return build_variant(cfg.variant, backbone, **_architecture_kwargs(cfg))
+
+
+def load_variant_from_config(
+    cfg: "ExperimentConfig",
+    *,
+    device: str | torch.device | None = None,
+) -> ExperimentalVariant:
+    backbone = load_model(
+        cfg.model_dir,
+        device=cfg.device if device is None else device,
+        dtype=cfg.dtype,
+        attention_backend=cfg.attention_backend,
+    )
+    return build_variant_from_config(cfg, backbone)

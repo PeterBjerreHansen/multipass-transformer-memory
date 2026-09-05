@@ -1,0 +1,7 @@
+extends: qualification_base.yml
+variant: recurrent_memory
+memory_window: 1
+memory_layers: [3, 7]
+recurrent_merger: projected_residual
+added_learning_rate: 1.0e-4
+output_dir: benchmarks/development/frozen_backbone_lr_qualification/results/recurrent_projected_residual_two_site_lr1e-4_5m

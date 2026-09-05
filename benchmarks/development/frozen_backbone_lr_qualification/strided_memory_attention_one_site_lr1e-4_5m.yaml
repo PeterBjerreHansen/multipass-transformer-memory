@@ -1,0 +1,10 @@
+extends: qualification_base.yml
+variant: strided_memory_attention
+memory_window: 32
+memory_write_mode: strided
+memory_write_stride: 32
+memory_layers: [3]
+memory_position_encoding: rope
+memory_num_key_value_heads: 16
+added_learning_rate: 1.0e-4
+output_dir: benchmarks/development/frozen_backbone_lr_qualification/results/strided_memory_attention_one_site_lr1e-4_5m

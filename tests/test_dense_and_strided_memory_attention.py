@@ -9,7 +9,7 @@ from tiny_mistral.attention.multiresolution import (
 )
 from tiny_mistral.modeling import MistralForCausalLM
 from tiny_mistral_mptt.feedback import MemoryAttentionState
-from tiny_mistral_mptt.inference import exact_decode_step, prefill_exact
+from tiny_mistral_mptt.inference import exact_decode_step, prefill_exact_k_pass
 from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionVariant
 
 
@@ -185,7 +185,7 @@ def test_dense_and_strided_memory_state_retains_sparse_old_and_dense_recent_posi
     assert state.positions.tolist() == [[2, 5, 7, 8, 9]]
 
 
-def test_dense_and_strided_memory_exact_incremental_matches_full_prefix():
+def test_dense_and_strided_memory_cached_exact_k_pass_matches_full_prefix():
     model = MemoryAttentionVariant(
         backbone(95),
         memory_pattern="dense_and_strided",
@@ -199,7 +199,7 @@ def test_dense_and_strided_memory_exact_incremental_matches_full_prefix():
     ids = torch.tensor([[1, 7, 3, 14, 22, 9, 31, 4, 51, 12, 6]])
     prompt_length = 4
     with torch.no_grad():
-        state = prefill_exact(model, ids[:, :prompt_length], passes=2)
+        state = prefill_exact_k_pass(model, ids[:, :prompt_length], passes=2)
         for position in range(prompt_length, ids.shape[1] + 1):
             prefix = ids[:, :position]
             full = model.compute_passes(prefix, passes=2)

@@ -5,10 +5,10 @@ from torch.nn import functional as F
 from tiny_mistral import MistralConfig, MistralForCausalLM
 from tiny_mistral_mptt.inference import (
     exact_decode_step,
-    prefill_exact,
+    prefill_exact_k_pass,
 )
 from tiny_mistral_mptt.training.phases import configure_phase
-from tiny_mistral_mptt.variants import RecirculationVariant
+from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
 
 
 def make_model(alpha: float = 0.1, mode: str = "fixed") -> RecirculationVariant:
@@ -147,7 +147,7 @@ def test_position_zero_is_unmodified_by_feedback() -> None:
 def test_cached_feedback_memory_is_source_layer_state() -> None:
     model = make_model()
     input_ids = torch.tensor([[1, 2, 3, 4]])
-    state = prefill_exact(model, input_ids, passes=2)
+    state = prefill_exact_k_pass(model, input_ids, passes=2)
     first = model._run_first_state_cached(input_ids)
 
     torch.testing.assert_close(
@@ -160,10 +160,10 @@ def test_cached_feedback_memory_is_source_layer_state() -> None:
     )
 
 
-def test_exact_incremental_runs_and_advances_source_state() -> None:
+def test_cached_exact_k_pass_runs_and_advances_source_state() -> None:
     model = make_model()
     input_ids = torch.tensor([[1, 2, 3, 4]])
-    state = prefill_exact(model, input_ids, passes=2)
+    state = prefill_exact_k_pass(model, input_ids, passes=2)
     old_source = state.streams[0].feedback_memory.clone()
     updated = exact_decode_step(model, state, torch.tensor([[5]]))
 
@@ -172,13 +172,13 @@ def test_exact_incremental_runs_and_advances_source_state() -> None:
     assert not torch.equal(updated.streams[0].feedback_memory, old_source)
 
 
-def test_adaptive_exact_incremental_matches_full_recomputation() -> None:
+def test_adaptive_cached_exact_k_pass_matches_full_recomputation() -> None:
     model = make_model(mode="adaptive").eval()
     ids = torch.tensor([[1, 2, 3, 4, 5, 6, 7]])
     prompt_length = 4
 
     with torch.no_grad():
-        state = prefill_exact(model, ids[:, :prompt_length], passes=3)
+        state = prefill_exact_k_pass(model, ids[:, :prompt_length], passes=3)
         for position in range(prompt_length, ids.shape[1]):
             full = model.compute_passes(ids[:, :position], passes=3)
             torch.testing.assert_close(

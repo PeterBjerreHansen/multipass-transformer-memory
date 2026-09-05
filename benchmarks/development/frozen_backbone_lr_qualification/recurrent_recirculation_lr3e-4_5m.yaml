@@ -2,6 +2,7 @@ variant: recurrent_memory
 phase: A
 training_forward: parallel_multipass
 recurrent_merger: recirculation
+recurrent_controller_hidden_size: 660
 memory_window: 1
 memory_layers: [3]
 model_dir: checkpoints/TinyMistral-248M-v3

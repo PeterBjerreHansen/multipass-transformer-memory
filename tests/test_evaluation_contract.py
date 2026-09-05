@@ -13,11 +13,15 @@ from tiny_mistral_mptt.data.packed_dataset import PackedTokenDataset, MemoryToke
 from tiny_mistral_mptt.evaluation import common
 from tiny_mistral_mptt.evaluation.interventions import evaluate_memory_interventions
 from tiny_mistral_mptt.evaluation.lm_eval_adapter import (
-    generate_recurrent, score_token_continuation, score_token_continuation_recurrent,
+    generate_feedback,
+    score_token_continuation,
+    score_token_continuation_feedback,
 )
 from tiny_mistral_mptt.evaluation.nll import evaluate_nll
 from tiny_mistral_mptt.evaluation.pass_depth import evaluate_pass_depth
-from tiny_mistral_mptt.evaluation.recurrent import evaluate_recurrent_continuation
+from tiny_mistral_mptt.evaluation.feedback_continuation import (
+    evaluate_feedback_continuation,
+)
 from tiny_mistral_mptt.evaluation.settings import resolve_evaluation_settings
 from tiny_mistral_mptt.training.trainer import Trainer
 from tiny_mistral_mptt.model_factory import build_variant
@@ -58,11 +62,16 @@ def test_hybrid_interventions_use_explicit_attention_channel_names(merger):
     result = evaluate_memory_interventions(model, Rows(), device="cpu", max_blocks=1)
     expected = {
         "real_memory", "zero_memory", "mismatched_memory",
+        "true_bypass",
         f"zero_{label}_real_attention", f"mismatched_{label}_real_attention",
         f"real_{label}_zero_attention", f"real_{label}_mismatched_attention",
     }
     assert set(result["evaluation"]["policy"]["interventions"]) == expected
-    assert all(result[name]["predicted_tokens"] == 7 for name in expected)
+    for transition in result["transitions"].values():
+        assert all(
+            transition["conditions"][name]["predicted_tokens"] == 7
+            for name in expected
+        )
 
 
 def make_model(kind="memory_add"):
@@ -77,6 +86,12 @@ def make_model(kind="memory_add"):
         )
     if kind in {"projected_residual", "recirculation"}:
         return RecurrentMemoryVariant(backbone, memory_layers=[1], merger=kind)
+    if kind == "no_memory":
+        return build_variant("no_memory_adapter", backbone, memory_layers=[1])
+    if kind == "dense_attention":
+        return build_variant(
+            "dense_memory_attention", backbone, memory_layers=[1], memory_window=3
+        )
     model = MemoryAddVariant(backbone)
     with torch.no_grad():
         model.memory_projection.weight.copy_(0.05 * torch.eye(model.config.hidden_size))
@@ -183,7 +198,15 @@ def test_invalid_experiment_evaluation_defaults_fail_early(fields):
         ExperimentConfig.from_dict(fields)
 
 
-@pytest.mark.parametrize("evaluator", [evaluate_nll, evaluate_pass_depth, evaluate_recurrent_continuation, evaluate_memory_interventions])
+@pytest.mark.parametrize(
+    "evaluator",
+    [
+        evaluate_nll,
+        evaluate_pass_depth,
+        evaluate_feedback_continuation,
+        evaluate_memory_interventions,
+    ],
+)
 def test_all_packed_evaluators_restore_mode_when_forward_fails(monkeypatch, evaluator):
     model = make_model().train()
     def fail(*args, **kwargs):
@@ -192,7 +215,7 @@ def test_all_packed_evaluators_restore_mode_when_forward_fails(monkeypatch, eval
     # The first pass goes through the backbone, while feedback goes through
     # input_embeddings. K=2 ensures the fault is reached in all four evaluators.
     kwargs = {"passes": 2} if evaluator in {evaluate_nll, evaluate_pass_depth} else {}
-    if evaluator is evaluate_recurrent_continuation:
+    if evaluator is evaluate_feedback_continuation:
         kwargs = {"prefill_passes": 2, "prompt_tokens": 2, "continuation_tokens": 3}
     with pytest.raises(RuntimeError, match="injected forward failure"):
         evaluator(model, Rows(), device="cpu", **kwargs)
@@ -207,7 +230,7 @@ def test_standard_cached_and_parallel_harness_score_identical_targets(max_length
     model = make_model()
     parallel = score_token_continuation(model, device="cpu", max_length=max_length,
         context_enc=context, continuation_enc=continuation)
-    cached = score_token_continuation_recurrent(model, device="cpu", max_length=max_length,
+    cached = score_token_continuation_feedback(model, device="cpu", max_length=max_length,
         context_enc=context, continuation_enc=continuation, prefill_passes=1, decode_mode="standard")
     assert cached[0] == pytest.approx(parallel[0], abs=2e-6)
     assert cached[1] == parallel[1]
@@ -216,7 +239,7 @@ def test_standard_cached_and_parallel_harness_score_identical_targets(max_length
 
 def test_diagnostic_and_intervention_targets_keep_existing_coverage():
     model, data = make_model("memory_token"), Rows(controls=True)
-    result = evaluate_recurrent_continuation(model, data, device="cpu", prefill_passes=2,
+    result = evaluate_feedback_continuation(model, data, device="cpu", prefill_passes=2,
         prompt_tokens=2, continuation_tokens=6, horizons=[6])
     assert result.predicted_tokens_per_mode == 10
     assert result.predicted_tokens_by_offset == (1, 2, 1, 2, 2, 2)
@@ -227,8 +250,36 @@ def test_diagnostic_and_intervention_targets_keep_existing_coverage():
     intervention = evaluate_memory_interventions(model, data, device="cpu")
     depth = evaluate_pass_depth(model, data, device="cpu", passes=2)
     assert intervention["baseline_pass1"]["nll"] == depth.nll_by_pass[0]
-    assert intervention["real_memory"]["nll"] == depth.nll_by_pass[1]
-    assert intervention["real_memory"]["predicted_tokens"] == 12
+    pass2 = intervention["transitions"]["2"]["conditions"]["real_memory"]
+    assert pass2["nll"] == depth.nll_by_pass[1]
+    assert pass2["predicted_tokens"] == 12
+
+
+@pytest.mark.parametrize(
+    "kind", ["no_memory", "projected_residual", "recirculation", "dense_attention"]
+)
+def test_primary_wiring_interventions_cover_every_condition_through_k4(kind):
+    result = evaluate_memory_interventions(
+        make_model(kind), Rows(), device="cpu", max_blocks=1
+    )
+
+    assert set(result["transitions"]) == {"2", "3", "4"}
+    assert result["evaluation"]["policy"]["mismatch_pairs"] == [
+        {
+            "target_block_index": 0,
+            "target_source": "a",
+            "donor_block_index": 1,
+            "donor_source": "b",
+        }
+    ]
+    for transition in result["transitions"].values():
+        assert set(transition["conditions"]) == {
+            "real_memory",
+            "zero_memory",
+            "mismatched_memory",
+            "true_bypass",
+        }
+        assert transition["mismatch_donor_depth"] == transition["read_pass"] - 1
 
 
 def test_experiment_defaults_and_independent_overrides_do_not_mutate_config():
@@ -262,12 +313,12 @@ def test_every_evaluation_lane_enters_requested_precision(monkeypatch, call):
     if call == "parallel":
         score_token_continuation(model, device="cpu", max_length=8, context_enc=[1], continuation_enc=[7, 8], **precision)
     elif call == "feedback":
-        score_token_continuation_recurrent(model, device="cpu", max_length=8, context_enc=[1],
+        score_token_continuation_feedback(model, device="cpu", max_length=8, context_enc=[1],
             continuation_enc=[7, 8], prefill_passes=1, decode_mode="feedback", **precision)
     elif call == "generation":
-        generate_recurrent(model, torch.tensor([[1]]), 2, prefill_passes=1, decode_mode="feedback", **precision)
+        generate_feedback(model, torch.tensor([[1]]), 2, prefill_passes=1, decode_mode="feedback", **precision)
     elif call == "diagnostic":
-        evaluate_recurrent_continuation(model, data, device="cpu", prefill_passes=2,
+        evaluate_feedback_continuation(model, data, device="cpu", prefill_passes=2,
             prompt_tokens=2, continuation_tokens=3, **precision)
     else:
         evaluate_memory_interventions(model, data, device="cpu", **precision)

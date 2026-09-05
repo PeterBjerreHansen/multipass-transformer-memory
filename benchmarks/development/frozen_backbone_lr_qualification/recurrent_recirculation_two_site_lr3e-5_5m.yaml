@@ -1,0 +1,8 @@
+extends: qualification_base.yml
+variant: recurrent_memory
+memory_window: 1
+memory_layers: [3, 7]
+recurrent_merger: recirculation
+recurrent_controller_hidden_size: 660
+added_learning_rate: 3.0e-5
+output_dir: benchmarks/development/frozen_backbone_lr_qualification/results/recurrent_recirculation_two_site_lr3e-5_5m

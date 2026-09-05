@@ -24,7 +24,7 @@ def _write_config(
     init_from: str | None = None,
 ) -> None:
     lines = [
-        "variant: recirculation",
+        "variant: recurrent_memory",
         "phase: B",
         "model_dir: checkpoints/TinyMistral-248M-v3",
         "data_dir: data/dolmino/wiring_2048",
@@ -32,10 +32,9 @@ def _write_config(
         "device: cpu",
         "dtype: float32",
         "attention_backend: reference",
-        "recirculation_mode: adaptive",
-        "recirculation_source_layer: 2",
-        "recirculation_destination_layer: 0",
-        "recirculation_alpha: 0.1",
+        "memory_window: 1",
+        "memory_layers: [0]",
+        "recurrent_merger: recirculation",
         "seed: 1337",
         "architecture_seed: 4242",
         f"batch_size: {batch_size}",

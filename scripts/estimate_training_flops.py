@@ -31,6 +31,7 @@ ARCHITECTURE_FIELDS = (
     "memory_token_visibility",
     "memory_layers",
     "memory_position_encoding",
+    "memory_num_key_value_heads",
     "memory_dense_window",
     "memory_sparse_window",
     "memory_sparse_stride",
@@ -39,6 +40,7 @@ ARCHITECTURE_FIELDS = (
     "sparse_attention_layers",
     "recirculation_mode",
     "recurrent_merger",
+    "recurrent_controller_hidden_size",
     "recurrent_layers",
     "recirculation_source_layer",
     "recirculation_destination_layer",
@@ -132,6 +134,7 @@ def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[i
         memory_write_stride=case.get("memory_write_stride"),
         memory_token_visibility=str(case.get("memory_token_visibility", "visible")),
         memory_layers=memory_layers,
+        memory_num_key_value_heads=case.get("memory_num_key_value_heads"),
         memory_dense_window=case.get("memory_dense_window"),
         memory_sparse_window=case.get("memory_sparse_window"),
         memory_sparse_stride=case.get("memory_sparse_stride"),
@@ -140,6 +143,9 @@ def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[i
         sparse_attention_layers=case.get("sparse_attention_layers", "all"),
         recirculation_mode=str(case.get("recirculation_mode", "fixed")),
         recurrent_merger=case.get("recurrent_merger"),
+        recurrent_controller_hidden_size=case.get(
+            "recurrent_controller_hidden_size"
+        ),
         recurrent_layers=case.get("recurrent_layers"),
     )
 

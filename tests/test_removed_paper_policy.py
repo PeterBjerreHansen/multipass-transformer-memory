@@ -51,9 +51,12 @@ def test_paper_execution_is_not_exported_or_attached_to_the_merger_variant():
     for name in ("compute_recirculation_logits", "compute_recirculation_bptt_loss",
                  "iter_recirculation_tbptt_losses", "_replay_upper_stack"):
         assert not hasattr(RecirculationVariant, name)
-    assert hasattr(inference, "prefill_recurrent")
-    assert hasattr(inference, "recurrent_decode_step")
-    assert hasattr(inference, "prefill_exact")
+    assert hasattr(inference, "prefill_live_feedback")
+    assert hasattr(inference, "live_feedback_decode_step")
+    assert hasattr(inference, "prefill_exact_k_pass")
+    assert not hasattr(inference, "prefill_recurrent")
+    assert not hasattr(inference, "recurrent_decode_step")
+    assert not hasattr(inference, "prefill_exact")
 
 
 def test_packed_nll_rejects_paper_execution_before_running_a_model():

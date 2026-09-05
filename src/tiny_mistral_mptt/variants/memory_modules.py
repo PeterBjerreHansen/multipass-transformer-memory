@@ -11,6 +11,7 @@ from tiny_mistral.modeling import MistralRMSNorm
 
 def build_recurrent_mergers(
     config, *, layers, merger: str, initialization_seed: int,
+    controller_hidden_size: int | None = None,
 ) -> nn.ModuleDict:
     """Construct the same late-memory readers for standalone and hybrid use."""
     if merger not in {"projected_residual", "recirculation"}:
@@ -25,7 +26,11 @@ def build_recurrent_mergers(
         kwargs = {"initialization_seed": int(initialization_seed) + layer}
         modules[str(layer)] = (
             ProjectedResidualMerger(config.hidden_size, eps=config.rms_norm_eps, **kwargs)
-            if merger == "projected_residual" else RecirculationMerger(config.hidden_size, **kwargs)
+            if merger == "projected_residual" else RecirculationMerger(
+                config.hidden_size,
+                controller_hidden_size=controller_hidden_size,
+                **kwargs,
+            )
         )
     return modules
 
@@ -50,8 +55,8 @@ class AdaptiveRecirculationController(nn.Module):
 
     This follows Mozer et al.'s conditional vector alpha/beta controller: a
     two-hidden-layer GELU MLP consumes the concatenated source and destination
-    residual streams and predicts independent sigmoid-bounded coefficient
-    vectors. The zero output-weight initialization makes the controller start
+    residual streams. Its configurable internal width permits real budget
+    matching without dummy parameters. The zero output-weight initialization starts
     at the fixed convex mixture and lets the coefficient head learn first.
     """
 
@@ -59,18 +64,26 @@ class AdaptiveRecirculationController(nn.Module):
         self,
         hidden_size: int,
         *,
+        controller_hidden_size: int | None = None,
         initial_alpha: float,
         initialization_seed: int,
     ):
         super().__init__()
-        input_size = 2 * int(hidden_size)
-        hidden_size = int(hidden_size)
+        output_size = int(hidden_size)
+        input_size = 2 * output_size
+        controller_hidden_size = (
+            output_size
+            if controller_hidden_size is None
+            else int(controller_hidden_size)
+        )
+        if controller_hidden_size < 1:
+            raise ValueError("controller_hidden_size must be positive")
         with torch.random.fork_rng(devices=[]):
             torch.manual_seed(int(initialization_seed))
             self.input_norm = nn.LayerNorm(input_size)
-            self.hidden_1 = nn.Linear(input_size, hidden_size)
-            self.hidden_2 = nn.Linear(hidden_size, hidden_size)
-            self.output = nn.Linear(hidden_size, 2 * hidden_size)
+            self.hidden_1 = nn.Linear(input_size, controller_hidden_size)
+            self.hidden_2 = nn.Linear(controller_hidden_size, controller_hidden_size)
+            self.output = nn.Linear(controller_hidden_size, 2 * output_size)
             nn.init.xavier_uniform_(self.hidden_1.weight)
             nn.init.zeros_(self.hidden_1.bias)
             nn.init.xavier_uniform_(self.hidden_2.weight)
@@ -83,8 +96,8 @@ class AdaptiveRecirculationController(nn.Module):
             alpha_logit = math.log(safe_alpha / (1.0 - safe_alpha))
             beta_logit = math.log(safe_beta / (1.0 - safe_beta))
             nn.init.zeros_(self.output.weight)
-            nn.init.constant_(self.output.bias[:hidden_size], alpha_logit)
-            nn.init.constant_(self.output.bias[hidden_size:], beta_logit)
+            nn.init.constant_(self.output.bias[:output_size], alpha_logit)
+            nn.init.constant_(self.output.bias[output_size:], beta_logit)
 
     def forward(
         self,
@@ -108,10 +121,19 @@ def norm_match(source: torch.Tensor, destination: torch.Tensor) -> torch.Tensor:
 class RecirculationMerger(nn.Module):
     """Adaptive norm-matched alpha/beta mixing of one emitted memory record."""
 
-    def __init__(self, hidden_size: int, *, initialization_seed: int):
+    def __init__(
+        self,
+        hidden_size: int,
+        *,
+        controller_hidden_size: int | None = None,
+        initialization_seed: int,
+    ):
         super().__init__()
         self.controller = AdaptiveRecirculationController(
-            hidden_size, initial_alpha=0.1, initialization_seed=initialization_seed
+            hidden_size,
+            controller_hidden_size=controller_hidden_size,
+            initial_alpha=0.1,
+            initialization_seed=initialization_seed,
         )
 
     def forward(self, destination: torch.Tensor, memory: torch.Tensor) -> torch.Tensor:

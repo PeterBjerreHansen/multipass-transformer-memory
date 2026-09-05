@@ -132,18 +132,16 @@ def test_active_studies_share_2048_data_and_effective_optimizer_batch():
         }
 
 
-def test_frozen_backbone_comparison_has_two_recurrent_mergers_and_three_attention_arms():
+def test_frozen_backbone_comparison_materializes_matched_groups_and_extensions():
     configs = _study_configs("frozen_backbone_comparison")
-    assert set(configs) == {
-        "recurrent_recirculation_multipass_100m",
-        "recurrent_projected_residual_multipass_100m",
-        "dense_memory_attention_multipass_100m",
-        "strided_memory_attention_multipass_100m",
-        "dense_and_strided_memory_attention_multipass_100m",
-    }
+    assert len(configs) == 15
+    assert sum(cfg.variant == "no_memory_adapter" for cfg in configs.values()) == 2
     assert all(cfg.phase == "A" for cfg in configs.values())
-    combined = configs["dense_and_strided_memory_attention_multipass_100m"]
-    assert (combined.batch_size, combined.grad_accum_steps) == (4, 8)
+    combined = [
+        cfg for cfg in configs.values()
+        if cfg.variant == "dense_and_strided_memory_attention"
+    ]
+    assert {(cfg.batch_size, cfg.grad_accum_steps) for cfg in combined} == {(4, 8)}
     assert {
         (cfg.batch_size, cfg.grad_accum_steps)
         for cfg in configs.values()
@@ -189,17 +187,32 @@ def test_frozen_backbone_comparison_has_two_recurrent_mergers_and_three_attentio
     assert study["learning_rates_qualified"] is False
     recurrent = [cfg for cfg in configs.values() if cfg.variant == "recurrent_memory"]
     assert {cfg.recurrent_merger for cfg in recurrent} == {"recirculation", "projected_residual"}
-    assert all(cfg.memory_layers == [3] and cfg.memory_window == 1 for cfg in recurrent)
+    assert {tuple(cfg.memory_layers) for cfg in recurrent} == {(3,), (3, 7)}
+    assert all(cfg.memory_window == 1 for cfg in recurrent)
     assert all(cfg.recirculation_source_layer is None for cfg in recurrent)
+    attention = [cfg for cfg in configs.values() if cfg.variant.endswith("memory_attention")]
+    assert all(cfg.memory_num_key_value_heads == 16 for cfg in attention)
+    assert {
+        cfg.memory_write_stride
+        for cfg in attention
+        if cfg.variant == "strided_memory_attention"
+    } == {8, 16, 32, 64}
 
 
 def test_frozen_backbone_lr_qualification_uses_2048_sweep():
     configs = _study_configs("frozen_backbone_lr_qualification")
-    assert len(configs) == 20
+    assert len(configs) == 48
     assert all(not cfg.feedback_eval_at_tokens for cfg in configs.values())
-    assert sum(cfg.variant == "dense_and_strided_memory_attention" for cfg in configs.values()) == 4
+    assert (
+        sum(
+            cfg.variant == "dense_and_strided_memory_attention"
+            for cfg in configs.values()
+        )
+        == 8
+    )
     for merger in ("recirculation", "projected_residual"):
-        assert sum(cfg.recurrent_merger == merger for cfg in configs.values()) == 4
+        assert sum(cfg.recurrent_merger == merger for cfg in configs.values()) == 8
+    assert sum(cfg.variant == "no_memory_adapter" for cfg in configs.values()) == 8
     assert {cfg.data_dir for cfg in configs.values()} == {"data/dolmino/gpu_2048"}
     assert {
         (cfg.batch_size, cfg.grad_accum_steps)
@@ -223,12 +236,13 @@ def test_attention_reader_layers_match_across_frozen_studies():
     for name in ("frozen_backbone_comparison", "frozen_backbone_lr_qualification"):
         attention = [
             cfg for cfg in _study_configs(name).values()
-            if cfg.variant != "recurrent_memory"
+            if cfg.variant.endswith("memory_attention")
         ]
         assert {cfg.variant for cfg in attention} == {
             "dense_memory_attention", "strided_memory_attention", "dense_and_strided_memory_attention",
         }
-        assert all(cfg.memory_layers == [3, 7] for cfg in attention)
+        assert {tuple(cfg.memory_layers) for cfg in attention} <= {(3,), (3, 7)}
+        assert all(cfg.memory_num_key_value_heads == 16 for cfg in attention)
 
 
 def test_historical_studies_are_preserved_but_not_discovered():

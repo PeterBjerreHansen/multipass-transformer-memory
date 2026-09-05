@@ -7,7 +7,7 @@ from typing import Callable
 
 import torch
 
-from ..inference import prefill_recurrent, recurrent_decode_step
+from ..inference import prefill_live_feedback, live_feedback_decode_step
 from .common import (
     NLLAccumulator, block_limit, evaluation_context, packed_evaluation_metadata,
     perplexity, source_name,
@@ -49,10 +49,16 @@ def feedback_evaluation_metadata(model, dataset, *, device, max_blocks=None, aut
         model, dataset, device=device, autocast_dtype=autocast_dtype,
         blocks=block_limit(dataset, max_blocks),
         policy={
-            "forward_mode": "feedback", "decode_mode": "feedback",
+            "forward_mode": "live_feedback", "decode_mode": "feedback",
             "prefill_passes": 1, "prompt_tokens": 1, "prompt_kind": "bos",
             "bos_token_id": bos, "teacher_forced": True,
-            "state_reset": "each_block", "control_slots": "unchanged_data_cadence",
+            "state_reset": "each_block",
+            "memory_write_position_basis": "zero_based_physical_sequence_position",
+            "periodic_write_rule": "(position + 1) % stride == 0",
+            "synthetic_bos_counts_as_physical_token": True,
+            "synthetic_bos_shifts_periodic_write_phase": (
+                getattr(model, "memory_write_mode", None) == "periodic"
+            ),
         },
         target_coverage="all_linguistic_tokens_in_block; added_bos_is_context_only; model_owned_labels",
     )
@@ -82,14 +88,16 @@ def evaluate_feedback_nll(
             inputs = torch.cat((bos, ids), dim=1)
             labels = model.build_lm_labels(inputs)
             source = source_name(dataset, index) if hasattr(dataset, "manifest") else None
-            state = prefill_recurrent(model, bos, passes=1, decode_mode="feedback")
+            state = prefill_live_feedback(model, bos, passes=1, decode_mode="feedback")
             # Score at model-owned prediction positions. In MEM mode A predicts
             # B in A <MEM> B; the MEM logits are ignored, but MEM is consumed.
             for position in range(ids.shape[1]):
                 if stop_requested is not None and stop_requested():
                     raise InterruptedError("feedback validation interrupted; no partial result committed")
                 if position:
-                    state = recurrent_decode_step(model, state, inputs[:, position:position + 1])
+                    state = live_feedback_decode_step(
+                        model, state, inputs[:, position:position + 1]
+                    )
                 score = NLLAccumulator()
                 score.add(state.next_token_logits, labels[:, position], source=source)
                 scores.merge(score)
@@ -103,5 +111,5 @@ def evaluate_feedback_nll(
         aligned_nll=aligned.mean, aligned_perplexity=perplexity(aligned.mean),
         aligned_predicted_tokens=aligned.tokens, aligned_nll_by_source=aligned.by_source,
         aligned_predicted_tokens_by_source=dict(aligned.source_tokens),
-        blocks=limit, prefill_passes=1, forward_mode="feedback", evaluation=metadata,
+        blocks=limit, prefill_passes=1, forward_mode="live_feedback", evaluation=metadata,
     )

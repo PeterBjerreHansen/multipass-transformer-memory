@@ -81,7 +81,7 @@ def resolve_memory_attention_pattern(
 MEMORY_ATTENTION_VARIANTS = {"memory_attention", *MEMORY_ATTENTION_PRESETS}
 SUPPORTED_VARIANTS = {
     "vanilla", "swa_transformer", "strided_self_attention", "fbt", "memory_add",
-    "recirculation", "recurrent_memory", *MEMORY_ATTENTION_VARIANTS,
+    "no_memory_adapter", "recurrent_memory", *MEMORY_ATTENTION_VARIANTS,
 }
 SUPPORTED_LR_SCHEDULES = {"constant", "cosine", "piecewise_linear"}
 SUPPORTED_AUTOCAST_DTYPES = {"bfloat16"}
@@ -394,6 +394,9 @@ class ExperimentConfig:
     memory_token_visibility: str | None = None
     memory_layers: str | list[int] | None = None
     memory_position_encoding: str | None = None
+    # Reader width used for genuine parameter/compute matching; defaults to the
+    # backbone GQA width when omitted.
+    memory_num_key_value_heads: int | None = None
     # Dense-and-strided Memory Attention retains a dense recent region plus fixed-stride old
     # records from the same dense previous-pass source stream.
     memory_dense_window: int | None = None
@@ -412,6 +415,7 @@ class ExperimentConfig:
     recirculation_mode: str = "fixed"
     # Late emitted memory, read at memory_layers; no paper-replay policy.
     recurrent_merger: str | None = None
+    recurrent_controller_hidden_size: int | None = None
     # Optional recurrence inside Memory Attention; distinct from attention reader layers.
     recurrent_layers: list[int] | None = None
 
@@ -638,6 +642,18 @@ class ExperimentConfig:
             raise ValueError("recurrent_layers requires optional recurrence in Memory Attention")
         if self.variant not in MEMORY_ATTENTION_VARIANTS and self.memory_pattern is not None:
             raise ValueError("memory_pattern applies only to Memory Attention")
+        if self.memory_num_key_value_heads is not None:
+            if self.variant not in MEMORY_ATTENTION_VARIANTS:
+                raise ValueError("memory_num_key_value_heads applies only to Memory Attention")
+            if self.memory_num_key_value_heads < 1:
+                raise ValueError("memory_num_key_value_heads must be positive")
+        if self.recurrent_controller_hidden_size is not None:
+            if self.recurrent_merger != "recirculation":
+                raise ValueError(
+                    "recurrent_controller_hidden_size requires recurrent_merger=recirculation"
+                )
+            if self.recurrent_controller_hidden_size < 1:
+                raise ValueError("recurrent_controller_hidden_size must be positive")
 
         if self.variant == "recirculation":
             if self.recirculation_mode not in {"fixed", "adaptive"}:
@@ -761,6 +777,18 @@ class ExperimentConfig:
                 self.memory_dense_window, self.memory_sparse_window, self.memory_sparse_stride,
             )) or self.memory_window != 1:
                 raise ValueError("recurrent memory retains one dense record; attention memory controls do not apply")
+        elif self.variant == "no_memory_adapter":
+            if self.memory_layers is None or self.memory_layers == "all":
+                raise ValueError("no-memory adapter layers must be an explicit non-empty list")
+            self.memory_layers = _coerce_layer_indices(
+                self.memory_layers, field_name="memory_layers"
+            )
+            if any(value is not None for value in (
+                self.memory_write_mode, self.memory_write_stride,
+                self.memory_token_visibility, self.memory_position_encoding,
+                self.memory_dense_window, self.memory_sparse_window, self.memory_sparse_stride,
+            )):
+                raise ValueError("no-memory adapter does not accept memory retention controls")
         elif (
             self.memory_write_mode is not None
             or self.memory_write_stride is not None
@@ -871,9 +899,33 @@ class ExperimentConfig:
         return result
 
 
-def load_experiment_config(path: str | Path) -> ExperimentConfig:
-    with Path(path).open("r", encoding="utf-8") as handle:
+def _load_experiment_mapping(
+    path: Path,
+    *,
+    seen: frozenset[Path] = frozenset(),
+) -> dict[str, Any]:
+    resolved = path.resolve()
+    if resolved in seen:
+        raise ValueError(f"cyclic experiment config inheritance at {path}")
+    with resolved.open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle) or {}
     if not isinstance(raw, dict):
         raise ValueError("experiment config must be a YAML mapping")
+    parent = raw.pop("extends", None)
+    if parent is None:
+        return raw
+    if not isinstance(parent, str) or not parent.strip():
+        raise ValueError("extends must name one non-empty relative config path")
+    parent_path = Path(parent)
+    if parent_path.is_absolute():
+        raise ValueError("extends must be relative to the child config")
+    inherited = _load_experiment_mapping(
+        resolved.parent / parent_path,
+        seen=seen | {resolved},
+    )
+    return {**inherited, **raw}
+
+
+def load_experiment_config(path: str | Path) -> ExperimentConfig:
+    raw = _load_experiment_mapping(Path(path))
     return ExperimentConfig.from_dict(raw)

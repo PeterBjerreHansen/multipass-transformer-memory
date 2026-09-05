@@ -36,7 +36,7 @@ An independent multipass comparison based on asymmetric latent feedback. It is
 not part of the Memory Attention family. Later-pass fused inputs are RMS-normalized before
 entering the backbone, while position zero retains its ordinary token
 embedding. FBT implements the same exact cached K-stream and collapsed
-recurrent inference interfaces as the other one-state feedback variants.
+Live Feedback inference interfaces as the other one-state feedback variants.
 
 ## Retired one-state controls
 
@@ -56,21 +56,37 @@ x_t = e_t + W_A RMSNorm(h^(k-1)_(t-1))
 `W_A` is bias-free and zero-initialized. Position zero receives a zero recurrent
 residual.
 
+## No-memory Adapter
+
+`NoMemoryAdapterVariant` is the capacity control for the active frozen study.
+Pass 1 is the unchanged backbone. On later passes, the first selected site
+projects its current residual through the same shared D-to-D writer shape used
+by projected-residual fixed-route feedback. The resulting within-pass control
+record is reused by the projected-residual merger at every selected site. It
+never reads an earlier-pass or earlier-token Feedback Record.
+
+This construction exactly matches the projected-residual arm's added-parameter
+count at a fixed site count while testing whether feedback transfer adds value
+beyond trainable later-pass capacity. Real, zero, and mismatched memory inputs
+must therefore give it identical outputs; true bypass remains different because
+it omits the adapter path itself.
+
 ## Recurrent memory
 
 `RecurrentMemoryVariant` uses the same late writer as Memory Attention, reads
 only the preceding token's previous-pass memory, and selects one of two mergers
 with `recurrent_merger: projected_residual|recirculation`. Reads occur after
 self-attention and before the MLP at `memory_layers`. The active study uses
-`memory_layers: [3]` and `memory_window: 1`. See
+`memory_layers: [3]` and `[3, 7]` separately with `memory_window: 1`. See
 [RECURRENT_MEMORY.md](RECURRENT_MEMORY.md) for initialization, gradient flow,
 comparison limits, and inference semantics.
 
 ## Legacy middle-layer recirculation
 
-This shifted multipass implementation remains for historical configs and
-checkpoint compatibility. Its same-token paper replay/BPTT implementation has
-been deleted. New recurrent comparisons use the late-memory contract above.
+This shifted multipass implementation remains as legacy source for interpreting
+historical records. It is no longer an active config or model-factory choice,
+and its same-token paper replay/BPTT implementation has been deleted. New
+recurrent comparisons use the late-memory contract above.
 
 `RecirculationVariant` captures the output of a configured source decoder
 layer and, on later passes, right-shifts it by one position before mixing it
@@ -101,7 +117,7 @@ Its output head is initialized so adaptive mode starts at the fixed mixture
 parameter group: Phase A freezes the TinyMistral backbone.
 Phase B fine-tunes the full model. Fixed mode remains the default.
 
-Historical controller-only adaptation uses:
+Historical controller-only configs used:
 
 ```yaml
 variant: recirculation
@@ -137,5 +153,5 @@ Pass 1 is the current TinyMistral stream. Pass `k>1` consumes a completed
 previous-pass source sequence with architecture-specific routing. This allows sequence-parallel training. Exact
 cached K-pass inference snapshots lower-stream feedback before computing the
 same physical position in higher streams, so no same-position lower-stream
-state leaks upward. Collapsed recurrent inference closes the final stream only
+state leaks upward. Live Feedback inference closes the final stream only
 after the exact K-pass prefill boundary.

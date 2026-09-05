@@ -2,11 +2,11 @@
 
 The active frozen comparison and its qualification are:
 
-- `frozen_backbone_lr_qualification/`: four LR candidates for each of five
-  mechanisms, with equal 5M-token budgets;
-- `frozen_backbone_comparison/`: 100M-token frozen-backbone curves for two
-  late-memory recurrent mergers (projected residual and adaptive recirculation),
-  dense Memory Attention, Strided Memory Attention, and Dense-and-strided Memory Attention.
+- `frozen_backbone_lr_qualification/`: the same four LR candidates for every
+  primary mechanism and attention extension at each site count, with equal
+  5M-token budgets;
+- `frozen_backbone_comparison/`: separate one-site and two-site 100M-token
+  frozen-backbone groups, followed by attention-layout and stride extensions.
 
 These studies use 2048-token blocks and the same K=2/3 final-pass training
 objective. Most arms use microbatch 8 with accumulation 4; the combined

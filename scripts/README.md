@@ -41,8 +41,8 @@ These guides define resume and cleanup behavior. The script index does not dupli
 | --- | --- |
 | `evaluate_nll.py` | Final parallel-pass NLL, or full-block BOS feedback with `--forward feedback` |
 | `evaluate_pass_depth.py` | Parallel NLL and hidden-state changes through the requested K |
-| `evaluate_memory_interventions.py` | Real/zero/mismatched memory for one K=1-to-K=2 transition |
-| `evaluate_recurrent_inference.py` | Same-checkpoint exact, feedback and standard continuation comparison |
+| `evaluate_memory_interventions.py` | Pass-indexed real/zero/mismatched/true-bypass feedback diagnostics through K=4 |
+| `evaluate_feedback_inference.py` | Same-checkpoint exact-K-pass, Live Feedback and standard-K1 continuation comparison |
 | `evaluate_lm_harness.py` | Candidate scoring or generation with explicit prefill/decode choices |
 | `evaluate_parameter_drift.py` | Backbone and added-parameter changes relative to compatible reference weights |
 | `generate.py` | Ordinary pretrained-backbone generation, not trained feedback-model generation |
@@ -53,7 +53,7 @@ Parameter drift requires its checkpoint and reference.
 The packed-data evaluation CLIs verify the selected artifact's manifest, file
 sizes, checksums, and forbidden control-token audit before loading it.
 See [evaluation](../evaluation/README.md) for defaults, precision, target sets and result identity.
-See [cached inference](../docs/RECURRENT_INFERENCE.md) for the lower-level feedback interface.
+See [cached inference](../docs/FEEDBACK_INFERENCE.md) for the lower-level feedback interface.
 
 ## Engineering measurements
 
@@ -64,6 +64,7 @@ See [cached inference](../docs/RECURRENT_INFERENCE.md) for the lower-level feedb
 
 Engineering grids are not scientific arms.
 The general training grid includes legacy recirculation, not both active recurrent mergers.
-The inference script uses the five current arms but does not yet time the production BOS NLL evaluator.
+The inference benchmark has a separately maintained engineering case list and
+does not yet time the production BOS NLL evaluator.
 See [efficiency measurements](../benchmarks/efficiency/README.md) and
 [the retained A6000 report](../benchmarks/development/inference_efficiency/README.md).

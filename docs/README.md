@@ -7,15 +7,16 @@ Historical records and research notes do not override those configs or the curre
 
 | Question | Read |
 | --- | --- |
+| What is the scientific thesis and comparison contract? | [Research plan](RESEARCH_PLAN.md) |
 | Which experiments run, and how are studies organized? | [Benchmark protocols and manifest schema](../benchmarks/README.md) |
-| What runs next, and which decisions are deferred? | [Development plan](DEVELOPMENT_PLAN.md) |
+| In what order should the agreed work be implemented and verified? | [Staged implementation plan](DEVELOPMENT_PLAN.md) |
 | Which model families are active or historical? | [Architecture map](ARCHITECTURES.md) |
 | How do the recurrent mergers work? | [Recurrent memory](RECURRENT_MEMORY.md) |
 | How do attention memory, retention and MEM slots work? | [Memory Attention](MEMORY_ATTENTION.md) |
 | How are packed data and splits constructed? | [Data contract](DATA.md) |
 | How do training, resume and snapshots work? | [Training contract](TRAINING.md) |
 | What do NLL, feedback, precision and downstream results mean? | [Evaluation contract](../evaluation/README.md) |
-| How do exact cached and feedback decoding differ? | [Inference contract](RECURRENT_INFERENCE.md) |
+| How do exact cached and feedback decoding differ? | [Inference contract](FEEDBACK_INFERENCE.md) |
 | How do we preflight and operate a cloud run? | [Cloud runbook](CLOUD.md) |
 | Which correctness checks must pass? | [Validation gates](VALIDATION.md) |
 | Which command exposes each operation? | [Script index](../scripts/README.md) |

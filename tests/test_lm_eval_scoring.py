@@ -8,13 +8,13 @@ from tiny_mistral.modeling import MistralForCausalLM
 from tiny_mistral_mptt.evaluation.lm_eval_adapter import score_token_continuation
 from tiny_mistral_mptt.evaluation.lm_eval_adapter import (
     _TokenizerFacade,
-    generate_recurrent,
+    generate_feedback,
     make_lm_eval_adapter,
-    score_token_continuation_recurrent,
+    score_token_continuation_feedback,
 )
 from tiny_mistral_mptt.inference import (
-    prefill_recurrent,
-    recurrent_decode_step,
+    live_feedback_decode_step,
+    prefill_live_feedback,
 )
 from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
 from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
@@ -120,14 +120,14 @@ def _make_recirculation_model():
     ).eval()
 
 
-def test_recurrent_task_scoring_uses_one_collapsed_stream(monkeypatch):
+def test_live_feedback_task_scoring_uses_one_collapsed_stream(monkeypatch):
     model = _make_memory_model()
 
     def forbidden_forward(*args, **kwargs):
-        raise AssertionError("recurrent task scoring must not call public forward")
+        raise AssertionError("live-feedback task scoring must not call public forward")
 
     monkeypatch.setattr(model, "forward", forbidden_forward)
-    score, greedy = score_token_continuation_recurrent(
+    score, greedy = score_token_continuation_feedback(
         model,
         device="cpu",
         max_length=16,
@@ -137,7 +137,7 @@ def test_recurrent_task_scoring_uses_one_collapsed_stream(monkeypatch):
         continuation_enc=[22, 9, 31],
     )
 
-    state = prefill_recurrent(
+    state = prefill_live_feedback(
         model,
         torch.tensor([[1, 7, 3, 14]], dtype=torch.long),
         passes=2,
@@ -153,7 +153,7 @@ def test_recurrent_task_scoring_uses_one_collapsed_stream(monkeypatch):
             torch.argmax(logits, dim=-1).item() == token_id
         )
         if index + 1 < len(targets):
-            state = recurrent_decode_step(
+            state = live_feedback_decode_step(
                 model,
                 state,
                 torch.tensor([[token_id]], dtype=torch.long),
@@ -163,15 +163,15 @@ def test_recurrent_task_scoring_uses_one_collapsed_stream(monkeypatch):
     assert greedy is expected_greedy
 
 
-def test_recurrent_task_generation_matches_incremental_greedy_decode(monkeypatch):
+def test_live_feedback_generation_matches_incremental_greedy_decode(monkeypatch):
     model = _make_memory_model()
 
     def forbidden_forward(*args, **kwargs):
-        raise AssertionError("recurrent generation must not call public forward")
+        raise AssertionError("live-feedback generation must not call public forward")
 
     monkeypatch.setattr(model, "forward", forbidden_forward)
     prompt = torch.tensor([[1, 7, 3, 14]], dtype=torch.long)
-    generated = generate_recurrent(
+    generated = generate_feedback(
         model,
         prompt,
         3,
@@ -180,7 +180,7 @@ def test_recurrent_task_generation_matches_incremental_greedy_decode(monkeypatch
         temperature=0.0,
     )
 
-    state = prefill_recurrent(
+    state = prefill_live_feedback(
         model, prompt, passes=2, decode_mode="feedback"
     )
     expected = prompt.clone()
@@ -188,6 +188,6 @@ def test_recurrent_task_generation_matches_incremental_greedy_decode(monkeypatch
         token = torch.argmax(state.next_token_logits, dim=-1, keepdim=True)
         expected = torch.cat((expected, token), dim=1)
         if step < 2:
-            state = recurrent_decode_step(model, state, token)
+            state = live_feedback_decode_step(model, state, token)
 
     torch.testing.assert_close(generated, expected)

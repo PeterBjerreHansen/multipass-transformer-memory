@@ -1,9 +1,9 @@
 # Late-emitted recurrent memory
 
 This is the active recurrent architecture for the frozen comparison. It replaces
-the middle-layer source used by the older `variant: recirculation` arm. The older
-shifted multipass implementation remains for historical configs. Its paper-replay
-training and inference policy has been deleted; neither defines this comparison.
+the middle-layer source used by the older `variant: recirculation` arm. That
+shifted implementation is retained only as legacy source code; the active config
+and model factories reject it. Its paper-replay policy has been deleted.
 
 ## Shared memory contract
 
@@ -19,13 +19,16 @@ Position zero receives no feedback. There is no same-token mixing, accumulated
 recurrent cache, or internal-layer source tap. Each arm trains its own writer;
 the emission rule and initialization are shared, not the learned weights.
 
-The active recurrent arms read at layer 3 (zero-based). Like Memory Attention,
-the read occurs after self-attention and before the MLP. The legacy recirculation
-arm inserted its mixture after the entire destination block, so the new baseline
-changes that placement as well as its source. Historical results must not be
-relabeled as results for the new baseline. All active attention arms now use
-read layers `[3, 7]`; the overall comparison is not a pure access-pattern ablation.
-The two recurrent arms, however, have identical routing and differ only in merger.
+The one-site arms read at layer 3; two-site arms read at layers 3 and 7
+(zero-based). Within each site-count group, the recurrent and attention arms
+use the same locations. Like Memory Attention, the recurrent read occurs after
+self-attention and before the MLP. The legacy recirculation arm inserted its
+mixture after the entire destination block, so the new baseline changes that
+placement as well as its source. Historical results must not be relabeled as
+results for the new baseline. The representative architectures retain their
+native merger components, so the overall comparison is not a pure mathematical
+isolation of access pattern. The two recurrent arms have identical routing and
+differ only in merger.
 
 ## Exactly two merger choices
 
@@ -96,10 +99,11 @@ training and validation are removed from the codebase.
 
 ## Study and compatibility
 
-The frozen comparison contains these two recurrent arms plus dense, strided and
-dense-and-strided Memory Attention. All use 2048-token blocks, identical training K
-distributions and objectives, and K=4 headline NLL with K=1–4 diagnostics.
-Each of the five arms gets the same four-value LR qualification budget.
+The frozen comparison has separate one-site and two-site groups containing the
+No-memory Adapter, both recurrent mergers, and Dense Memory Attention. Strided
+and dense-and-strided attention are later extensions. All use 2048-token blocks,
+identical training K distributions and objectives, and the same four-value LR
+qualification grid for each mechanism and site count.
 
 The new recurrent configs have distinct arm IDs and output directories. Old
 middle-layer weights cannot be resumed as late-memory weights. Checkpoint
@@ -112,5 +116,5 @@ separate policies. No training run was launched as part of this restructuring.
 Both mergers already have a learned writer projection.
 This comparison does not isolate projection versus no projection.
 Use the existing simple ablations described in [evaluation](../evaluation/README.md).
-Initial-baseline evaluation and expanded, configurable-depth diagnostics remain
-deferred in the [development plan](DEVELOPMENT_PLAN.md).
+Configurable-depth interventions and exact-versus-Live-Feedback fidelity are
+implemented as separate diagnostics; they remain outside routine validation.

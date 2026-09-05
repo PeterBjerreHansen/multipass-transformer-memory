@@ -25,12 +25,14 @@ class MemoryAttentionRecurrentHybridVariant(MemoryAttentionVariant):
     def __init__(
         self, backbone: MistralForCausalLM, *,
         recurrent_merger: str, recurrent_layers: list[int] | tuple[int, ...],
+        recurrent_controller_hidden_size: int | None = None,
         initialization_seed: int = 4242, **attention_settings,
     ):
         super().__init__(backbone, initialization_seed=initialization_seed, **attention_settings)
         self.recurrent_merger = recurrent_merger
         self.memory_mergers = build_recurrent_mergers(
             backbone.config, layers=recurrent_layers, merger=recurrent_merger,
+            controller_hidden_size=recurrent_controller_hidden_size,
             initialization_seed=initialization_seed,
         )
         self.recurrent_layers = tuple(int(key) for key in self.memory_mergers)

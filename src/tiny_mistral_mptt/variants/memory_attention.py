@@ -41,6 +41,7 @@ class MemoryAttentionReader(nn.Module):
         backbone: MistralForCausalLM,
         *,
         window: int,
+        num_key_value_heads: int | None = None,
         position_encoding: str = "rope",
         initialization_seed: int,
     ):
@@ -48,7 +49,19 @@ class MemoryAttentionReader(nn.Module):
         config = backbone.config
         self.hidden_size = int(config.hidden_size)
         self.num_heads = int(config.num_attention_heads)
-        self.num_key_value_heads = int(config.num_key_value_heads)
+        self.num_key_value_heads = int(
+            config.num_key_value_heads
+            if num_key_value_heads is None
+            else num_key_value_heads
+        )
+        if (
+            self.num_key_value_heads < 1
+            or self.num_key_value_heads > self.num_heads
+            or self.num_heads % self.num_key_value_heads != 0
+        ):
+            raise ValueError(
+                "memory_num_key_value_heads must be a positive divisor of num_attention_heads"
+            )
         self.head_dim = int(config.head_dim)
         self.window = int(window)
         self.dropout_p = float(config.attention_dropout)
@@ -411,6 +424,7 @@ class MemoryAttentionVariant(MultiPassVariant):
         memory_token_visibility: str = "visible",
         memory_layers: str | list[int] = "all",
         memory_position_encoding: str = "rope",
+        memory_num_key_value_heads: int | None = None,
         initialization_seed: int = 4242,
     ):
         super().__init__(backbone)
@@ -472,6 +486,11 @@ class MemoryAttentionVariant(MultiPassVariant):
         self.memory_token_visibility = str(memory_token_visibility)
         self.memory_layers = selected_layers
         self.memory_position_encoding = str(memory_position_encoding)
+        self.memory_num_key_value_heads = (
+            int(backbone.config.num_key_value_heads)
+            if memory_num_key_value_heads is None
+            else int(memory_num_key_value_heads)
+        )
         self.memory_token_id = base_vocab if memory_write_mode == "memory_token" else None
         self.base_vocab_size = base_vocab
 
@@ -489,6 +508,7 @@ class MemoryAttentionVariant(MultiPassVariant):
                 str(layer_index): MemoryAttentionReader(
                     backbone,
                     window=self.memory_window,
+                    num_key_value_heads=self.memory_num_key_value_heads,
                     position_encoding=self.memory_position_encoding,
                     initialization_seed=int(initialization_seed) + layer_index,
                 )

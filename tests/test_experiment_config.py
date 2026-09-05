@@ -1,6 +1,6 @@
 import pytest
 
-from tiny_mistral_mptt.config import ExperimentConfig
+from tiny_mistral_mptt.config import ExperimentConfig, load_experiment_config
 
 
 def _config(**overrides):
@@ -247,50 +247,33 @@ def test_memory_attention_layer_and_position_configuration_is_validated():
         )
 
 
-def test_recirculation_config_requires_ordered_layers_and_phase_b():
-    cfg = _config(
-        variant="recirculation",
-        recirculation_source_layer=3,
-        recirculation_destination_layer=1,
-        recirculation_alpha=0.25,
-    )
-    assert cfg.recirculation_source_layer == 3
-    assert cfg.recirculation_destination_layer == 1
-    assert cfg.recirculation_alpha == 0.25
-
-    with pytest.raises(ValueError, match="requires source and destination"):
-        _config(variant="recirculation")
-    with pytest.raises(ValueError, match="destination_layer < source_layer"):
+def test_middle_layer_recirculation_config_is_archived():
+    with pytest.raises(ValueError, match="variant must be one of"):
         _config(
             variant="recirculation",
-            recirculation_source_layer=1,
-            recirculation_destination_layer=1,
-        )
-    with pytest.raises(ValueError, match="Phase-A"):
-        _config(
-            variant="recirculation",
-            phase="A",
             recirculation_source_layer=3,
             recirculation_destination_layer=1,
         )
 
 
-def test_adaptive_recirculation_adds_a_phase_a_controller():
+def test_recirculation_inspired_controller_width_is_explicit():
     cfg = _config(
-        variant="recirculation",
+        variant="recurrent_memory",
         phase="A",
-        recirculation_mode="adaptive",
-        recirculation_source_layer=3,
-        recirculation_destination_layer=1,
+        memory_window=1,
+        memory_layers=[3],
+        recurrent_merger="recirculation",
+        recurrent_controller_hidden_size=660,
     )
-    assert cfg.recirculation_mode == "adaptive"
-
-    with pytest.raises(ValueError, match="recirculation_mode"):
+    assert cfg.recurrent_controller_hidden_size == 660
+    with pytest.raises(ValueError, match="requires recurrent_merger=recirculation"):
         _config(
-            variant="recirculation",
-            recirculation_mode="unknown",
-            recirculation_source_layer=3,
-            recirculation_destination_layer=1,
+            variant="recurrent_memory",
+            phase="A",
+            memory_window=1,
+            memory_layers=[3],
+            recurrent_merger="projected_residual",
+            recurrent_controller_hidden_size=660,
         )
 
 
@@ -386,3 +369,48 @@ def test_early_stop_pass_depth_gates_are_canonicalized_and_validated():
             eval_passes=3,
             early_stop={"pass_nll_max": {4: 2.33}},
         )
+
+
+def test_relative_config_inheritance_overrides_only_child_fields(tmp_path):
+    base = tmp_path / "base.yml"
+    child_dir = tmp_path / "rates"
+    child_dir.mkdir()
+    child = child_dir / "arm.yaml"
+    base.write_text(
+        "\n".join(
+            (
+                "variant: fbt",
+                "model_dir: shared-model",
+                "data_dir: shared-data",
+                "output_dir: base-output",
+                "learning_rate: 0.0001",
+            )
+        ),
+        encoding="utf-8",
+    )
+    child.write_text(
+        "extends: ../base.yml\noutput_dir: child-output\nlearning_rate: 0.0003\n",
+        encoding="utf-8",
+    )
+
+    cfg = load_experiment_config(child)
+
+    assert cfg.variant == "fbt"
+    assert cfg.model_dir == "shared-model"
+    assert cfg.data_dir == "shared-data"
+    assert cfg.output_dir == "child-output"
+    assert cfg.learning_rate == pytest.approx(3e-4)
+
+
+def test_config_inheritance_rejects_cycles_and_absolute_parents(tmp_path):
+    first = tmp_path / "first.yaml"
+    second = tmp_path / "second.yaml"
+    first.write_text("extends: second.yaml\n", encoding="utf-8")
+    second.write_text("extends: first.yaml\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="cyclic experiment config inheritance"):
+        load_experiment_config(first)
+
+    absolute = tmp_path / "absolute.yaml"
+    absolute.write_text(f"extends: {first}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="extends must be relative"):
+        load_experiment_config(absolute)

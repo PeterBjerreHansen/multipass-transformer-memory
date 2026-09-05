@@ -7,12 +7,12 @@ import torch
 from ..variants.multipass import MultiPassVariant
 from .state import (
     DecodeMode,
-    ExactIncrementalState,
+    ExactKPassState,
+    LiveFeedbackState,
     PassStreamState,
-    RecurrentState,
 )
 
-InferenceMode = Literal["exact_incremental", "recurrent"]
+InferenceMode = Literal["exact_k_pass", "live_feedback"]
 
 
 def _validate_prompt(input_ids: torch.Tensor, passes: int) -> None:
@@ -28,12 +28,12 @@ def _validate_token(token: torch.Tensor, batch_size: int) -> None:
 
 
 @torch.no_grad()
-def prefill_exact(
+def prefill_exact_k_pass(
     model: MultiPassVariant,
     input_ids: torch.Tensor,
     *,
     passes: int,
-) -> ExactIncrementalState:
+) -> ExactKPassState:
     """Build an exact cached K-pass state for an arbitrary positive ``K``.
 
     Every pass owns its own TinyMistral KV stream.  The feedback memory stored
@@ -70,7 +70,7 @@ def prefill_exact(
     if passes == 1 and not model.supports_cached_feedback:
         # Exact K=1 decoding remains available to variants without a feedback
         # protocol. This placeholder is never exposed to feedback decoding,
-        # which prefill_recurrent rejects for such models.
+        # which prefill_live_feedback rejects for such models.
         streams = (
             PassStreamState(
                 past_key_values=first_run.past_key_values,
@@ -93,18 +93,18 @@ def prefill_exact(
         runs[-1].hidden_states, input_ids
     )
     logits = model.backbone.lm_head(prediction_hidden).float()[:, -1, :]
-    return ExactIncrementalState(
+    return ExactKPassState(
         prefill_passes=passes,
         streams=streams,
         next_token_logits=logits,
     )
 
 
-def recurrent_from_exact(
-    state: ExactIncrementalState,
+def live_feedback_from_exact(
+    state: ExactKPassState,
     *,
     decode_mode: DecodeMode,
-) -> RecurrentState:
+) -> LiveFeedbackState:
     """Collapse an exact prompt state into the requested decode mechanism."""
     final_stream = state.streams[-1]
     if decode_mode == "standard":
@@ -117,7 +117,7 @@ def recurrent_from_exact(
         )
     else:
         raise ValueError(f"unknown decode mode {decode_mode!r}")
-    return RecurrentState(
+    return LiveFeedbackState(
         prefill_passes=state.prefill_passes,
         decode_mode=decode_mode,
         past_key_values=final_stream.past_key_values,
@@ -128,13 +128,13 @@ def recurrent_from_exact(
 
 
 @torch.no_grad()
-def prefill_recurrent(
+def prefill_live_feedback(
     model: MultiPassVariant,
     input_ids: torch.Tensor,
     *,
     passes: int,
     decode_mode: DecodeMode,
-) -> RecurrentState:
+) -> LiveFeedbackState:
     """Prefill K prompt passes, then collapse to one decode stream.
 
     In feedback mode, K>1 pairs the final-pass KV cache with memory from pass
@@ -148,8 +148,8 @@ def prefill_recurrent(
         raise ValueError(
             f"{model.variant_name} does not implement feedback decoding"
         )
-    return recurrent_from_exact(
-        prefill_exact(model, input_ids, passes=passes),
+    return live_feedback_from_exact(
+        prefill_exact_k_pass(model, input_ids, passes=passes),
         decode_mode=decode_mode,
     )
 
@@ -157,9 +157,9 @@ def prefill_recurrent(
 @torch.no_grad()
 def exact_decode_step(
     model: MultiPassVariant,
-    state: ExactIncrementalState,
+    state: ExactKPassState,
     token: torch.Tensor,
-) -> ExactIncrementalState:
+) -> ExactKPassState:
     """Consume one observed token while preserving exact K-pass semantics."""
     batch_size = state.next_token_logits.shape[0]
     _validate_token(token, batch_size)
@@ -216,7 +216,7 @@ def exact_decode_step(
     ).float()[:, -1, :]
     control = model.control_token_mask(token)[:, 0]
     logits = torch.where(control[:, None], state.next_token_logits, candidate_logits)
-    return ExactIncrementalState(
+    return ExactKPassState(
         prefill_passes=state.prefill_passes,
         streams=streams,
         next_token_logits=logits,
@@ -224,11 +224,11 @@ def exact_decode_step(
 
 
 @torch.no_grad()
-def recurrent_decode_step(
+def live_feedback_decode_step(
     model: MultiPassVariant,
-    state: RecurrentState,
+    state: LiveFeedbackState,
     token: torch.Tensor,
-) -> RecurrentState:
+) -> LiveFeedbackState:
     """Consume one observed token in the collapsed one-stream recurrence."""
     batch_size = state.next_token_logits.shape[0]
     _validate_token(token, batch_size)
@@ -258,7 +258,7 @@ def recurrent_decode_step(
     ).float()[:, -1, :]
     control = model.control_token_mask(token)[:, 0]
     logits = torch.where(control[:, None], state.next_token_logits, candidate_logits)
-    return RecurrentState(
+    return LiveFeedbackState(
         prefill_passes=state.prefill_passes,
         decode_mode=state.decode_mode,
         past_key_values=run.past_key_values,
@@ -276,15 +276,15 @@ def prefill(
     passes: int,
     mode: InferenceMode,
     decode_mode: DecodeMode | None = None,
-) -> ExactIncrementalState | RecurrentState:
-    if mode == "exact_incremental":
+) -> ExactKPassState | LiveFeedbackState:
+    if mode == "exact_k_pass":
         if decode_mode is not None:
             raise ValueError("decode_mode applies only to a collapsed decode stream")
-        return prefill_exact(model, input_ids, passes=passes)
-    if mode == "recurrent":
+        return prefill_exact_k_pass(model, input_ids, passes=passes)
+    if mode == "live_feedback":
         if decode_mode is None:
-            raise ValueError("recurrent prefill requires an explicit decode_mode")
-        return prefill_recurrent(
+            raise ValueError("live-feedback prefill requires an explicit decode_mode")
+        return prefill_live_feedback(
             model,
             input_ids,
             passes=passes,
@@ -296,11 +296,11 @@ def prefill(
 @torch.no_grad()
 def decode_step(
     model: MultiPassVariant,
-    state: ExactIncrementalState | RecurrentState,
+    state: ExactKPassState | LiveFeedbackState,
     token: torch.Tensor,
-) -> ExactIncrementalState | RecurrentState:
-    if isinstance(state, ExactIncrementalState):
+) -> ExactKPassState | LiveFeedbackState:
+    if isinstance(state, ExactKPassState):
         return exact_decode_step(model, state, token)
-    if isinstance(state, RecurrentState):
-        return recurrent_decode_step(model, state, token)
+    if isinstance(state, LiveFeedbackState):
+        return live_feedback_decode_step(model, state, token)
     raise TypeError(f"unsupported inference state {type(state)!r}")

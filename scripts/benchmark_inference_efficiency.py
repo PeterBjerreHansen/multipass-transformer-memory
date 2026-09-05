@@ -7,7 +7,7 @@ Token IDs are ordinary vocabulary IDs, so no memory-token/control-token path is
 implicitly included.  The output reports both raw timing curves and derived
 costs for the routine 64-block check and the roughly 2M-token validation split.
 
-The diagnostic loop mirrors ``evaluate_recurrent_continuation`` closely,
+The diagnostic loop mirrors ``evaluate_feedback_continuation`` closely,
 including its per-token loss, hidden-drift, cosine, and host-transfer work.
 That row estimates the combined continuation diagnostic; the feedback-only row
 isolates model-side cached recurrence. Neither measures full-block BOS-only NLL.
@@ -31,10 +31,10 @@ import torch.nn.functional as F
 from tiny_mistral_mptt.config import load_experiment_config
 from tiny_mistral_mptt.inference import (
     exact_decode_step,
-    prefill_exact,
-    prefill_recurrent,
-    recurrent_from_exact,
-    recurrent_decode_step,
+    prefill_exact_k_pass,
+    prefill_live_feedback,
+    live_feedback_from_exact,
+    live_feedback_decode_step,
 )
 from tiny_mistral_mptt.model_factory import load_variant_from_config
 from tiny_mistral_mptt.precision import autocast_context
@@ -43,11 +43,21 @@ from tiny_mistral_mptt.variants.multipass import MultiPassVariant
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIGS = (
+    "benchmarks/development/frozen_backbone_comparison/no_memory_adapter_one_site_100m.yaml",
     "benchmarks/development/frozen_backbone_comparison/recurrent_projected_residual_multipass_100m.yaml",
     "benchmarks/development/frozen_backbone_comparison/recurrent_recirculation_multipass_100m.yaml",
+    "benchmarks/development/frozen_backbone_comparison/dense_memory_attention_one_site_100m.yaml",
+    "benchmarks/development/frozen_backbone_comparison/no_memory_adapter_two_site_100m.yaml",
+    "benchmarks/development/frozen_backbone_comparison/recurrent_projected_residual_two_site_100m.yaml",
+    "benchmarks/development/frozen_backbone_comparison/recurrent_recirculation_two_site_100m.yaml",
     "benchmarks/development/frozen_backbone_comparison/dense_memory_attention_multipass_100m.yaml",
+    "benchmarks/development/frozen_backbone_comparison/strided_memory_attention_one_site_100m.yaml",
+    "benchmarks/development/frozen_backbone_comparison/dense_and_strided_memory_attention_one_site_100m.yaml",
     "benchmarks/development/frozen_backbone_comparison/strided_memory_attention_multipass_100m.yaml",
     "benchmarks/development/frozen_backbone_comparison/dense_and_strided_memory_attention_multipass_100m.yaml",
+    "benchmarks/development/frozen_backbone_comparison/strided_memory_attention_stride8_two_site_100m.yaml",
+    "benchmarks/development/frozen_backbone_comparison/strided_memory_attention_stride16_two_site_100m.yaml",
+    "benchmarks/development/frozen_backbone_comparison/strided_memory_attention_stride64_two_site_100m.yaml",
 )
 DEFAULT_PROMPT_LENGTHS = (1, 256)
 DEFAULT_HORIZONS = (1, 16, 64, 256, 512, 1024, 2047)
@@ -156,7 +166,7 @@ def _measure_prefill(
 ) -> Timing:
     def run():
         with _precision_context(device, precision):
-            return prefill_recurrent(
+            return prefill_live_feedback(
                 model,
                 prompt,
                 passes=passes,
@@ -188,7 +198,7 @@ def _decode_loop(
     for offset in range(measured_tokens):
         target = tokens[:, offset : offset + 1]
         if include_diagnostic_metrics:
-            # Keep this in lockstep with evaluate_recurrent_continuation. The
+            # Keep this in lockstep with evaluate_feedback_continuation. The
             # .cpu() calls deliberately retain the host-synchronization cost of
             # the current evaluator rather than hiding it from the benchmark.
             valid = ~model.control_token_mask(target)[:, 0]
@@ -221,7 +231,7 @@ def _decode_loop(
 
 
 def _standard_step(model: MultiPassVariant, state: Any, token: torch.Tensor):
-    return recurrent_decode_step(model, state, token)
+    return live_feedback_decode_step(model, state, token)
 
 
 def _exact_step(model: MultiPassVariant, state: Any, token: torch.Tensor):
@@ -232,7 +242,7 @@ def _diagnostic_step(model: MultiPassVariant, state: Any, token: torch.Tensor):
     exact, recurrent, vanilla = state
     return (
         exact_decode_step(model, exact, token),
-        recurrent_decode_step(model, recurrent, token),
+        live_feedback_decode_step(model, recurrent, token),
         exact_decode_step(model, vanilla, token),
     )
 
@@ -491,19 +501,19 @@ def _run_variant(
 
             def make_standard():
                 with _precision_context(device, precision):
-                    return prefill_recurrent(
+                    return prefill_live_feedback(
                         model, prompt, passes=1, decode_mode="standard"
                     )
 
             def make_feedback():
                 with _precision_context(device, precision):
-                    return prefill_recurrent(
+                    return prefill_live_feedback(
                         model, prompt, passes=4, decode_mode="feedback"
                     )
 
             def make_exact():
                 with _precision_context(device, precision):
-                    return prefill_exact(model, prompt, passes=4)
+                    return prefill_exact_k_pass(model, prompt, passes=4)
 
             for mode, make_state, step in (
                 ("standard_k1", make_standard, _standard_step),
@@ -537,9 +547,9 @@ def _run_variant(
 
             def make_diagnostic():
                 with _precision_context(device, precision):
-                    exact = prefill_exact(model, prompt, passes=4)
-                    recurrent = recurrent_from_exact(exact, decode_mode="feedback")
-                    vanilla = prefill_exact(model, prompt, passes=1)
+                    exact = prefill_exact_k_pass(model, prompt, passes=4)
+                    recurrent = live_feedback_from_exact(exact, decode_mode="feedback")
+                    vanilla = prefill_exact_k_pass(model, prompt, passes=1)
                     return exact, recurrent, vanilla
 
             torch.cuda.reset_peak_memory_stats(device)

@@ -26,7 +26,7 @@ def cache_next_position(past_key_values: KVCache) -> int:
 
 @dataclass(frozen=True)
 class PassStreamState:
-    """One causal pass stream used by exact incremental K-pass inference."""
+    """One causal stream retained by exact K-pass inference."""
 
     past_key_values: KVCache
     feedback_memory: FeedbackMemory
@@ -44,7 +44,7 @@ class PassStreamState:
 
 
 @dataclass(frozen=True)
-class ExactIncrementalState:
+class ExactKPassState:
     """State for exact cached inference with ``K`` parallel pass streams."""
 
     prefill_passes: int
@@ -75,7 +75,7 @@ class ExactIncrementalState:
 
 
 @dataclass(frozen=True)
-class RecurrentState:
+class LiveFeedbackState:
     """Collapsed one-stream state after a K-pass prompt prefill.
 
     ``prefill_passes`` describes only how the prompt state was constructed.

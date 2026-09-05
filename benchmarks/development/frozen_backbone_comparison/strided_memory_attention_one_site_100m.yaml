@@ -1,0 +1,45 @@
+variant: strided_memory_attention
+phase: A
+training_forward: parallel_multipass
+memory_window: 32
+memory_write_mode: strided
+memory_write_stride: 32
+memory_layers: [3]
+memory_position_encoding: rope
+memory_num_key_value_heads: 16
+model_dir: checkpoints/TinyMistral-248M-v3
+data_dir: data/dolmino/gpu_2048
+output_dir: benchmarks/development/frozen_backbone_comparison/results/strided_memory_attention_one_site_100m
+device: cuda
+dtype: float32
+autocast_dtype: bfloat16
+attention_backend: auto
+seed: 1337
+architecture_seed: 4242
+batch_size: 8
+grad_accum_steps: 4
+max_unique_tokens: 100007936
+learning_rate: 1.0e-6
+added_learning_rate: 3.0e-4
+lr_schedule: {type: constant}
+weight_decay: 1.0e-4
+grad_clip: 1.0
+pass_schedule:
+  - probabilities: {2: 0.9, 3: 0.1}
+ntp_pass_loss_weights_by_k:
+  2: [0.0, 1.0]
+  3: [0.0, 0.0, 1.0]
+train_log_every_tokens: 327680
+validation_forward: parallel_multipass
+eval_every_tokens: 3276800
+eval_passes: 4
+eval_batches: 64
+checkpoint_every_tokens: 3276800
+checkpoint_every_seconds: 900.0
+checkpoint_keep_last: 2
+snapshot_at_tokens: [3276800, 5013504, 10027008, 20021248, 50003968, 100007936]
+feedback_eval_at_tokens: [5013504, 20021248, 100007936]
+feedback_eval_max_blocks: 1
+feedback_eval_autocast_dtype: config
+resume_from: null
+init_from: null

@@ -7,6 +7,9 @@ from dataclasses import asdict
 from tiny_mistral.device import resolve_device
 from tiny_mistral_mptt.config import load_experiment_config
 from tiny_mistral_mptt.data.packed_dataset import load_packed_dataset_for_experiment
+from tiny_mistral_mptt.evaluation.feedback_continuation import (
+    evaluate_feedback_continuation,
+)
 from tiny_mistral_mptt.evaluation.provenance import (
     add_checkpoint_arguments,
     evaluation_provenance,
@@ -14,17 +17,19 @@ from tiny_mistral_mptt.evaluation.provenance import (
     render_or_write_json,
     seed_evaluation,
 )
-from tiny_mistral_mptt.evaluation.recurrent import evaluate_recurrent_continuation
+from tiny_mistral_mptt.evaluation.settings import (
+    add_execution_arguments,
+    resolve_evaluation_settings,
+)
 from tiny_mistral_mptt.model_factory import load_variant_from_config
-from tiny_mistral_mptt.evaluation.settings import add_execution_arguments, resolve_evaluation_settings
 from tiny_mistral_mptt.variants.multipass import MultiPassVariant
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Teacher-force evaluation continuations and compare exact cached "
-            "K-pass inference against collapsed one-stream recurrence."
+            "Teacher-force continuations and compare exact K-pass, "
+            "live-feedback, and standard K=1 inference."
         )
     )
     parser.add_argument("--config", required=True)
@@ -36,7 +41,10 @@ def main() -> None:
         type=int,
         nargs="+",
         default=None,
-        help="prompt-refinement depths; default: experiment eval_prefill_passes or eval_passes",
+        help=(
+            "prompt-refinement depths; default: experiment "
+            "eval_prefill_passes or eval_passes"
+        ),
     )
     parser.add_argument("--prompt-tokens", type=int, default=256)
     parser.add_argument("--continuation-tokens", type=int, default=256)
@@ -52,7 +60,9 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1234)
     args = parser.parse_args()
 
-    if args.prefill_passes is not None and any(passes < 1 for passes in args.prefill_passes):
+    if args.prefill_passes is not None and any(
+        passes < 1 for passes in args.prefill_passes
+    ):
         raise SystemExit("--prefill-passes values must be positive")
 
     seed_evaluation(args.seed)
@@ -60,9 +70,11 @@ def main() -> None:
     device = resolve_device(cfg.device if args.device is None else args.device)
     model = load_variant_from_config(cfg, device=device)
     if not isinstance(model, MultiPassVariant) or not model.supports_cached_feedback:
-        raise SystemExit("loaded variant does not implement recurrent memory inference")
+        raise SystemExit("loaded variant does not implement live-feedback inference")
 
-    settings = resolve_evaluation_settings(cfg, model, autocast_dtype=args.autocast_dtype)
+    settings = resolve_evaluation_settings(
+        cfg, model, autocast_dtype=args.autocast_dtype
+    )
     prefill_depths = args.prefill_passes or [settings.prefill_passes]
     weights = load_evaluation_weights(
         model=model,
@@ -82,7 +94,7 @@ def main() -> None:
     )
     results = []
     for passes in prefill_depths:
-        result = evaluate_recurrent_continuation(
+        result = evaluate_feedback_continuation(
             model,
             dataset,
             device=device,
@@ -96,8 +108,8 @@ def main() -> None:
         results.append(asdict(result))
 
     document = {
-        "schema_version": 2,
-        "evaluation_kind": "exact_vs_feedback_continuation_diagnostic",
+        "schema_version": 3,
+        "evaluation_kind": "exact_k_pass_vs_live_feedback_continuation",
         "variant": cfg.variant,
         "prefill_passes": list(prefill_depths),
         "provenance": evaluation_provenance(

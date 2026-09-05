@@ -52,6 +52,11 @@ its `results/` directory. Active feedback arms use whole-block parallel
 multipass training. The schema and comparison rules are
 defined below.
 
+An arm config may use one relative `extends` path to inherit a shared YAML
+fragment; child fields override inherited fields. Shared fragments use the
+`.yml` suffix, while runnable arm configs use `.yaml` and must appear in the
+study manifest. Absolute parents and inheritance cycles are rejected.
+
 Raw checkpoints and run telemetry remain ignored under `results/<arm>/`.
 Compact summaries may be tracked beside them when they are needed for a paper.
 

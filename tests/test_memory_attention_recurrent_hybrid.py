@@ -5,8 +5,11 @@ from conftest import micro_config
 from tiny_mistral.modeling import MistralForCausalLM
 from tiny_mistral_mptt.feedback import HybridFeedbackState, HybridPassSource
 from tiny_mistral_mptt.inference import (
-    exact_decode_step, prefill_exact, prefill_recurrent,
-    recurrent_decode_step, recurrent_from_exact,
+    exact_decode_step,
+    live_feedback_decode_step,
+    live_feedback_from_exact,
+    prefill_exact_k_pass,
+    prefill_live_feedback,
 )
 from tiny_mistral_mptt.model_factory import build_variant
 from tiny_mistral_mptt.training.phases import configure_phase
@@ -108,7 +111,7 @@ def test_phase_a_trains_attention_reader_and_recurrent_merger(merger):
 @pytest.mark.parametrize("merger", ["projected_residual", "recirculation"])
 @pytest.mark.parametrize("layers", [(0,), (1,), (0, 1, 2)])
 @pytest.mark.parametrize("mode", ["periodic", "memory_token"])
-def test_exact_incremental_matches_full_prefix(mode, merger, layers):
+def test_cached_exact_k_pass_matches_full_prefix(mode, merger, layers):
     model = make_hybrid(mode=mode, merger=merger, layers=layers).eval()
     with torch.no_grad():
         model.writer.proj.weight.add_(0.03 * torch.randn_like(model.writer.proj.weight))
@@ -126,7 +129,7 @@ def test_exact_incremental_matches_full_prefix(mode, merger, layers):
 
     prompt_length = 4
     with torch.no_grad():
-        state = prefill_exact(model, ids[:, :prompt_length], passes=2)
+        state = prefill_exact_k_pass(model, ids[:, :prompt_length], passes=2)
         for position in range(prompt_length, ids.shape[1] + 1):
             prefix = ids[:, :position]
             full = model.compute_passes(prefix, passes=2)
@@ -168,19 +171,28 @@ def test_hybrid_k1_conversion_and_feedback_keep_emitted_state(merger, pattern):
         ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
         if pattern == "memory_token":
             ids = torch.tensor([[1, 2, model.memory_token_id, 3, 4, model.memory_token_id, 5]])
-        state = prefill_exact(model, ids[:, :1], passes=1)
+        state = prefill_exact_k_pass(model, ids[:, :1], passes=1)
         for position in range(1, ids.shape[1] - 1):
             state = exact_decode_step(model, state, ids[:, position:position + 1])
-            converted = recurrent_from_exact(state, decode_mode="feedback")
-            fresh = prefill_recurrent(model, ids[:, :position + 1], passes=1, decode_mode="feedback")
+            converted = live_feedback_from_exact(state, decode_mode="feedback")
+            fresh = prefill_live_feedback(
+                model,
+                ids[:, :position + 1],
+                passes=1,
+                decode_mode="feedback",
+            )
             torch.testing.assert_close(
                 converted.feedback_memory.recurrent_memory, fresh.feedback_memory.recurrent_memory,
                 atol=8e-5, rtol=8e-5,
             )
             next_token = ids[:, position + 1:position + 2]
             torch.testing.assert_close(
-                recurrent_decode_step(model, converted, next_token).next_token_logits,
-                recurrent_decode_step(model, fresh, next_token).next_token_logits, atol=8e-5, rtol=8e-5,
+                live_feedback_decode_step(
+                    model, converted, next_token
+                ).next_token_logits,
+                live_feedback_decode_step(model, fresh, next_token).next_token_logits,
+                atol=8e-5,
+                rtol=8e-5,
             )
 
 

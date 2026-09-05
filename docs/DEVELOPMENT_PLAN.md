@@ -1,192 +1,326 @@
-# Development plan
+# Staged implementation plan
 
-Updated 2026-09-04. This plan records the agreed frozen-study settings and next
-tasks. It does not authorize paid runs or select an unfrozen protocol on the
-user's behalf.
+Updated 2026-09-05. This is the implementation sequence for the agreed
+[research plan](RESEARCH_PLAN.md). Current behavior remains defined by the
+architecture, training and evaluation contracts until a stage below is complete.
+This plan does not authorize paid cloud runs.
 
-## Current position
+Implementation status: Stages 0–6 are implemented in the working tree. The
+stride ablation was fixed before results at two sites with physical strides
+`C = 8, 16, 32, 64`, memory capacity 32, and corresponding effective spans
+of 256, 512, 1,024, and 2,048 physical tokens. Stage 7 remains the next stage;
+its target-GPU checks have not been run.
 
-The code supports the intended comparison, but the previous materialized
-dataset and GPU trajectories were discarded after a tokenizer-padding audit.
-The program is reset to a clean-artifact gate: fix and test preparation, build
-and verify the new 2048-token artifact, then repeat qualification before any
-scientific frozen run.
+## Design constraints
 
-- Active arms: two late-memory recurrent mergers (`projected_residual` and
-  adaptive `recirculation`), plus dense, strided and dense-and-strided Memory Attention.
-- All use preceding-token/previous-pass memory. The recurrent pair shares the
-  writer rule and read location. Paper replay/BPTT and the 1024 studies are gone.
-- All three attention arms read at `[3, 7]`; the recurrent arms read at `[3]`.
-  All descriptive attention names resolve to one `memory_attention` implementation.
-  Their pattern settings and public names remain in config metadata.
-  The separate non-memory control is `strided_self_attention`.
-  Removed named hybrids are rejected; optional late recurrence is configured with
-  `recurrent_merger` and `recurrent_layers`, without adding a study arm.
-- The frozen configs use 2048-token blocks, K=2/3 final-pass training, K=4
-  routine validation, and a four-rate qualification grid for each model.
-  Qualification must be repeated on the clean artifact; earlier `1e-3`
-  selections are retained only as historical observations.
-- Shared evaluators record precision, scored targets, subset and weight identity.
-  BOS-only feedback NLL is available standalone and after selected snapshots;
-  it reports full and aligned target sets. All five 100M configs enable one full
-  prefix block at the existing approximately 5M, 20M and 100M snapshots:
-  `[5013504, 20021248, 100007936]`. The LR sweep leaves feedback evaluation off.
-- Planned snapshots and rolling recovery checkpoints are separate. Publication,
-  pending feedback checks and report/journal retries have recovery tests.
-- The earlier A6000 reports measure four older arms and extrapolate cached
-  continuations. They do not measure the new full-block BOS NLL path or both
-  new recurrent mergers. Historical scientific results are not results for the
-  restructured study.
+- Preserve the explicit distinction between `exact_k_pass`, `live_feedback` and
+  `standard_k1` execution.
+- Keep the existing `run_memory_decoder(..., after_attention=...)` seam for
+  architecture-specific reads. Do not force native mergers through a common
+  mathematical implementation.
+- Put shared execution and diagnostic policy behind one interface instead of
+  duplicating it in each command or variant.
+- Keep diagnostics separate from routine validation and training control flow.
+- Derive comparison settings from runnable configs and study manifests; do not
+  maintain a second hidden source of experiment defaults.
+- Do not add dummy parameters solely to satisfy parameter matching.
+- Preserve checkpoint provenance and explicit failure on incompatible configs.
 
-The [cleanup ledger](CLEANUP_STATUS.md) records the original findings and their
-resolution. Architecture and evaluation contracts remain in
-[RECURRENT_MEMORY.md](RECURRENT_MEMORY.md) and
-[evaluation/README.md](../evaluation/README.md); do not duplicate their definitions
-in new study-specific evaluators.
+## Stage 0: freeze the plan and inventory the delta
 
-## Recommended sequence
+**Work**
 
-| Priority | Work package | Deliverable / completion check |
-| --- | --- | --- |
-| 1 | Simple checks and ablations | Existing pass-depth and single-transition real/zero/mismatched-memory checks; no new diagnostic framework or token-zero evaluation gate |
-| 2 | Target-GPU pre-training check | Actual five-arm optimizer/validation fit, directly measured BOS NLL time, and an interruption/resume check before qualification training |
-| 3 | Frozen per-model LR selection | The existing 20-arm qualification, a documented selection for each model, then resolved long-run configs |
-| 4 | Grill the unfrozen plan, then specify and qualify it | An agreed protocol, separate study and per-model backbone/added-parameter sweep, starting from pretrained weights |
-| 5 | Comparison reporting | Snapshot-aligned frozen/unfrozen reports with explicit target and computation differences |
+1. Record the research contract and canonical vocabulary.
+2. Compare current configs with the required one-site and two-site matrix.
+3. Produce a parameter/FLOP inventory for every current reader and merger.
+4. Identify serialized names and scripts affected by the feedback terminology
+   change and legacy Recirculation archival.
 
-Specify the unfrozen protocol while the short frozen qualification is underway.
-Do not make it wait for completion of every 100M frozen trajectory. Its weights,
-optimizer and learning-rate choices must nevertheless be independent.
+**Completion check**
 
-### 1. Start with simple checks and ablations
+- The documentation map links the research and implementation plans.
+- The inventory identifies the width/rank changes needed to place every arm
+  within the agreed comparison budget.
+- No runnable config is changed before the inventory is reviewed.
 
-Use the existing shared evaluators first. Pass-depth evaluation already accepts
-arbitrary K; the active experiment retains K=1–4 NLL. At an early trained
-snapshot, run `evaluate_memory_interventions.py` on a small fixed subset to
-compare real, zeroed and mismatched memory for the K=1-to-K=2 transition. Use
-the same targets and precision for every condition and arm. This is a simple
-memory-use check, not a K=4 intervention or a separately trained ablation arm.
+## Stage 1: make execution semantics explicit
 
-Check finite loss/gradients and whether training improves held-out NLL. Do not
-introduce a hand-chosen quality threshold or require a new diagnostic framework
-before training. Dedicated token-zero/initial-baseline evaluation is deferred
-by user decision; the existing standalone option remains available. Compare
-absolute trained-checkpoint NLL, without claiming improvement from an unmeasured
-initial loss or assuming initialization effects have been proven to disappear.
+**Work**
 
-Deeper analysis follows once training works or a simple check reveals a problem.
-Keep that future work in the shared evaluation module: explicit pass depth and
-transition selection, matching-depth mismatch donors, a separate merger-bypass
-control, and optional writer/merger scales. K=4 must remain an experiment default,
-not an implementation limit. Zero memory is not merger bypass: adaptive
-recirculation can still rescale the destination with zero source.
+1. Change `MultiPassVariant.forward()` and `.generate()` so ambiguous generic
+   calls fail with an explanation of the explicit scoring and decoding paths.
+2. Rename generic recurrent-continuation modules, commands, result fields and
+   documentation to Live Feedback terminology.
+3. Use `exact_k_pass`, `live_feedback` and `standard_k1` consistently in new
+   result schemas. Keep compatibility translation only at serialized input
+   seams where existing artifacts require it.
+4. Remove the old middle-layer `RecirculationVariant` from active study/factory
+   choices and mark its retained implementation and records as legacy. Do not
+   rewrite historical outputs.
 
-Live-feedback interventions are also deferred. If added, record prompt kind,
-prefill depth, continuation horizon and intervention timing independently;
-parallel-pass semantics must not be applied to feedback continuation silently.
+**Completion check**
 
-### 2. Pre-training check on the actual execution path
+- Generic `forward()` and `generate()` cannot silently evaluate the vanilla
+  backbone for a feedback variant.
+- The LM-evaluation adapter and standalone commands still reach the intended
+  explicit execution mode.
+- Naming tests reject ambiguous new `recurrent` labels for generic feedback
+  execution while permitting mechanism-specific recurrent names.
 
-Follow the [cloud pre-training checklist](CLOUD.md#pre-training-checks) before LR qualification.
-It includes real optimizer updates, validation, production BOS timing and snapshot/resume.
-The existing forward/backward-only check is insufficient.
+## Stage 2: make stride origin explicit and test it
 
-Keep preflight outputs separate. Do not reuse their weights for scientific runs.
-The production BOS evaluator still needs a timing case in the efficiency script.
-Do not substitute synthetic cached-continuation extrapolations for that measurement.
+**Work**
 
-The main-run feedback schedule is already selected in the
-[frozen protocol](../benchmarks/development/frozen_backbone_comparison/README.md).
-Precision currently inherits BF16. Keep any subsequently agreed precision change
-explicit and common across arms. No full-split feedback campaign is implied.
-Unfrozen hardware checks follow only after that separate protocol is agreed.
+1. Preserve the existing Strided Memory Attention rule: zero-based physical
+   sequence position `t` writes when `(t + 1) % C == 0`.
+2. Make full-sequence, cached prefill and single-token append paths use that same
+   physical-position origin for every configured stride.
+3. Treat the BOS-only evaluator's synthetic BOS as a real physical context
+   position under ordinary Live Feedback. Record that this shifts the stride
+   phase of later data tokens relative to an unprefixed block.
+4. Remove or qualify metadata that implies the synthetic BOS leaves Strided
+   Memory Attention cadence unchanged. If a data-phase-aligned diagnostic is
+   later useful, expose it as a separate evaluation policy rather than changing
+   ordinary Live Feedback semantics.
+5. Verify dense behavior remains unchanged.
 
-### 3. Repeat frozen qualification and run the comparison
+**Completion check**
 
-Run the five-model, four-rate, 5,013,504-token qualification only after the
-clean artifact passes verification. Select each constant added-module LR using
-K=4 validation NLL and basic stability evidence, with the equal tuning budget
-recorded in the results. Do not reuse the earlier `1e-3` observations or old
-middle-layer/1024 selections as qualification of the new artifact.
+- Parameterized tests cover several strides. Without a prefix, writes occur at
+  data indices `C-1, 2C-1, ...`; after one synthetic BOS, they occur at data
+  indices `C-2, 2C-2, ...` for `C > 1`.
+- Full-sequence and cached paths agree on write triggers, retained positions and
+  logits.
+- Evaluation provenance states the stride origin and whether a synthetic prefix
+  changes the data-token phase.
+- Existing strict-past and position-zero invariants continue to pass.
 
-After selection, update the five long-run configs and launch one fresh trajectory
-per arm with durable snapshots, the same data and routine target set. An
-individual 5M qualification trajectory is not the first segment of the final
-100M run.
+## Stage 3: add the No-memory Adapter and budget controls
 
-### 4. Define the fresh unfrozen experiment
+**Work**
 
-**Required pre-experiment review: hold a "grill me" session with the user before
-locking the unfrozen protocol or launching its qualification/long trajectories.**
-Status: pending; do not treat the decision list below as already settled.
-Use the grilling skill's dependency-ordered question rounds: establish facts
-from the repo, ask the currently decidable questions with recommendations, and
-wait for answers before dependent questions. Record the agreed decisions and
-obtain confirmation of the shared understanding before implementing the protocol.
-This is a planning note, not a request to start that session or schedule an automation now.
+1. Implement a No-memory Adapter through the existing post-self-attention,
+   pre-MLP decoder seam.
+2. Activate it only on feedback passes. It may consume the current residual
+   state but no earlier-pass or earlier-token Feedback Record.
+3. Support explicit one-site `[3]` and two-site `[3, 7]` configurations.
+4. Make only the necessary controller, projection, adapter-rank or memory-reader
+   dimensions configurable for real parameter matching.
+5. Generate a checked budget table from instantiated models and the FLOP
+   estimator. Match added parameters within approximately 10 percent inside
+   each site-count group and keep estimated FLOPs close enough for overlapping
+   compute curves.
+6. Prefer the smallest width adjustment that preserves each native mechanism.
+   If exact matching would require a qualitatively different architecture,
+   retain the nearest reasonable configuration and disclose the residual gap.
 
-Use a new study/output directory and the common pretrained checkpoint. Never
-initialize it from a frozen comparison snapshot. The existing integrated
-`freeze_pretrained_until_tokens` mechanism can provide a brief warmup without
-starting from a different trajectory or resetting the added-group optimizer.
+**Completion check**
 
-Decisions required before writing runnable configs:
+- With fixed inputs, the adapter's output is independent of prior-pass states.
+- Pass 1 remains the ordinary backbone path.
+- One-site and two-site parameter/FLOP tables are reproducible from configs.
+- All architecture-added parameters receive gradients in their intended native
+  initialization schedule.
 
-1. Total linguistic-token budget, artifact/splits and effective optimizer batch.
-2. No frozen warmup or one explicit warmup length shared under a stated policy.
-3. Pass schedule and loss weights. A reasonable first proposal is to keep the
-   frozen K=2/3 final-pass objective for comparability, but full-model training
-   may benefit from a different objective; decide rather than inherit it silently.
-4. Per-model tuning budget and candidate backbone/added-parameter LR pairs.
-   The frozen optimal added LR is not automatically the unfrozen optimum.
-5. Controls and reporting claims. A separately trained K=1 vanilla arm would
-   test gains beyond ordinary backbone adaptation; same-checkpoint K=1 scores
-   are useful but are not a substitute. Adding that arm needs a protocol decision.
-6. Snapshot/feedback milestones, downstream evaluation budget and stopping/
-   failure criteria. Match target
-   sets, precision and artifacts; always record actual threshold-crossing counts.
+## Stage 4: deepen the intervention diagnostic
 
-Use the same evaluation module and independent prefill/decode parameters.
-Downstream tasks retain actual-context K=4 prefill with ordinary feedback.
-No new merger candidates or paper-replay implementation are proposed.
+The evaluation module owns this behavior; the command remains a thin adapter
+for loading inputs and writing results.
 
-### 5. Report comparisons without hiding differences
+**Work**
 
-Read arm IDs from study manifests and join results by snapshot identity and
-actual token/optimizer counters. Produce NLL curves against tokens, estimated
-FLOPs and training-only time, with end-to-end time and peak memory separately.
-Report full-block BOS NLL and aligned-target BOS NLL separately from parallel K=4
-NLL; equal target IDs still do not imply identical conditioning.
+1. Add a shared feedback-transition interface that can execute a real, zero,
+   mismatched or bypassed feedback condition without evaluator-specific access
+   to merger internals.
+2. Define true bypass as the same decoder execution with the memory injection
+   omitted, not as a zero-valued source passed through the merger.
+3. Make the target transition configurable. For transition into pass `p`, build
+   passes `1..p-1` normally, apply one intervention, and score pass `p`.
+4. For mismatched memory at depth `p`, obtain the donor from a different block
+   processed normally through pass `p-1`.
+5. Run transitions into passes 2, 3 and 4 without adding them to routine
+   validation.
+6. Continue reporting NLL, target counts and hidden deltas per source and
+   condition.
 
-Check evaluation compatibility before combining runs: data/split/prefix,
-precision, policy, target counts and checkpoint identity. Make changed settings
-visible rather than pooling them. Final quality claims require appropriate
-independent evaluation and more evidence than a single feedback block; preserve
-the historical split-overlap caveats.
+**Completion check**
 
-## Optional optimization, after measuring cost
+- Adaptive recirculation with zero memory can differ from true bypass, and a
+  focused test demonstrates that the evaluator records both conditions.
+- Every active arm supports all four conditions at each transition through K=4.
+- Donor depth, target transition, source block and precision are recorded in the
+  result provenance.
 
-Multi-block parallel validation batching remains useful but is not a prerequisite
-for the next experiment. Add a real batch-size parameter distinct from
-`max_blocks`/`eval_batches`, retaining a serial reference. Test batch sizes 1 and
-larger on the same subset, including final partial batches, mixed sources and
-MEM labels, with explicit numerical tolerances.
+## Stage 5: extend exact-versus-Live-Feedback fidelity
 
-If feedback scoring is the bottleneck, reduce per-token host synchronization in
-the shared scorer and benchmark the actual evaluator again. Preserve FP32 loss
-accumulation semantics, bounded device memory, exact target counts and prompt
-signal handling. Do not optimize by silently shortening the horizon or changing
-the inference computation.
+**Work**
 
-Keep this work behind the existing evaluation module's interface, shared by the
-trainer and standalone commands. Avoid a new registry, worker framework, named
-profile system or parallel study-specific evaluator unless a concrete need appears.
+1. Extend the existing continuation diagnostic rather than ordinary feedback
+   NLL validation.
+2. Always report teacher-forced, per-offset and cumulative-horizon:
 
-## Immediate next task
+   - exact, Live Feedback and standard-K1 NLL;
+   - `KL(exact || live_feedback)` in FP32;
+   - top-1 agreement;
+   - hidden-state RMS and cosine drift; and
+   - retained K=4 NLL improvement when its denominator is positive.
 
-Regenerate and verify the clean `gpu_2048` artifact, then run the actual-GPU
-pre-training check and repeat the per-model LR qualification. Do not resume the
-discarded trajectories. The production BOS evaluator still needs a dedicated
-timing check; defer token-zero evaluation and expanded diagnostics. Hold the
-required grill session separately before implementing or launching the unfrozen
-protocol.
+3. Keep free-running stability optional because it has a different cost and
+   stochastic contract. Record decoding parameters when enabled.
+4. Preserve same-prefill initialization so divergence begins only after the
+   shared exact prefill state.
+
+**Completion check**
+
+- The first continuation prediction agrees where exact and Live Feedback are
+  defined to share state.
+- Metrics have explicit target counts at every offset and horizon.
+- Identical logits produce zero KL and complete top-1 agreement in reference
+  tests.
+- No binary fidelity threshold is embedded in evaluation or training control.
+
+## Stage 6: materialize the wiring studies
+
+**Work**
+
+1. Replace the current unequal-site frozen study with two internally matched
+   study groups:
+
+   | Group | Sites | Arms |
+   | --- | --- | --- |
+   | One-site dense | `[3]` | No-memory, projected residual, Recirculation-inspired, dense attention |
+   | Two-site dense | `[3, 7]` | No-memory, projected residual, Recirculation-inspired, dense attention |
+
+2. Preserve the agreed 100M-token frozen-backbone protocol, native
+   initialization, per-microbatch 90/10 K=2/K=3 sampling and final-pass loss.
+3. Apply the same predefined LR grid to every newly parameterized arm. Do not
+   search additional architecture choices after observing full-run results.
+4. Add one-site and two-site Strided Memory Attention only after the dense groups
+   pass preflight; add Dense-and-strided Memory Attention afterward.
+5. Preserve the planned stride-length sub-study. Choose its site-count group
+   before looking at stride results, then vary only `memory_write_stride` while
+   holding memory capacity, parameterization, data and training schedule fixed.
+6. Keep preflight, qualification and scientific trajectories in separate output
+   directories. A qualification checkpoint is not the beginning of a 100M run.
+
+**Completion check**
+
+- Study verification proves common checkpoint, data, token order, target set,
+  precision, snapshots and site count within each group.
+- Generated manifests record parameters, estimated FLOPs, K sampling and native
+  initialization for every arm.
+- Stride-ablation manifests also record physical write counts and effective
+  memory span for every tested stride.
+- Config-backed documentation contains no obsolete five-arm or unequal-site
+  frozen protocol.
+
+## Stage 7: execute correctness and target-GPU preflight
+
+**Work**
+
+1. Run the full test suite.
+2. Run finite-loss and gradient smoke tests for every arm and site count.
+3. Compare cached and full-sequence exact K-pass outputs.
+4. Run small real/zero/mismatch/bypass and exact-versus-live diagnostics.
+5. Benchmark complete optimizer updates, validation, snapshots and resume on the
+   target GPU.
+6. Verify interruption and exact recovery before any long trajectory.
+
+**Completion check**
+
+- No arm silently falls back to vanilla execution.
+- All trainable groups update and all frozen groups remain unchanged.
+- Diagnostics contain finite values, exact counts and complete provenance.
+- Measured memory fits with the selected batch/accumulation configuration.
+- A projected time and cost exists for qualification and 100M runs.
+
+## Stage 8: qualify and run the frozen wiring experiment
+
+**Work**
+
+1. Run equal-budget LR qualification for the dense one-site and two-site groups.
+2. Lock one LR per arm using held-out NLL and basic numerical stability.
+3. Launch fresh 100M trajectories for the dense groups.
+4. Inspect normal validation first, then run the separate intervention and
+   fidelity diagnostics at selected snapshots.
+5. Run the strided and dense-and-strided extensions in the agreed order.
+6. Produce curves against unique tokens, estimated FLOPs and measured time.
+7. Replicate only decisive finalists after the pipeline and selection policy are
+   stable.
+
+**Completion check**
+
+- Every plotted point resolves to a checkpoint and study manifest.
+- One-site and two-site comparisons are never pooled as if site count were held
+  constant.
+- Parallel K=4, Live Feedback and standard K=1 remain separately labelled.
+- Intervention results are diagnostics, not routine stopping criteria.
+
+## Stage 9: specify and preflight the full-model scaling study
+
+**Work**
+
+1. Create a new study and output root. Initialize every arm from the common
+   pretrained checkpoint, never from wiring weights.
+2. Select and lock dense attention, the strongest sparse/multiresolution
+   attention arm, the strongest fixed-route arm, No-memory Adapter and vanilla.
+3. Unfreeze the entire backbone and all added parameters from token zero.
+4. Retain the locked 90/10 K schedule and final-pass loss unless a separately
+   approved objective experiment changes them.
+5. Materialize one common approximately one-billion-token corpus. Feedback arms
+   traverse it once; vanilla deterministically cycles the same blocks until its
+   cumulative estimated FLOPs match.
+6. Record unique tokens and token presentations independently.
+7. Re-estimate full-model training FLOPs and benchmark measured throughput; the
+   earlier universal frozen-backward estimate is not sufficient.
+8. Verify snapshots and exact resume, then project per-arm runtime and cost.
+   Stay single-device if acceptable; add distributed execution only if the
+   measured projection requires it.
+
+**Completion check**
+
+- Finalists and selection evidence are recorded before long configs are locked.
+- Vanilla receives no additional unique corpus data during its compute-matched
+  tail.
+- Equal-data and equal-compute comparisons both have overlapping curve support.
+- Reporting language says small parameter overhead, not trainable-parameter
+  efficiency, for the fully unfrozen study.
+
+## Stage 10: run and report the scaling study
+
+**Work**
+
+1. Launch fresh full-model trajectories only after Stage 9 preflight.
+2. Evaluate the same standard-K1, parallel-K4 and Live-Feedback estimands at
+   aligned checkpoints.
+3. Report quality against unique tokens, token presentations, estimated FLOPs,
+   training-only time and end-to-end time.
+4. Report total, added and optimized parameters, optimizer-state memory and peak
+   device memory.
+5. Treat Live Feedback failure despite parallel K=4 gains as failure of the
+   training surrogate for the intended deployed model.
+6. Keep any prefix-mixed or Live-Feedback-aware training follow-up in a new,
+   explicitly labelled study.
+
+**Completion check**
+
+- Equal-data and equal-compute claims use the corresponding checkpoints rather
+  than endpoint-only comparisons.
+- Results from different target sets, precisions or execution modes are not
+  pooled.
+- Scientific wording remains within the limits in the research plan.
+
+## Deferred work
+
+- Faithful FBT, T²MLR or published Recirculation reproduction.
+- A looped-transformer literature baseline.
+- Synthetic state-tracking tasks.
+- Intermediate-pass auxiliary losses or a different K mixture.
+- Live-Feedback-aware training and prefix mixing.
+- Broad injection-layer searches.
+- Multi-device training before measured single-device need.
+
+## Immediate next stage
+
+Run Stage 7's correctness and target-GPU preflight. Do not launch qualification
+or paid scientific runs until its completion checks pass.

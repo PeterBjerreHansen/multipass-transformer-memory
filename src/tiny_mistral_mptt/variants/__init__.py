@@ -2,7 +2,7 @@ from .base import ExperimentalVariant, TrainOutput
 from .fbt import FBTVariant
 from .memory_add import MemoryAddVariant
 from .multipass import HiddenRun, MultiPassResult, MultiPassVariant, PassResult, shift_previous_hidden
-from .recirculation import RecirculationVariant
+from .no_memory_adapter import NoMemoryAdapterVariant
 from .recurrent_memory import RecurrentMemoryVariant
 from .memory_attention import (
     MemoryAttentionBatch,
@@ -25,7 +25,7 @@ __all__ = [
     "MultiPassResult",
     "MultiPassVariant",
     "PassResult",
-    "RecirculationVariant",
+    "NoMemoryAdapterVariant",
     "RecurrentMemoryVariant",
     "MemoryAttentionBatch",
     "MemoryAttentionReader",

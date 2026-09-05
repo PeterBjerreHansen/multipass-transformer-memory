@@ -1,4 +1,4 @@
-# Attention vs. Recurrence in Multi-Pass Transformers
+# Distributed Feedback Memory for Multi-Pass Transformers
 
 This repository compares feedback memory mechanisms retrofitted into TinyMistral.
 Tokens read strictly earlier positions. They never read their own same-position feedback state.
@@ -8,14 +8,15 @@ Tokens read strictly earlier positions. They never read their own same-position 
 The two active studies are planned, not GPU-qualified or locked:
 
 1. [LR qualification](benchmarks/development/frozen_backbone_lr_qualification/README.md):
-   five mechanisms, four added-parameter learning rates, about 5M tokens per run.
+   four primary mechanisms plus the two attention-layout extensions at one and
+   two sites, each with the same four-rate grid and about 5M tokens per run.
 2. [Frozen comparison](benchmarks/development/frozen_backbone_comparison/README.md):
-   five fresh 100M-token runs with the selected rates.
+   separate matched one-site and two-site dense groups, followed by predeclared
+   attention-layout and stride extensions.
 
-The arms are two recurrent mergers—projected residual and adaptive recirculation—
-plus dense, strided and dense-and-strided Memory Attention.
-All use a late memory writer. The recurrent arms read at layer 3.
-The attention arms read at layers 3 and 7. Layer indices are zero-based.
+Each dense group contains a No-memory Adapter, projected-residual fixed-route
+feedback, Recirculation-inspired fixed-route feedback, and Dense Memory
+Attention. All use a late writer. Sites are `[3]` or `[3, 7]`; groups are not pooled.
 
 The backbone stays frozen throughout these runs. Training uses 2048-token blocks
 and K=2/K=3 final-pass loss. Routine validation uses K=4 and retains per-pass scores.
@@ -24,7 +25,8 @@ The LR sweep leaves feedback checks off. See the study pages for exact counts an
 
 The runner does not select learning rates, run full-split validation, or execute downstream suites automatically.
 Main-run learning rates remain provisional. GPU optimizer, validation and recovery checks are still pending.
-Start with simple memory ablations. Dedicated initial-baseline evaluation and deeper diagnostics are deferred.
+Pass-indexed memory interventions and exact-versus-Live-Feedback diagnostics
+are implemented separately from routine validation.
 
 The future unfrozen experiment must start fresh from the pretrained checkpoint.
 It needs a separate protocol and LR qualification, preceded by the requested grill session.

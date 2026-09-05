@@ -1,18 +1,18 @@
 from .lm_eval_adapter import make_lm_eval_adapter
 from .nll import NLLResult, evaluate_nll
-from .recurrent import (
-    RecurrentEvaluationResult,
-    RecurrentHorizonResult,
+from .feedback_continuation import (
+    FeedbackEvaluationResult,
+    FeedbackHorizonResult,
     default_horizons,
-    evaluate_recurrent_continuation,
+    evaluate_feedback_continuation,
 )
 
 __all__ = [
     "NLLResult",
-    "RecurrentEvaluationResult",
-    "RecurrentHorizonResult",
+    "FeedbackEvaluationResult",
+    "FeedbackHorizonResult",
     "default_horizons",
     "evaluate_nll",
-    "evaluate_recurrent_continuation",
+    "evaluate_feedback_continuation",
     "make_lm_eval_adapter",
 ]

@@ -7,7 +7,10 @@ from conftest import micro_config
 from tiny_mistral.modeling import MistralForCausalLM
 from tiny_mistral_mptt.config import ExperimentConfig
 from tiny_mistral_mptt.model_factory import build_variant
-from tiny_mistral_mptt.inference.multipass import prefill_exact, exact_decode_step
+from tiny_mistral_mptt.inference.multipass import (
+    exact_decode_step,
+    prefill_exact_k_pass,
+)
 from tiny_mistral_mptt.training.phases import configure_phase
 from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionWriter
 from tiny_mistral_mptt.variants.memory_modules import MemoryWriter
@@ -122,7 +125,7 @@ def test_cached_fixed_k_matches_full_recomputation_after_reader_and_writer_updat
     with torch.no_grad():
         variant.writer.proj.weight.normal_(std=0.1)
         ids = torch.tensor([[1, 2, 3, 4, 5]])[:, :prompt_length]
-        state = prefill_exact(variant, ids, passes=4)
+        state = prefill_exact_k_pass(variant, ids, passes=4)
         for value in [6, 7, 8]:
             token = torch.tensor([[value]])
             state = exact_decode_step(variant, state, token)
@@ -200,5 +203,12 @@ def test_shared_intervention_diagnostic_accepts_both_mergers(merger):
     activate(model)
     result = evaluate_memory_interventions(model, Dataset(), device="cpu", max_blocks=1)
     assert result["baseline_pass1"]["predicted_tokens"] == 4
-    for condition in ("zero_memory", "mismatched_memory"):
-        assert result["real_memory"]["nll"] != result[condition]["nll"]
+    assert set(result["transitions"]) == {"2", "3", "4"}
+    for transition in result["transitions"].values():
+        conditions = transition["conditions"]
+        for condition in ("zero_memory", "mismatched_memory"):
+            assert conditions["real_memory"]["nll"] != conditions[condition]["nll"]
+        assert conditions["true_bypass"]["predicted_tokens"] == 4
+    if merger == "recirculation":
+        conditions = result["transitions"]["2"]["conditions"]
+        assert conditions["zero_memory"]["nll"] != conditions["true_bypass"]["nll"]

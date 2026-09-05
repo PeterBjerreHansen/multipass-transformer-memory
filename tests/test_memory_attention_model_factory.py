@@ -10,7 +10,6 @@ from tiny_mistral_mptt.variants import (
     StridedSelfAttentionVariant,
     SwaTransformerVariant,
 )
-from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
 
 
 def backbone():
@@ -177,30 +176,17 @@ def test_factory_requires_memory_token_visibility_explicitly():
         )
 
 
-def test_factory_builds_recirculation_with_explicit_layer_contract():
+def test_factory_rejects_archived_middle_layer_recirculation():
     two_layer_backbone = MistralForCausalLM(
         micro_config(num_hidden_layers=2), attention_backend="reference"
     )
-    model = build_variant(
-        "recirculation",
-        two_layer_backbone,
-        recirculation_source_layer=1,
-        recirculation_destination_layer=0,
-    )
-    assert isinstance(model, RecirculationVariant)
-
-    adaptive = build_variant(
-        "recirculation",
-        MistralForCausalLM(
-            micro_config(num_hidden_layers=2), attention_backend="reference"
-        ),
-        recirculation_source_layer=1,
-        recirculation_destination_layer=0,
-        recirculation_mode="adaptive",
-    )
-    assert isinstance(adaptive, RecirculationVariant)
-    assert adaptive.mode == "adaptive"
-    assert list(adaptive.added_parameters())
+    with pytest.raises(ValueError, match="archived"):
+        build_variant(
+            "recirculation",
+            two_layer_backbone,
+            recirculation_source_layer=1,
+            recirculation_destination_layer=0,
+        )
 
 
 def test_factory_builds_optional_late_recurrent_memory_hybrid():

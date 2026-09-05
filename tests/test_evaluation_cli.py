@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
     ("evaluate_nll", []),
     ("evaluate_nll", ["--forward", "feedback"]),
     ("evaluate_pass_depth", []),
-    ("evaluate_recurrent_inference", ["--prompt-tokens", "2", "--continuation-tokens", "3"]),
+    ("evaluate_feedback_inference", ["--prompt-tokens", "2", "--continuation-tokens", "3"]),
     ("evaluate_memory_interventions", []),
 ])
 def test_packed_cli_resolves_defaults_overrides_and_checkpoint_identity(tmp_path, monkeypatch, script, extra):
@@ -53,7 +53,11 @@ def test_packed_cli_resolves_defaults_overrides_and_checkpoint_identity(tmp_path
     ])
     module.main()
     doc = json.loads(output_path.read_text())
-    assert doc["schema_version"] == (3 if script == "evaluate_memory_interventions" else 2)
+    expected_schema = {
+        "evaluate_memory_interventions": 4,
+        "evaluate_feedback_inference": 3,
+    }.get(script, 2)
+    assert doc["schema_version"] == expected_schema
     assert doc["provenance"]["normalized_config"]["autocast_dtype"] == "bfloat16"
     assert doc["provenance"]["weights"]["checkpoint_sha256"] == file_sha256(checkpoint)
     result = doc["results"][0] if "results" in doc else doc["result"]
@@ -66,7 +70,7 @@ def test_packed_cli_resolves_defaults_overrides_and_checkpoint_identity(tmp_path
     elif script in {"evaluate_nll", "evaluate_pass_depth"}:
         assert result["passes"] == 4  # no independent CLI default
         assert result["predicted_tokens"] == 7
-    if script == "evaluate_recurrent_inference":
+    if script == "evaluate_feedback_inference":
         assert doc["prefill_passes"] == [4]
         assert result["predicted_tokens_per_mode"] == 3
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tiny-mistral-mptt"
 version = "0.1.0"
-description = "Research code for multi-pass latent-state training and recurrent inference on TinyMistral."
+description = "Research code for multi-pass training and feedback memory on TinyMistral."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 license = "Apache-2.0"
