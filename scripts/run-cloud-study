@@ -19,6 +19,7 @@ import sys
 
 import yaml
 
+from tiny_mistral_mptt.config import load_experiment_config
 from tiny_mistral_mptt.studies import StudyValidationError, verify_study
 from tiny_mistral_mptt.training.checkpoint import inspect_checkpoint
 
@@ -171,10 +172,10 @@ def _study_plan(study_dir: str) -> dict[str, CloudStudyArm]:
     plan: dict[str, CloudStudyArm] = {}
     for arm in raw["arms"]:
         config_name = str(arm["config"])
-        config_raw = yaml.safe_load(
-            (study_path / config_name).read_text(encoding="utf-8")
-        ) or {}
-        data_dir = Path(str(config_raw["data_dir"])).as_posix()
+        # Use the canonical loader so cloud execution supports the same
+        # ``extends`` inheritance as local training and study verification.
+        config = load_experiment_config(study_path / config_name)
+        data_dir = Path(str(config.data_dir)).as_posix()
         expected_sha256 = pinned_data.get(data_dir)
         if expected_sha256 is None:
             raise SystemExit(

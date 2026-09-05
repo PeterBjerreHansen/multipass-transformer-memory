@@ -20,7 +20,8 @@ combined attention pathway and align all attention readers to layers 3 and 7.
 The main runs enable BOS feedback at the selected milestones.
 Initial-baseline evaluation and expanded diagnostics are deferred.
 See the [main protocol](../benchmarks/development/frozen_backbone_comparison/README.md) for exact settings.
-None of these code or documentation changes establishes GPU qualification.
+Target-GPU preflight and the clean 48-arm LR qualification are now complete;
+the 20M pilot and 100M trajectory reviews remain pending.
 
 ## Review issue ledger
 
@@ -30,7 +31,7 @@ None of these code or documentation changes establishes GPU qualification.
 | 2. 1024/2048 and snapshot comparability | 1024 studies deleted. Snapshot recovery implemented. Unfrozen milestones remain undecided. |
 | 3. Precision mismatch | Shared explicit precision handling. Target-hardware qualification remains pending. |
 | 4. BOS-only packed feedback evaluation | Standalone and selected-checkpoint validation implemented, with full and aligned counts. |
-| 5. LR semantics | Equal-budget per-model frozen sweep configured. Main rates remain provisional. Unfrozen tuning is separate. |
+| 5. LR semantics | Equal-budget per-model frozen sweep completed on the clean artifact; every architecture/site group selected `1e-3`. Unfrozen tuning is separate. |
 | 6. Evaluation duplication and mode interfaces | Existing evaluators share their scorer, execution context and parameter resolution. |
 | 7. Serialized full validation | Multi-block batching remains optional future work. Block limit is not batch size. |
 | 8. Documentation drift | Contracts consolidated and checked against code. Documentation tests cover links, examples and protocol values. |

@@ -178,13 +178,13 @@ def test_frozen_backbone_comparison_materializes_matched_groups_and_extensions()
     assert combined.variant == "dense_and_strided_memory_attention"
     assert (combined.memory_dense_window, combined.memory_sparse_window) == (32, 32)
     assert combined.memory_sparse_stride == 32
-    assert {cfg.added_learning_rate for cfg in configs.values()} == {3.0e-4}
+    assert {cfg.added_learning_rate for cfg in configs.values()} == {1.0e-3}
     study = yaml.safe_load(
         (ROOT / "benchmarks/development/frozen_backbone_comparison/STUDY.yaml").read_text(
             encoding="utf-8"
         )
     )
-    assert study["learning_rates_qualified"] is False
+    assert study["learning_rates_qualified"] is True
     recurrent = [cfg for cfg in configs.values() if cfg.variant == "recurrent_memory"]
     assert {cfg.recurrent_merger for cfg in recurrent} == {"recirculation", "projected_residual"}
     assert {tuple(cfg.memory_layers) for cfg in recurrent} == {(3,), (3, 7)}

@@ -179,3 +179,72 @@ def test_cloud_study_blocks_unqualified_learning_rates(monkeypatch, tmp_path):
 
     with pytest.raises(SystemExit, match="learning-rate qualification"):
         campaign._study_plan("benchmarks/development/comparison")
+
+
+def test_cloud_study_plan_resolves_inherited_config_data_dir(monkeypatch, tmp_path):
+    campaign = _load_extensionless("run_cloud_study_extends_test", "run-cloud-study")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='test-repo'\nversion='0'\n", encoding="utf-8"
+    )
+    study = tmp_path / "benchmarks" / "development" / "comparison"
+    study.mkdir(parents=True)
+    data = tmp_path / "data" / "dolmino" / "gpu_2048"
+    data.mkdir(parents=True)
+    (data / "manifest.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "base.yml").write_text(
+        "\n".join(
+            [
+                "variant: recurrent_memory",
+                "phase: A",
+                "model_dir: checkpoints/TinyMistral-248M-v3",
+                "data_dir: data/dolmino/gpu_2048",
+                "device: cuda",
+                "dtype: float32",
+                "autocast_dtype: bfloat16",
+                "attention_backend: auto",
+                "batch_size: 1",
+                "grad_accum_steps: 1",
+                "max_unique_tokens: 65536",
+                "learning_rate: 1.0e-6",
+                "added_learning_rate: 1.0e-3",
+                "lr_schedule: {type: constant}",
+                "weight_decay: 0.01",
+                "grad_clip: 1.0",
+                "pass_schedule:",
+                "  - probabilities: {2: 1.0}",
+                "ntp_pass_loss_weights_by_k:",
+                "  2: [0.0, 1.0]",
+                "memory_window: 1",
+                "memory_layers: [3]",
+                "recurrent_merger: projected_residual",
+                "eval_every_tokens: 65536",
+                "eval_batches: 1",
+                "eval_passes: 2",
+                "checkpoint_every_tokens: 65536",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (study / "arm.yaml").write_text(
+        "extends: ../../../base.yml\n"
+        "output_dir: benchmarks/development/comparison/results/arm\n",
+        encoding="utf-8",
+    )
+    (study / "STUDY.yaml").write_text(
+        "name: comparison\n"
+        "status: locked\n"
+        "learning_rates_qualified: true\n"
+        "question: Does inherited configuration execute?\n"
+        "data_artifacts:\n"
+        f"  data/dolmino/gpu_2048: {'a' * 64}\n"
+        "arms:\n"
+        "  - {id: arm, config: arm.yaml}\n"
+        "comparisons: []\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(campaign, "_repo_root", lambda: tmp_path)
+
+    plan = campaign._study_plan("benchmarks/development/comparison")
+
+    assert plan["arm"].config == "arm.yaml"

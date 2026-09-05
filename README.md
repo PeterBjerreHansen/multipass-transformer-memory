@@ -5,14 +5,15 @@ Tokens read strictly earlier positions. They never read their own same-position 
 
 ## Current pipeline
 
-The two active studies are planned, not GPU-qualified or locked:
+The active frozen studies are:
 
 1. [LR qualification](benchmarks/development/frozen_backbone_lr_qualification/README.md):
-   four primary mechanisms plus the two attention-layout extensions at one and
-   two sites, each with the same four-rate grid and about 5M tokens per run.
+   completed 48-arm qualification across four rates and one or two sites. Every
+   architecture/site group selected `added_learning_rate: 1.0e-3`.
 2. [Frozen comparison](benchmarks/development/frozen_backbone_comparison/README.md):
-   separate matched one-site and two-site dense groups, followed by predeclared
-   attention-layout and stride extensions.
+   planned matched one-site and two-site dense groups, followed by predeclared
+   attention-layout and stride extensions. Its 100M trajectories remain gated
+   on the ad-hoc pilot review.
 
 Each dense group contains a No-memory Adapter, projected-residual fixed-route
 feedback, Recirculation-inspired fixed-route feedback, and Dense Memory
@@ -24,7 +25,8 @@ The main runs enable one full-block BOS-only feedback check at about 5M, 20M and
 The LR sweep leaves feedback checks off. See the study pages for exact counts and cadences.
 
 The runner does not select learning rates, run full-split validation, or execute downstream suites automatically.
-Main-run learning rates remain provisional. GPU optimizer, validation and recovery checks are still pending.
+The clean target-GPU preflight and LR qualification are complete; the pilot and
+100M trajectory reviews remain pending.
 Pass-indexed memory interventions and exact-versus-Live-Feedback diagnostics
 are implemented separately from routine validation.
 

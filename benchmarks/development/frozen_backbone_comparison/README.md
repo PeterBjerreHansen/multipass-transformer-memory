@@ -3,8 +3,9 @@
 This exploratory study compares matched feedback wiring while the pretrained
 backbone stays frozen. It is not a locked paper study; each arm starts fresh
 from the common pretrained checkpoint. Earlier GPU trajectories were stopped
-and discarded after the tokenizer-padding audit. Regenerate the clean artifact,
-rerun qualification, and then launch these trajectories from token zero.
+and discarded after the tokenizer-padding audit. The clean artifact and the
+48-arm learning-rate qualification are now complete; launch every trajectory
+from token zero.
 
 ## Arms
 
@@ -68,6 +69,7 @@ These shared values mirror the runnable YAML files. Documentation tests check th
 | `architecture_seed` | `4242` |
 | `eval_passes` | `4` |
 | `eval_batches` | `64` |
+| `added_learning_rate` | `1.0e-3` (selected by the completed qualification) |
 | `eval_every_tokens` | `3276800` |
 | `train_log_every_tokens` | `327680` |
 | `checkpoint_every_tokens` | `3276800` |
@@ -85,13 +87,10 @@ preserve the effective batch.
 
 Each microbatch samples K=2 with probability 0.9 or K=3 with probability 0.1.
 NTP loss uses only the final pass: `[0, 1]` or `[0, 0, 1]`.
-The learning-rate schedule is constant. The reset qualification must select the
-rate for each mechanism and site count before the 100M configs are launched.
-The checked-in `3e-4` values are placeholders, and `STUDY.yaml` blocks training
-while `learning_rates_qualified` is false. After recording the selected rates,
-update the configs and set that gate to true.
-The runner does not select rates or continue qualification checkpoints
-automatically.
+The learning-rate schedule is constant. The completed clean 48-arm qualification
+selected `1.0e-3` for every mechanism and site count; the runnable configs and
+`STUDY.yaml` record that result. The runner does not select rates or continue
+qualification checkpoints automatically.
 
 ## Snapshots and evaluation
 
@@ -127,8 +126,8 @@ not a pre-training gate.
 
 ## Execution and reporting
 
-Complete the [GPU pre-training checks](../../../docs/CLOUD.md#pre-training-checks)
-and full LR qualification first. Then run and review the fresh local 20M
+The [GPU pre-training checks](../../../docs/CLOUD.md#pre-training-checks) and full
+LR qualification are complete. Next run and review the fresh local 20M
 injection-site and stride pilots. Neither pilot may initialize a main-study arm.
 Only after those steps should the 100M study gate be opened and selected primary
 arms run sequentially. The attention extensions are declared now but run only

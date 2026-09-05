@@ -1,6 +1,9 @@
 # Frozen-backbone learning-rate qualification
 
-This planned qualification selects the Phase-A learning rate for every
+Status: complete. The clean 48-arm qualification selected `1.0e-3` for every
+architecture/site setting.
+
+This qualification selects the Phase-A learning rate for every
 architecture/site setting in the frozen-backbone wiring comparison before its
 trajectory is interpreted.
 The backbone remains frozen throughout each run; only the added writer and
@@ -78,6 +81,7 @@ may use different selected rates per mechanism; retain `added_learning_rate` as
 an explicit allowed difference in the long comparison and report the qualification budget.
 
 The 2,048-token qualification supersedes the earlier 1,024-token rate sweep.
-The earlier qualification was invalidated with the padded artifact. Repeat the
-48 fresh arms after regenerating and verifying the clean artifact; do not carry
-the earlier selections into the reset comparison without requalification.
+The earlier qualification was invalidated with the padded artifact. This reset
+qualification was rerun on the clean artifact, and its selected `1.0e-3` rate
+is now carried by the frozen-comparison and ad-hoc pilot configs. Do not reuse
+the qualification checkpoints as initialization for those fresh trajectories.

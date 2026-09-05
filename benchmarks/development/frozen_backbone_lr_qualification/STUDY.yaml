@@ -1,5 +1,7 @@
 name: frozen_backbone_lr_qualification
-status: planned
+# The clean 2048-token, 48-arm qualification completed successfully; all
+# architecture/site groups selected a constant added-module rate of 1e-3.
+status: complete
 question: >-
   Which added-module learning rate gives each frozen-backbone feedback mechanism
   stable and efficient Phase-A adaptation under one common 5M-token budget?

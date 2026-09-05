@@ -1,6 +1,8 @@
 name: frozen_backbone_comparison
 status: planned
-learning_rates_qualified: false
+# The clean 2048-token, 48-arm qualification completed successfully. Every
+# architecture/site group selected a constant added-module rate of 1e-3.
+learning_rates_qualified: true
 question: >-
   With a frozen TinyMistral backbone, matched sites, approximately matched
   added parameters, one token order, and one training dose, how does feedback
