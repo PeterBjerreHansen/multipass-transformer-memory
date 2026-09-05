@@ -127,9 +127,12 @@ not a pre-training gate.
 
 ## Execution and reporting
 
-Complete the [GPU pre-training checks](../../../docs/CLOUD.md#pre-training-checks) and LR qualification first.
-Then run selected primary arms sequentially. The attention extensions are
-declared now but run only after the dense groups pass preflight:
+Complete the [GPU pre-training checks](../../../docs/CLOUD.md#pre-training-checks)
+and full LR qualification first. Then run and review the fresh local 20M
+injection-site and stride pilots. Neither pilot may initialize a main-study arm.
+Only after those steps should the 100M study gate be opened and selected primary
+arms run sequentially. The attention extensions are declared now but run only
+after this preflight sequence:
 
 ```bash
 uv run python scripts/run_study.py \

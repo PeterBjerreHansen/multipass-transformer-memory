@@ -29,5 +29,8 @@ checkpoint_every_tokens: 1048576
 checkpoint_every_seconds: 900.0
 checkpoint_keep_last: 2
 snapshot_at_tokens: [5013504]
+# Keep the expensive BOS-only full-block Live Feedback evaluator out of the
+# 48-arm qualification sweep. Routine parallel K=4 validation remains enabled.
+feedback_eval_at_tokens: null
 resume_from: null
 init_from: null

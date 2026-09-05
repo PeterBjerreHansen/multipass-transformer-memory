@@ -8,8 +8,9 @@ This plan does not authorize paid cloud runs.
 Implementation status: Stages 0–6 are implemented in the working tree. The
 stride ablation was fixed before results at two sites with physical strides
 `C = 8, 16, 32, 64`, memory capacity 32, and corresponding effective spans
-of 256, 512, 1,024, and 2,048 physical tokens. Stage 7 remains the next stage;
-its target-GPU checks have not been run.
+of 256, 512, 1,024, and 2,048 physical tokens. The local 20M injection-site and
+stride pilots are materialized but gated until LR qualification is reviewed.
+Stage 7 remains the next stage; its target-GPU checks have not been run.
 
 ## Design constraints
 
@@ -240,12 +241,20 @@ for loading inputs and writing results.
 
 1. Run equal-budget LR qualification for the dense one-site and two-site groups.
 2. Lock one LR per arm using held-out NLL and basic numerical stability.
-3. Launch fresh 100M trajectories for the dense groups.
-4. Inspect normal validation first, then run the separate intervention and
+3. Review `1e-3` as the common rate for the fresh 20M injection-site pilot,
+   changing it only if the sweep gives a clear stability or optimization reason;
+   then run that pilot.
+4. Copy the qualified two-site attention-family rates into the fresh 20M stride
+   pilot and run its dense reference, pure strides `C = 8, 16, 32, 64`, and
+   dense-plus-strided `C = 8, 16, 32` arms.
+5. Review both pilots before launching any fresh 100M trajectory. Do not
+   initialize a 100M arm from a pilot or qualification checkpoint.
+6. Launch fresh 100M trajectories for the dense groups, followed by the
+   predeclared strided and dense-and-strided extensions.
+7. Inspect normal validation first, then run the separate intervention and
    fidelity diagnostics at selected snapshots.
-5. Run the strided and dense-and-strided extensions in the agreed order.
-6. Produce curves against unique tokens, estimated FLOPs and measured time.
-7. Replicate only decisive finalists after the pipeline and selection policy are
+8. Produce curves against unique tokens, estimated FLOPs and measured time.
+9. Replicate only decisive finalists after the pipeline and selection policy are
    stable.
 
 **Completion check**
@@ -253,6 +262,8 @@ for loading inputs and writing results.
 - Every plotted point resolves to a checkpoint and study manifest.
 - One-site and two-site comparisons are never pooled as if site count were held
   constant.
+- Both 20M pilots have fresh outputs, recorded rate choices and completed
+  manifests before the 100M study gate is opened.
 - Parallel K=4, Live Feedback and standard K=1 remain separately labelled.
 - Intervention results are diagnostics, not routine stopping criteria.
 

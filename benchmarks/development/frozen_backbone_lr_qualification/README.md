@@ -19,6 +19,9 @@ trainable parameterization. Complete the bounded real-trainer GPU preflight
 before this sweep; token-zero evaluation and expanded memory diagnostics are
 not prerequisites. Feedback NLL remains disabled here; the selected
 5M/20M/100M feedback schedule applies only to the main 100M runs.
+In particular, qualification does not run the BOS-only full-block Live Feedback
+evaluator or the intervention/fidelity diagnostics. Its only scheduled quality
+evaluation is the routine parallel K=4 validation described below.
 
 ## Protocol
 
