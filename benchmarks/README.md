@@ -19,9 +19,11 @@ The active scientific program is intentionally small:
 
 1. `development/frozen_backbone_lr_qualification/` gives each of five feedback
    mechanisms a four-value LR sweep under an equal 5M-token budget.
-2. `development/frozen_backbone_comparison/` compares 100M-token learning curves
-   while the pretrained backbone remains frozen. Both recurrent mergers use the
-   same late memory emission rule as the three attention variants.
+2. `development/frozen_backbone_comparison/` contains nested small, medium, and
+   large 100M-token frozen-backbone comparisons. They share one protocol and
+   differ only in the number of mechanisms tested. The small tier is primary.
+   Both recurrent mergers use the same late memory emission rule as the
+   attention variants.
 
 These studies use 2048-token blocks and parallel K=4 validation. The nominal
 optimizer batch is 65,536 tokens per update: standard arms use batch 8 with

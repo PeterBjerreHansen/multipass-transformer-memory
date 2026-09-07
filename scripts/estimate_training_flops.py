@@ -32,6 +32,9 @@ ARCHITECTURE_FIELDS = (
     "memory_layers",
     "memory_position_encoding",
     "memory_num_key_value_heads",
+    "memory_reader_initialization",
+    "memory_attention_fusion",
+    "memory_attention_controller_hidden_size",
     "memory_dense_window",
     "memory_sparse_window",
     "memory_sparse_stride",
@@ -135,6 +138,12 @@ def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[i
         memory_token_visibility=str(case.get("memory_token_visibility", "visible")),
         memory_layers=memory_layers,
         memory_num_key_value_heads=case.get("memory_num_key_value_heads"),
+        memory_attention_fusion=str(
+            case.get("memory_attention_fusion", "residual")
+        ),
+        memory_attention_controller_hidden_size=case.get(
+            "memory_attention_controller_hidden_size"
+        ),
         memory_dense_window=case.get("memory_dense_window"),
         memory_sparse_window=case.get("memory_sparse_window"),
         memory_sparse_stride=case.get("memory_sparse_stride"),

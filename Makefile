@@ -5,6 +5,9 @@
   efficiency-cuda-precision efficiency-cuda-context efficiency-cuda-batch \
   estimate-flops-frozen-backbone report-wiring-budgets cloud-preflight
 
+# Frozen comparison reports default to the primary development tier.
+TIER ?= small
+
 test:
 	uv run pytest -q
 
@@ -103,14 +106,14 @@ efficiency-cuda-batch:
 
 estimate-flops-frozen-backbone:
 	uv run python scripts/estimate_training_flops.py \
-		--study benchmarks/development/frozen_backbone_comparison/STUDY.yaml \
+		--study benchmarks/development/frozen_backbone_comparison/$(TIER)/STUDY.yaml \
 		--model-config checkpoints/TinyMistral-248M-v3/config.json \
-		--output benchmarks/development/frozen_backbone_comparison/results/training_flops.json
+		--output benchmarks/development/frozen_backbone_comparison/$(TIER)/results/training_flops.json
 
 report-wiring-budgets:
 	uv run python scripts/report_wiring_budgets.py \
-		--study benchmarks/development/frozen_backbone_comparison/STUDY.yaml \
-		--output benchmarks/development/frozen_backbone_comparison/results/wiring_budgets.json
+		--study benchmarks/development/frozen_backbone_comparison/$(TIER)/STUDY.yaml \
+		--output benchmarks/development/frozen_backbone_comparison/$(TIER)/results/wiring_budgets.json
 
 # Usage: make cloud-preflight CONFIG=path/to/config.yaml
 cloud-preflight:

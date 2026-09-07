@@ -1,0 +1,7 @@
+extends: ../protocol_100m.yml
+variant: recurrent_memory
+recurrent_merger: projected_residual
+recurrent_controller_hidden_size: null
+memory_window: 1
+memory_layers: [3, 7]
+output_dir: benchmarks/development/frozen_backbone_comparison/large/results/recurrent_projected_residual_100m

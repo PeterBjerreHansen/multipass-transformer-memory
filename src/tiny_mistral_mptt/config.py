@@ -397,6 +397,11 @@ class ExperimentConfig:
     # Reader width used for genuine parameter/compute matching; defaults to the
     # backbone GQA width when omitted.
     memory_num_key_value_heads: int | None = None
+    # Reader initialization and fusion are separate axes. The historical
+    # zero-output residual path remains the default for old configs.
+    memory_reader_initialization: str = "zero_output"
+    memory_attention_fusion: str = "residual"
+    memory_attention_controller_hidden_size: int | None = None
     # Dense-and-strided Memory Attention retains a dense recent region plus fixed-stride old
     # records from the same dense previous-pass source stream.
     memory_dense_window: int | None = None
@@ -647,6 +652,43 @@ class ExperimentConfig:
                 raise ValueError("memory_num_key_value_heads applies only to Memory Attention")
             if self.memory_num_key_value_heads < 1:
                 raise ValueError("memory_num_key_value_heads must be positive")
+        if self.memory_reader_initialization not in {"zero_output", "aligned_gqa"}:
+            raise ValueError(
+                "memory_reader_initialization must be zero_output or aligned_gqa"
+            )
+        if self.memory_attention_fusion not in {
+            "residual",
+            "destination_gated",
+            "attention_gated",
+            "dual_gated",
+        }:
+            raise ValueError(
+                "memory_attention_fusion must be residual, destination_gated, "
+                "attention_gated, or dual_gated"
+            )
+        if self.variant in MEMORY_ATTENTION_VARIANTS:
+            if self.memory_attention_fusion == "residual":
+                if self.memory_attention_controller_hidden_size is not None:
+                    raise ValueError(
+                        "memory_attention_controller_hidden_size is not used by "
+                        "residual fusion"
+                    )
+            elif (
+                self.memory_attention_controller_hidden_size is None
+                or self.memory_attention_controller_hidden_size < 1
+            ):
+                raise ValueError(
+                    "gated memory attention fusion requires a positive "
+                    "memory_attention_controller_hidden_size"
+                )
+        elif (
+            self.memory_reader_initialization != "zero_output"
+            or self.memory_attention_fusion != "residual"
+            or self.memory_attention_controller_hidden_size is not None
+        ):
+            raise ValueError(
+                "memory attention reader/fusion fields apply only to Memory Attention"
+            )
         if self.recurrent_controller_hidden_size is not None:
             if self.recurrent_merger != "recirculation":
                 raise ValueError(

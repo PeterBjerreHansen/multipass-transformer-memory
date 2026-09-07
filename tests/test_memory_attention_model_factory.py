@@ -1,4 +1,5 @@
 import pytest
+import torch
 
 from conftest import micro_config
 from tiny_mistral.modeling import MistralForCausalLM
@@ -205,6 +206,41 @@ def test_factory_builds_optional_late_recurrent_memory_hybrid():
     assert model.recurrent_merger == "recirculation"
     assert model.recurrent_layers == (0, 2)
     assert model.memory_layers == (1,)
+
+
+def test_factory_builds_four_fusions_with_identical_aligned_readers():
+    common = dict(
+        memory_write_mode="dense",
+        memory_layers=[0],
+        memory_position_encoding="none",
+        memory_reader_initialization="aligned_gqa",
+        architecture_seed=4242,
+    )
+    models = {
+        fusion: build_variant(
+            "memory_attention",
+            backbone(),
+            memory_attention_fusion=fusion,
+            memory_attention_controller_hidden_size=(
+                None if fusion == "residual" else 4
+            ),
+            **common,
+        )
+        for fusion in (
+            "residual",
+            "destination_gated",
+            "attention_gated",
+            "dual_gated",
+        )
+    }
+    residual_reader = models["residual"].memory_readers["0"].state_dict()
+    for model in models.values():
+        assert list(model.memory_attention_fusions) == ["0"]
+        assert residual_reader.keys() == model.memory_readers["0"].state_dict().keys()
+        for name, tensor in residual_reader.items():
+            torch.testing.assert_close(
+                tensor, model.memory_readers["0"].state_dict()[name], atol=0, rtol=0
+            )
 
 
 @pytest.mark.parametrize("name,pattern,mode,fields", [

@@ -24,7 +24,7 @@ If microbatch size changes, adjust accumulation and record the resolved config.
 
    ```bash
    uv run python scripts/run_study.py \
-     --study-dir benchmarks/development/frozen_backbone_comparison \
+     --study-dir benchmarks/development/frozen_backbone_comparison/small \
      --wire-only --wire-device cuda
    ```
 

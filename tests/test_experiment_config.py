@@ -247,6 +247,37 @@ def test_memory_attention_layer_and_position_configuration_is_validated():
         )
 
 
+def test_memory_attention_reader_initialization_and_fusion_are_explicit():
+    residual = _config(
+        variant="dense_memory_attention",
+        memory_reader_initialization="aligned_gqa",
+        memory_attention_fusion="residual",
+    )
+    assert residual.memory_reader_initialization == "aligned_gqa"
+
+    for fusion in ("destination_gated", "attention_gated", "dual_gated"):
+        gated = _config(
+            variant="dense_memory_attention",
+            memory_reader_initialization="aligned_gqa",
+            memory_attention_fusion=fusion,
+            memory_attention_controller_hidden_size=64,
+        )
+        assert gated.memory_attention_controller_hidden_size == 64
+
+    with pytest.raises(ValueError, match="not used"):
+        _config(
+            variant="dense_memory_attention",
+            memory_attention_controller_hidden_size=64,
+        )
+    with pytest.raises(ValueError, match="requires a positive"):
+        _config(
+            variant="dense_memory_attention",
+            memory_attention_fusion="dual_gated",
+        )
+    with pytest.raises(ValueError, match="apply only to Memory Attention"):
+        _config(variant="memory_add", memory_reader_initialization="aligned_gqa")
+
+
 def test_middle_layer_recirculation_config_is_archived():
     with pytest.raises(ValueError, match="variant must be one of"):
         _config(

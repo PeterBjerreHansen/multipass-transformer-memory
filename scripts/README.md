@@ -45,6 +45,7 @@ These guides define resume and cleanup behavior. The script index does not dupli
 | `evaluate_feedback_inference.py` | Same-checkpoint exact-K-pass, Live Feedback and standard-K1 continuation comparison |
 | `evaluate_lm_harness.py` | Candidate scoring or generation with explicit prefill/decode choices |
 | `evaluate_parameter_drift.py` | Backbone and added-parameter changes relative to compatible reference weights |
+| `evaluate_attention_fusion.py` | Per-site and per-pass Memory Attention signal, contribution, and gate diagnostics |
 | `generate.py` | Ordinary pretrained-backbone generation, not trained feedback-model generation |
 
 The checkpoint evaluators require explicit weights or `--initialized-baseline`.

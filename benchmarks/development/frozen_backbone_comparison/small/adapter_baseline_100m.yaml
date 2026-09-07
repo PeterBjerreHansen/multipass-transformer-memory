@@ -1,0 +1,4 @@
+extends: ../protocol_100m.yml
+variant: no_memory_adapter
+memory_layers: [3, 7]
+output_dir: benchmarks/development/frozen_backbone_comparison/small/results/adapter_baseline_100m

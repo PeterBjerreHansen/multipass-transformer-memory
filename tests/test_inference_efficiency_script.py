@@ -16,7 +16,7 @@ SPEC.loader.exec_module(benchmark)
 
 
 def test_default_configs_match_active_study_arms():
-    study = ROOT / "benchmarks/development/frozen_backbone_comparison"
+    study = ROOT / "benchmarks/development/frozen_backbone_comparison/small"
     manifest = yaml.safe_load((study / "STUDY.yaml").read_text())
     expected = {study / arm["config"] for arm in manifest["arms"]}
     assert {ROOT / path for path in benchmark.DEFAULT_CONFIGS} == expected

@@ -159,6 +159,57 @@ def test_remote_config_helper_rejects_unpinned_data_manifest(tmp_path):
     assert failed.returncode != 0
 
 
+def test_remote_helpers_resolve_inherited_config_fields(tmp_path):
+    controller = _load_extensionless("start_and_watch_extends_test", "start-and-watch")
+    output = tmp_path / "results" / "arm"
+    output.mkdir(parents=True)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    manifest = data_dir / "manifest.json"
+    manifest.write_text("{}\n", encoding="utf-8")
+    manifest_sha256 = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    (tmp_path / "pilot_base.yml").write_text(
+        "output_dir: results/arm\ndata_dir: data\n", encoding="utf-8"
+    )
+    config = tmp_path / "arm.yaml"
+    config.write_text("extends: pilot_base.yml\n", encoding="utf-8")
+    (output / "run.json").write_text(
+        json.dumps({"config": {"output_dir": "results/arm"}}),
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            controller._config_output_code(),
+            str(tmp_path),
+            str(config),
+            str(output),
+            manifest_sha256,
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            controller._remote_run_identity_code(),
+            str(tmp_path),
+            str(config),
+            str(output),
+        ],
+        check=True,
+    )
+
+
+def test_remote_project_commands_use_the_synced_environment():
+    controller = _load_extensionless("start_and_watch_python_test", "start-and-watch")
+    assert controller.REMOTE_PYTHON == ".venv/bin/python"
+    source = (ROOT / "scripts" / "start-and-watch").read_text(encoding="utf-8")
+    assert "/root/.local/bin" not in source
+
+
 def test_cloud_study_blocks_unqualified_learning_rates(monkeypatch, tmp_path):
     campaign = _load_extensionless("run_cloud_study_gate_test", "run-cloud-study")
     study = tmp_path / "benchmarks" / "development" / "comparison"

@@ -43,21 +43,10 @@ from tiny_mistral_mptt.variants.multipass import MultiPassVariant
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIGS = (
-    "benchmarks/development/frozen_backbone_comparison/no_memory_adapter_one_site_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/recurrent_projected_residual_multipass_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/recurrent_recirculation_multipass_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/dense_memory_attention_one_site_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/no_memory_adapter_two_site_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/recurrent_projected_residual_two_site_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/recurrent_recirculation_two_site_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/dense_memory_attention_multipass_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/strided_memory_attention_one_site_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/dense_and_strided_memory_attention_one_site_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/strided_memory_attention_multipass_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/dense_and_strided_memory_attention_multipass_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/strided_memory_attention_stride8_two_site_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/strided_memory_attention_stride16_two_site_100m.yaml",
-    "benchmarks/development/frozen_backbone_comparison/strided_memory_attention_stride64_two_site_100m.yaml",
+    "benchmarks/development/frozen_backbone_comparison/small/adapter_baseline_100m.yaml",
+    "benchmarks/development/frozen_backbone_comparison/small/dense_memory_attention_destination_gated_aligned_100m.yaml",
+    "benchmarks/development/frozen_backbone_comparison/small/recurrent_recirculation_100m.yaml",
+    "benchmarks/development/frozen_backbone_comparison/small/recurrent_projected_residual_100m.yaml",
 )
 DEFAULT_PROMPT_LENGTHS = (1, 256)
 DEFAULT_HORIZONS = (1, 16, 64, 256, 512, 1024, 2047)

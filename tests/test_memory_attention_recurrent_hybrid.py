@@ -201,7 +201,10 @@ def test_overlapping_readers_apply_attention_then_recurrence_before_mlp(monkeypa
     observed = {}
 
     def attention_delta(reader, hidden, memory, **kwargs):
-        observed["after_attention"] = hidden + 0.25
+        available = memory.writes_before.gt(0)
+        observed["after_attention"] = torch.where(
+            available[:, :, None], hidden + 0.25, hidden
+        )
         return torch.full_like(hidden, 0.25)
 
     def merger(destination, memory):

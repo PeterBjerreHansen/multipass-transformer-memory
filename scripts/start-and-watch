@@ -26,6 +26,7 @@ class ControllerError(RuntimeError):
 
 
 TRANSFER_MANIFEST = ".transfer-manifest.sha256"
+REMOTE_PYTHON = ".venv/bin/python"
 
 
 @dataclass(frozen=True)
@@ -147,23 +148,24 @@ print(json.dumps({
 
 
 def _config_output_code() -> str:
-    return r'''import hashlib, pathlib, sys, yaml
+    return r'''import hashlib, pathlib, sys
 root = pathlib.Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(root / "src"))
+from tiny_mistral_mptt.config import load_experiment_config
 config = pathlib.Path(sys.argv[2])
 expected = pathlib.Path(sys.argv[3]).resolve()
 expected_manifest_sha256 = sys.argv[4]
-raw = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
-configured = pathlib.Path(str(raw["output_dir"]))
-if not configured.is_absolute():
-    configured = (root / configured).resolve()
+cfg = load_experiment_config(config)
+def resolve(value):
+    path = pathlib.Path(str(value))
+    return path if path.is_absolute() else (root / path).resolve()
+configured = resolve(cfg.output_dir)
 if configured != expected:
     raise SystemExit(
         f"config output_dir resolves to {configured}, but controller watches {expected}"
     )
 if expected_manifest_sha256:
-    data_dir = pathlib.Path(str(raw["data_dir"]))
-    if not data_dir.is_absolute():
-        data_dir = (root / data_dir).resolve()
+    data_dir = resolve(cfg.data_dir)
     manifest = data_dir / "manifest.json"
     if not manifest.is_file():
         raise SystemExit(f"data manifest does not exist: {manifest}")
@@ -178,27 +180,30 @@ if expected_manifest_sha256:
 def _validate_remote_config(args: argparse.Namespace, config: str, output: str) -> None:
     """Validate config/output identity before inspecting or launching a run."""
     command = (
-        f"set -eu; cd {_q(args.remote_root)}; test -f {_q(config)}; "
-        f"python3 -c {_q(_config_output_code())} . {_q(config)} {_q(output)} "
+        f"set -eu; cd {_q(args.remote_root)}; "
+        f"test -x {_q(REMOTE_PYTHON)}; test -f {_q(config)}; "
+        f"{_q(REMOTE_PYTHON)} -c {_q(_config_output_code())} . {_q(config)} {_q(output)} "
         f"{_q(args.expected_data_manifest_sha256 or '')}"
     )
     _ssh(args, command)
 
 
 def _remote_run_identity_code() -> str:
-    return r'''import json, pathlib, sys, yaml
+    return r'''import json, pathlib, sys
 root = pathlib.Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(root / "src"))
+from tiny_mistral_mptt.config import load_experiment_config
 config = pathlib.Path(sys.argv[2])
 output = pathlib.Path(sys.argv[3]).resolve()
 run_path = output / "run.json"
 if not run_path.is_file():
     raise SystemExit(f"completed output has no run.json: {run_path}")
-raw = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+cfg = load_experiment_config(config)
 run = json.loads(run_path.read_text(encoding="utf-8"))
 def resolve(value):
     path = pathlib.Path(str(value))
     return path if path.is_absolute() else (root / path).resolve()
-configured = resolve(raw["output_dir"])
+configured = resolve(cfg.output_dir)
 recorded = resolve(run.get("config", {}).get("output_dir"))
 if configured != output:
     raise SystemExit(f"config output_dir resolves to {configured}, expected {output}")
@@ -210,7 +215,8 @@ def _validate_remote_run_identity(
     args: argparse.Namespace, config: str, output: str
 ) -> None:
     command = (
-        f"cd {_q(args.remote_root)} && python3 -c {_q(_remote_run_identity_code())} "
+        f"set -eu; cd {_q(args.remote_root)}; test -x {_q(REMOTE_PYTHON)}; "
+        f"{_q(REMOTE_PYTHON)} -c {_q(_remote_run_identity_code())} "
         f". {_q(config)} {_q(output)}"
     )
     _ssh(args, command)
@@ -245,8 +251,8 @@ def _launch(args: argparse.Namespace, config: str, output: str) -> int:
     if args.until_unique_tokens is not None:
         until = f" --until-unique-tokens {args.until_unique_tokens}"
     command = (
-        f"set -eu; export PATH=/root/.local/bin:$PATH; cd {_q(args.remote_root)}; "
-        f"test -f {_q(config)}; "
+        f"set -eu; cd {_q(args.remote_root)}; "
+        f"test -x {_q(REMOTE_PYTHON)}; test -f {_q(config)}; "
         f"mkdir -p {_q(output)}; "
         f"if test -f {_q(posixpath.join(output, 'train.pid'))}; then "
         f"  old_pid=$(cat {_q(posixpath.join(output, 'train.pid'))} || true); "
@@ -254,7 +260,7 @@ def _launch(args: argparse.Namespace, config: str, output: str) -> int:
         f"    echo 'training process already active' >&2; exit 11; "
         f"  fi; "
         f"fi; "
-        f"nohup uv run python scripts/train.py --config {_q(config)} --resume-auto"
+        f"nohup {_q(REMOTE_PYTHON)} scripts/train.py --config {_q(config)} --resume-auto"
         f"{until} > {_q(posixpath.join(output, 'train.log'))} 2>&1 < /dev/null & "
         f"pid=$!; printf '%s\\n' \"$pid\" > {_q(posixpath.join(output, 'train.pid'))}; "
         f"printf '%s\\n' \"$pid\""

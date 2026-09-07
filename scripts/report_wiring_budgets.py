@@ -17,6 +17,14 @@ from tiny_mistral_mptt.studies import verify_study
 
 
 def _initialization(cfg) -> str:
+    if cfg.variant in {
+        "memory_attention",
+        "dense_memory_attention",
+        "strided_memory_attention",
+        "dense_and_strided_memory_attention",
+        "memory_token_attention",
+    }:
+        return cfg.memory_reader_initialization
     if cfg.variant == "no_memory_adapter" or cfg.recurrent_merger == "projected_residual":
         return "zero_output_projection"
     if cfg.recurrent_merger == "recirculation":
@@ -82,6 +90,10 @@ def build_report(study_path: Path, *, sequence_length: int) -> dict:
             memory_token_visibility=cfg.memory_token_visibility or "visible",
             memory_layers="all" if cfg.memory_layers is None else cfg.memory_layers,
             memory_num_key_value_heads=cfg.memory_num_key_value_heads,
+            memory_attention_fusion=cfg.memory_attention_fusion,
+            memory_attention_controller_hidden_size=(
+                cfg.memory_attention_controller_hidden_size
+            ),
             memory_dense_window=cfg.memory_dense_window,
             memory_sparse_window=cfg.memory_sparse_window,
             memory_sparse_stride=cfg.memory_sparse_stride,
@@ -95,6 +107,11 @@ def build_report(study_path: Path, *, sequence_length: int) -> dict:
             "variant": cfg.variant,
             "sites": cfg.memory_layers,
             "site_count": site_count,
+            "memory_reader_initialization": cfg.memory_reader_initialization,
+            "memory_attention_fusion": cfg.memory_attention_fusion,
+            "memory_attention_controller_hidden_size": (
+                cfg.memory_attention_controller_hidden_size
+            ),
             "added_parameters": added_parameters,
             "weighted_training_flops_per_sequence": estimate.weighted_training_flops,
             "relative_training_flops": estimate.relative_training_flops,
@@ -103,25 +120,12 @@ def build_report(study_path: Path, *, sequence_length: int) -> dict:
             **_retention(cfg, sequence_length),
         })
 
+    rows_by_arm = {row["arm"]: row for row in rows}
     matched_groups = {}
-    for site_count in (1, 2):
-        group = [
-            row for row in rows
-            if row["site_count"] == site_count
-            and row["arm"] in {
-                "no_memory_adapter_one_site_100m",
-                "recurrent_projected_residual_multipass_100m",
-                "recurrent_recirculation_multipass_100m",
-                "dense_memory_attention_one_site_100m",
-                "no_memory_adapter_two_site_100m",
-                "recurrent_projected_residual_two_site_100m",
-                "recurrent_recirculation_two_site_100m",
-                "dense_memory_attention_multipass_100m",
-            }
-        ]
-        counts = [row["added_parameters"] for row in group]
-        matched_groups[str(site_count)] = {
-            "arms": [row["arm"] for row in group],
+    for comparison_name, arm_ids in _study_comparisons(study_path):
+        counts = [rows_by_arm[arm_id]["added_parameters"] for arm_id in arm_ids]
+        matched_groups[comparison_name] = {
+            "arms": list(arm_ids),
             "max_to_min_added_parameter_ratio": max(counts) / min(counts),
             "within_ten_percent": max(counts) / min(counts) <= 1.1,
         }
@@ -145,11 +149,20 @@ def _study_arm_configs(path: Path):
         yield item["id"], config_path, load_experiment_config(config_path)
 
 
+def _study_comparisons(path: Path):
+    """Yield the comparison groups declared by the verified manifest."""
+    import yaml
+    manifest = path / "STUDY.yaml" if path.is_dir() else path
+    raw = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    for comparison in raw["comparisons"]:
+        yield comparison["name"], tuple(comparison["arms"])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--study",
-        default="benchmarks/development/frozen_backbone_comparison/STUDY.yaml",
+        default="benchmarks/development/frozen_backbone_comparison/large/STUDY.yaml",
     )
     parser.add_argument("--sequence-length", type=int, default=2048)
     parser.add_argument("--output", default=None)
@@ -157,7 +170,9 @@ def main() -> None:
     report = build_report(Path(args.study), sequence_length=args.sequence_length)
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:
-        Path(args.output).write_text(rendered, encoding="utf-8")
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered, encoding="utf-8")
     else:
         print(rendered, end="")
 

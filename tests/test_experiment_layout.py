@@ -111,10 +111,18 @@ def test_active_study_surface_tracks_manifests_not_diagnostic_directories():
     development = ROOT / "benchmarks" / "development"
     expected = {
         "frozen_backbone_lr_qualification",
-        "frozen_backbone_comparison",
+        "frozen_backbone_comparison/small",
+        "frozen_backbone_comparison/medium",
+        "frozen_backbone_comparison/large",
     }
-    assert {path.parent.name for path in development.rglob("STUDY.yaml")} == expected
-    assert {path.parent.name for path in discover_studies(ROOT)} == expected
+    assert {
+        path.parent.relative_to(development).as_posix()
+        for path in development.rglob("STUDY.yaml")
+    } == expected
+    assert {
+        path.parent.relative_to(development).as_posix()
+        for path in discover_studies(ROOT)
+    } == expected
     assert list((ROOT / "benchmarks" / "core").glob("*/STUDY.yaml")) == []
 
 
@@ -132,71 +140,64 @@ def test_active_studies_share_2048_data_and_effective_optimizer_batch():
         }
 
 
-def test_frozen_backbone_comparison_materializes_matched_groups_and_extensions():
-    configs = _study_configs("frozen_backbone_comparison")
-    assert len(configs) == 15
-    assert sum(cfg.variant == "no_memory_adapter" for cfg in configs.values()) == 2
-    assert all(cfg.phase == "A" for cfg in configs.values())
-    combined = [
-        cfg for cfg in configs.values()
-        if cfg.variant == "dense_and_strided_memory_attention"
-    ]
-    assert {(cfg.batch_size, cfg.grad_accum_steps) for cfg in combined} == {(4, 8)}
-    assert {
-        (cfg.batch_size, cfg.grad_accum_steps)
-        for cfg in configs.values()
-        if cfg.variant != "dense_and_strided_memory_attention"
-    } == {(8, 4)}
-    assert {
-        cfg.batch_size * cfg.grad_accum_steps * 2048
-        for cfg in configs.values()
-    } == {65_536}
-    assert {cfg.train_log_every_tokens for cfg in configs.values()} == {327_680}
-    assert {cfg.max_unique_tokens for cfg in configs.values()} == {100_007_936}
-    assert {tuple(cfg.snapshot_at_tokens) for cfg in configs.values()} == {
-        (3_276_800, 5_013_504, 10_027_008, 20_021_248, 50_003_968, 100_007_936)
-    }
-    assert {tuple(cfg.feedback_eval_at_tokens) for cfg in configs.values()} == {
-        (5_013_504, 20_021_248, 100_007_936)
-    }
-    assert {cfg.feedback_eval_max_blocks for cfg in configs.values()} == {1}
-    assert {cfg.feedback_eval_autocast_dtype for cfg in configs.values()} == {"config"}
-    multipass = configs
-    assert all(
-        cfg.normalized_pass_schedule()[0]["probabilities"] == {2: 0.9, 3: 0.1}
-        for cfg in multipass.values()
-    )
-    assert all(
-        cfg.ntp_pass_loss_weights_by_k == {2: [0.0, 1.0], 3: [0.0, 0.0, 1.0]}
-        for cfg in multipass.values()
-    )
-    strided = configs["strided_memory_attention_multipass_100m"]
-    assert strided.variant == "strided_memory_attention"
-    assert strided.memory_write_mode == "strided"
-    assert strided.memory_write_stride == 32
-    combined = configs["dense_and_strided_memory_attention_multipass_100m"]
+def test_frozen_backbone_tiers_are_nested_and_explicit():
+    small = _study_configs("frozen_backbone_comparison/small")
+    medium = _study_configs("frozen_backbone_comparison/medium")
+    large = _study_configs("frozen_backbone_comparison/large")
+    assert len(small) == 4
+    assert len(medium) == 7
+    assert len(large) == 10
+    assert set(small) < set(medium) < set(large)
+    for configs in (small, medium, large):
+        assert all(cfg.phase == "A" for cfg in configs.values())
+        assert {tuple(cfg.memory_layers) for cfg in configs.values()} == {(3, 7)}
+        assert {
+            cfg.batch_size * cfg.grad_accum_steps * 2048
+            for cfg in configs.values()
+        } == {65_536}
+        assert {cfg.train_log_every_tokens for cfg in configs.values()} == {327_680}
+        assert {cfg.max_unique_tokens for cfg in configs.values()} == {100_007_936}
+        assert {tuple(cfg.snapshot_at_tokens) for cfg in configs.values()} == {
+            (3_276_800, 5_013_504, 10_027_008, 20_021_248, 50_003_968, 100_007_936)
+        }
+        assert {tuple(cfg.feedback_eval_at_tokens) for cfg in configs.values()} == {
+            (5_013_504, 20_021_248, 100_007_936)
+        }
+        assert {cfg.feedback_eval_max_blocks for cfg in configs.values()} == {1}
+        assert {cfg.feedback_eval_autocast_dtype for cfg in configs.values()} == {"config"}
+        assert {cfg.added_learning_rate for cfg in configs.values()} == {1.0e-3}
+        assert all(
+            cfg.normalized_pass_schedule()[0]["probabilities"] == {2: 0.9, 3: 0.1}
+            for cfg in configs.values()
+        )
+        assert all(
+            cfg.ntp_pass_loss_weights_by_k == {2: [0.0, 1.0], 3: [0.0, 0.0, 1.0]}
+            for cfg in configs.values()
+        )
+        attention = [
+            cfg for cfg in configs.values()
+            if cfg.variant.endswith("memory_attention")
+        ]
+        assert all(cfg.memory_num_key_value_heads == 16 for cfg in attention)
+        assert all(cfg.memory_position_encoding == "rope" for cfg in attention)
+        assert all(cfg.memory_attention_fusion for cfg in attention)
+    assert medium["strided_memory_attention_stride8_100m"].memory_write_stride == 8
+    combined = medium["dense_and_strided_memory_attention_stride8_100m"]
     assert combined.variant == "dense_and_strided_memory_attention"
     assert (combined.memory_dense_window, combined.memory_sparse_window) == (32, 32)
-    assert combined.memory_sparse_stride == 32
-    assert {cfg.added_learning_rate for cfg in configs.values()} == {1.0e-3}
-    study = yaml.safe_load(
-        (ROOT / "benchmarks/development/frozen_backbone_comparison/STUDY.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert study["learning_rates_qualified"] is True
-    recurrent = [cfg for cfg in configs.values() if cfg.variant == "recurrent_memory"]
-    assert {cfg.recurrent_merger for cfg in recurrent} == {"recirculation", "projected_residual"}
-    assert {tuple(cfg.memory_layers) for cfg in recurrent} == {(3,), (3, 7)}
-    assert all(cfg.memory_window == 1 for cfg in recurrent)
-    assert all(cfg.recirculation_source_layer is None for cfg in recurrent)
-    attention = [cfg for cfg in configs.values() if cfg.variant.endswith("memory_attention")]
-    assert all(cfg.memory_num_key_value_heads == 16 for cfg in attention)
+    assert combined.memory_sparse_stride == 8
+    assert (combined.batch_size, combined.grad_accum_steps) == (4, 8)
     assert {
-        cfg.memory_write_stride
-        for cfg in attention
-        if cfg.variant == "strided_memory_attention"
-    } == {8, 16, 32, 64}
+        large[name].memory_attention_fusion
+        for name in (
+            "dense_memory_attention_residual_aligned_100m",
+            "dense_memory_attention_destination_gated_aligned_100m",
+            "dense_memory_attention_attention_gated_aligned_100m",
+            "dense_memory_attention_dual_gated_aligned_100m",
+        )
+    } == {"residual", "destination_gated", "attention_gated", "dual_gated"}
+    assert large["dense_memory_attention_residual_100m"].memory_reader_initialization == "zero_output"
+    assert large["dense_memory_attention_residual_aligned_100m"].memory_reader_initialization == "aligned_gqa"
 
 
 def test_frozen_backbone_lr_qualification_uses_2048_sweep():
@@ -233,12 +234,17 @@ def test_frozen_backbone_lr_qualification_uses_2048_sweep():
 
 
 def test_attention_reader_layers_match_across_frozen_studies():
-    for name in ("frozen_backbone_comparison", "frozen_backbone_lr_qualification"):
+    for name in (
+        "frozen_backbone_comparison/small",
+        "frozen_backbone_comparison/medium",
+        "frozen_backbone_comparison/large",
+        "frozen_backbone_lr_qualification",
+    ):
         attention = [
             cfg for cfg in _study_configs(name).values()
             if cfg.variant.endswith("memory_attention")
         ]
-        assert {cfg.variant for cfg in attention} == {
+        assert {cfg.variant for cfg in attention} <= {
             "dense_memory_attention", "strided_memory_attention", "dense_and_strided_memory_attention",
         }
         assert {tuple(cfg.memory_layers) for cfg in attention} <= {(3,), (3, 7)}

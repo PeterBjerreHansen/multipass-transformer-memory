@@ -99,11 +99,21 @@ def test_current_documented_cli_examples_use_existing_scripts_and_flags():
                 assert requested <= help_flags(script), (path, script, requested - help_flags(script))
 
 
-@pytest.mark.parametrize("study", ["frozen_backbone_comparison", "frozen_backbone_lr_qualification"])
+@pytest.mark.parametrize("study", [
+    "frozen_backbone_comparison/small",
+    "frozen_backbone_comparison/medium",
+    "frozen_backbone_comparison/large",
+    "frozen_backbone_lr_qualification",
+])
 def test_documented_protocol_fields_match_every_declared_arm(study):
     directory = ROOT / "benchmarks/development" / study
     manifest = yaml.safe_load((directory / "STUDY.yaml").read_text())
-    readme = (directory / "README.md").read_text()
+    readme_path = (
+        ROOT / "benchmarks/development/frozen_backbone_comparison/README.md"
+        if study.startswith("frozen_backbone_comparison/")
+        else directory / "README.md"
+    )
+    readme = readme_path.read_text()
     fields = re.findall(r"^\| `([a-z_]+)` \| `([^`]+)` \|$", readme, re.M)
     assert {name for name, _ in fields} >= {
         "phase", "max_unique_tokens", "eval_passes", "eval_batches",
@@ -117,7 +127,9 @@ def test_documented_protocol_fields_match_every_declared_arm(study):
 
 def test_documented_snapshot_table_matches_optimizer_boundaries_and_selection():
     directory = ROOT / "benchmarks/development/frozen_backbone_comparison"
-    config = load_experiment_config(directory / "recurrent_recirculation_multipass_100m.yaml")
+    config = load_experiment_config(
+        directory / "small/recurrent_recirculation_100m.yaml"
+    )
     recipe = yaml.safe_load((ROOT / config.data_dir / "config.yaml").read_text())
     update_tokens = config.batch_size * config.grad_accum_steps * recipe["sequence_length"]
     rows = re.findall(

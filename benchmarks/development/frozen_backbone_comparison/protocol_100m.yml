@@ -1,12 +1,9 @@
-variant: recurrent_memory
+# Shared frozen-backbone protocol. Tier arm configs inherit this file and
+# override only the mechanism-specific fields and output directory.
 phase: A
 training_forward: parallel_multipass
-recurrent_merger: projected_residual
-memory_window: 1
-memory_layers: [3, 7]
 model_dir: checkpoints/TinyMistral-248M-v3
 data_dir: data/dolmino/gpu_2048
-output_dir: benchmarks/development/frozen_backbone_comparison/results/recurrent_projected_residual_two_site_100m
 device: cuda
 dtype: float32
 autocast_dtype: bfloat16
@@ -17,7 +14,6 @@ batch_size: 8
 grad_accum_steps: 4
 max_unique_tokens: 100007936
 learning_rate: 1.0e-6
-# Selected by the completed clean 2048-token LR qualification.
 added_learning_rate: 1.0e-3
 lr_schedule: {type: constant}
 weight_decay: 1.0e-4

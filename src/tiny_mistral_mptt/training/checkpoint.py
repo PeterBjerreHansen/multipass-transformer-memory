@@ -37,6 +37,10 @@ _INIT_ARCHITECTURE_FIELDS = (
     "memory_token_visibility",
     "memory_layers",
     "memory_position_encoding",
+    "memory_num_key_value_heads",
+    "memory_reader_initialization",
+    "memory_attention_fusion",
+    "memory_attention_controller_hidden_size",
     "memory_dense_window",
     "memory_sparse_window",
     "memory_sparse_stride",
@@ -49,6 +53,7 @@ _INIT_ARCHITECTURE_FIELDS = (
     "recirculation_alpha",
     "recirculation_mode",
     "recurrent_merger",
+    "recurrent_controller_hidden_size",
     "recurrent_layers",
 )
 
@@ -60,6 +65,10 @@ _INIT_ARCHITECTURE_DEFAULTS = {
     "memory_token_visibility": None,
     "memory_layers": None,
     "memory_position_encoding": None,
+    "memory_num_key_value_heads": None,
+    "memory_reader_initialization": "zero_output",
+    "memory_attention_fusion": "residual",
+    "memory_attention_controller_hidden_size": None,
     "memory_dense_window": None,
     "memory_sparse_window": None,
     "memory_sparse_stride": None,
@@ -72,6 +81,7 @@ _INIT_ARCHITECTURE_DEFAULTS = {
     "recirculation_alpha": 0.1,
     "recirculation_mode": "fixed",
     "recurrent_merger": None,
+    "recurrent_controller_hidden_size": None,
     "recurrent_layers": None,
 }
 
@@ -385,6 +395,11 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
     canonical.setdefault("fbt_normalize_gate_input", False)
     canonical.setdefault("fbt_latent_jitter_std", 0.0)
     canonical.setdefault("recurrent_merger", None)
+    canonical.setdefault("recurrent_controller_hidden_size", None)
+    canonical.setdefault("memory_num_key_value_heads", None)
+    canonical.setdefault("memory_reader_initialization", "zero_output")
+    canonical.setdefault("memory_attention_fusion", "residual")
+    canonical.setdefault("memory_attention_controller_hidden_size", None)
     canonical.setdefault("training_forward", "parallel_multipass")
     canonical.setdefault("freeze_pretrained_until_tokens", 0)
     canonical.setdefault("pretrained_weight_decay", None)

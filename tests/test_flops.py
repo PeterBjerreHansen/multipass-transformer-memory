@@ -27,6 +27,7 @@ def test_frozen_study_flop_report_uses_authoritative_arm_batching():
                 / "benchmarks"
                 / "development"
                 / "frozen_backbone_comparison"
+                / "large"
                 / "STUDY.yaml"
             ),
         ],
@@ -38,28 +39,28 @@ def test_frozen_study_flop_report_uses_authoritative_arm_batching():
     report = json.loads(completed.stdout)
     rows = {row["arm"]: row for row in report["results"]}
     assert {
-        "no_memory_adapter_one_site_100m",
-        "recurrent_recirculation_multipass_100m",
-        "recurrent_projected_residual_multipass_100m",
-        "dense_memory_attention_one_site_100m",
-        "no_memory_adapter_two_site_100m",
-        "recurrent_projected_residual_two_site_100m",
-        "recurrent_recirculation_two_site_100m",
-        "dense_memory_attention_multipass_100m",
-        "strided_memory_attention_multipass_100m",
-        "dense_and_strided_memory_attention_multipass_100m",
-    } <= set(rows)
+        "adapter_baseline_100m",
+        "dense_memory_attention_residual_100m",
+        "recurrent_recirculation_100m",
+        "recurrent_projected_residual_100m",
+        "strided_memory_attention_stride8_100m",
+        "dense_and_strided_memory_attention_stride8_100m",
+        "dense_memory_attention_destination_gated_aligned_100m",
+        "dense_memory_attention_residual_aligned_100m",
+        "dense_memory_attention_attention_gated_aligned_100m",
+        "dense_memory_attention_dual_gated_aligned_100m",
+    } == set(rows)
     assert {
         (row["batch_size"], row["grad_accum_steps"])
         for row in rows.values()
         if "dense_and_strided" not in row["arm"]
     } == {(8, 4)}
-    combined = rows["dense_and_strided_memory_attention_multipass_100m"]
+    combined = rows["dense_and_strided_memory_attention_stride8_100m"]
     assert (combined["batch_size"], combined["grad_accum_steps"]) == (4, 8)
     assert {row["optimizer_batch_tokens"] for row in rows.values()} == {65_536}
     assert all(row["estimated_training_flops_total"] > 0 for row in rows.values())
-    assert rows["recurrent_recirculation_multipass_100m"]["training_forward"] == "parallel_multipass"
-    assert rows["recurrent_recirculation_multipass_100m"]["relative_training_flops"] > 1.0
+    assert rows["recurrent_recirculation_100m"]["training_forward"] == "parallel_multipass"
+    assert rows["recurrent_recirculation_100m"]["relative_training_flops"] > 1.0
 
 
 def test_wiring_budget_report_instantiates_matched_groups_and_stride_spans():
@@ -73,6 +74,7 @@ def test_wiring_budget_report_instantiates_matched_groups_and_stride_spans():
                 / "benchmarks"
                 / "development"
                 / "frozen_backbone_comparison"
+                / "large"
                 / "STUDY.yaml"
             ),
         ],
@@ -87,20 +89,9 @@ def test_wiring_budget_report_instantiates_matched_groups_and_stride_spans():
         for group in report["matched_groups"].values()
     )
     rows = {row["arm"]: row for row in report["arms"]}
-    expected = {
-        8: (256, 256),
-        16: (128, 512),
-        32: (64, 1024),
-        64: (32, 2048),
-    }
-    for stride, (writes, span) in expected.items():
-        arm = (
-            "strided_memory_attention_multipass_100m"
-            if stride == 32
-            else f"strided_memory_attention_stride{stride}_two_site_100m"
-        )
-        assert rows[arm]["physical_write_count"] == writes
-        assert rows[arm]["effective_memory_span_tokens"] == span
+    assert rows["strided_memory_attention_stride8_100m"]["physical_write_count"] == 256
+    assert rows["strided_memory_attention_stride8_100m"]["effective_memory_span_tokens"] == 256
+    assert rows["dense_and_strided_memory_attention_stride8_100m"]["physical_write_count"] == 2048
 
 
 def test_recurrent_memory_counts_shared_writer_and_each_merger():
@@ -259,3 +250,41 @@ def test_optional_hybrid_counts_both_writer_applications_and_shared_mergers():
         assert hybrid.forward.memory_reader_projections == attention.forward.memory_reader_projections
         assert hybrid.forward.recurrent_controller == recurrent.forward.recurrent_controller
         assert hybrid.forward.recurrent_projection == recurrent.forward.recurrent_projection
+
+
+def test_attention_fusion_controller_cost_tracks_one_or_two_gate_heads():
+    config = tiny_mistral_248m_config()
+    common = dict(
+        variant="dense_memory_attention",
+        passes=2,
+        linguistic_sequence_length=128,
+        memory_layers=[3, 7],
+        memory_num_key_value_heads=16,
+    )
+    residual = estimate_pass(config, **common)
+    destination = estimate_pass(
+        config,
+        memory_attention_fusion="destination_gated",
+        memory_attention_controller_hidden_size=64,
+        **common,
+    )
+    attention = estimate_pass(
+        config,
+        memory_attention_fusion="attention_gated",
+        memory_attention_controller_hidden_size=64,
+        **common,
+    )
+    dual = estimate_pass(
+        config,
+        memory_attention_fusion="dual_gated",
+        memory_attention_controller_hidden_size=64,
+        **common,
+    )
+    assert destination.forward.memory_writer == residual.forward.memory_writer
+    assert destination.forward.memory_reader_projections == residual.forward.memory_reader_projections
+    assert destination.forward.memory_reader_products == residual.forward.memory_reader_products
+    assert residual.forward.memory_fusion_controller == 0
+    assert destination.forward.memory_fusion_controller > 0
+    assert attention.forward.memory_fusion_controller == destination.forward.memory_fusion_controller
+    assert dual.forward.memory_fusion_controller > destination.forward.memory_fusion_controller
+    assert dual.forward.recurrent_controller == 0

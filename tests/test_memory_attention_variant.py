@@ -80,6 +80,93 @@ def test_zero_initialized_memory_is_exact_vanilla_at_every_pass_depth():
         )
 
 
+def test_aligned_gqa_initialization_is_nonzero_and_group_aligned():
+    model = MemoryAttentionVariant(
+        backbone(seed=5),
+        memory_window=4,
+        memory_write_mode="dense",
+        memory_layers=[0],
+        memory_position_encoding="none",
+        memory_num_key_value_heads=2,
+        memory_reader_initialization="aligned_gqa",
+        initialization_seed=991,
+    ).eval()
+    reader = model.memory_readers["0"]
+    group_size = reader.num_heads // reader.num_key_value_heads
+
+    assert torch.count_nonzero(reader.o_proj.weight) > 0
+    for kv_head in range(reader.num_key_value_heads):
+        first_query_head = kv_head * group_size
+        for group_offset in range(1, group_size):
+            other_query_head = first_query_head + group_offset
+            first = reader.q_proj.weight[
+                first_query_head * reader.head_dim : (first_query_head + 1) * reader.head_dim
+            ]
+            other = reader.q_proj.weight[
+                other_query_head * reader.head_dim : (other_query_head + 1) * reader.head_dim
+            ]
+            torch.testing.assert_close(first, other, atol=0, rtol=0)
+        key = reader.k_proj.weight[
+            kv_head * reader.head_dim : (kv_head + 1) * reader.head_dim
+        ]
+        query = reader.q_proj.weight[
+            first_query_head * reader.head_dim : (first_query_head + 1) * reader.head_dim
+        ]
+        torch.testing.assert_close(query, key, atol=0, rtol=0)
+
+    ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
+    with torch.no_grad():
+        passes = model.compute_passes(ids, passes=2)
+    torch.testing.assert_close(
+        passes.passes[0].hidden_states[:, 0],
+        passes.passes[1].hidden_states[:, 0],
+        atol=0,
+        rtol=0,
+    )
+    assert not torch.allclose(
+        passes.passes[0].hidden_states[:, 1:],
+        passes.passes[1].hidden_states[:, 1:],
+    )
+
+
+@pytest.mark.parametrize(
+    "fusion", ["destination_gated", "attention_gated", "dual_gated"]
+)
+def test_attention_fusion_controllers_are_added_parameters(fusion):
+    model = MemoryAttentionVariant(
+        backbone(seed=5),
+        memory_window=4,
+        memory_write_mode="dense",
+        memory_layers=[0],
+        memory_position_encoding="none",
+        memory_reader_initialization="aligned_gqa",
+        memory_attention_fusion=fusion,
+        memory_attention_controller_hidden_size=4,
+        initialization_seed=991,
+    )
+    destination = torch.randn(2, 3, model.config.hidden_size)
+    memory = torch.randn_like(destination)
+    adapter = model.memory_attention_fusions["0"]
+    gates = adapter.gate_values(memory, destination)
+    if fusion in {"attention_gated", "dual_gated"}:
+        assert gates.alpha is not None
+        torch.testing.assert_close(gates.alpha, torch.full_like(gates.alpha, 0.1))
+    else:
+        assert gates.alpha is None
+    if fusion in {"destination_gated", "dual_gated"}:
+        assert gates.beta is not None
+        torch.testing.assert_close(gates.beta, torch.full_like(gates.beta, 0.9))
+    else:
+        assert gates.beta is None
+
+    available = torch.tensor([[False, True, True], [False, False, True]])
+    fused = model._fuse_memory(0, destination, memory, available=available)
+    torch.testing.assert_close(fused[~available], destination[~available], atol=0, rtol=0)
+    assert not torch.allclose(fused[available], destination[available])
+    added = {id(parameter) for parameter in model.added_parameters()}
+    assert all(id(parameter) in added for parameter in adapter.parameters())
+
+
 def test_periodic_write_mask_uses_completed_stride_positions():
     model = memory_model(mode="periodic", stride=4)
     ids = torch.arange(10)[None, :]

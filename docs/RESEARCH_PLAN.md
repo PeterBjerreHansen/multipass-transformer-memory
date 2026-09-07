@@ -95,8 +95,10 @@ about full-model pretraining or frontier performance.
 - Use the same injection locations within each site-count group.
 - Match added trainable parameters within approximately 10 percent and keep
   estimated training FLOPs as close as practical.
-- Use native initialization and the same predefined learning-rate qualification
-  grid for every trained arm.
+- Use native initialization and a common predefined added-parameter learning
+  rate. The completed base-family grid selected `1e-3` uniformly; aligned-GQA
+  and gated fusion adopt that development rate without claiming per-cell LR
+  optimality.
 - Sample K per microbatch with 90 percent K=2 and 10 percent K=3.
 - Optimize final-pass loss only.
 - Use the same data, token order, snapshots, scoring targets and precision.
@@ -105,29 +107,20 @@ about full-model pretraining or frontier performance.
 
 ### Arm sequence
 
-The first group uses one injection site at layer `[3]`. The second uses two sites
-at layers `[3, 7]`. Each group contains:
+The active frozen comparison uses one selected reader layout, `[3, 7]`, and
+nested breadth tiers:
 
-1. No-memory Adapter;
-2. projected-residual Fixed-route State Injection;
-3. Recirculation-inspired Fixed-route State Injection; and
-4. Dense Memory Attention.
+1. `small`: No-memory Adapter, projected-residual Fixed-route State Injection,
+   Recirculation-inspired Fixed-route State Injection, and aligned-GQA
+   destination-gated Memory Attention;
+2. `medium`: the small tier plus stride-8, dense-and-strided stride-8, and a
+   zero-output residual Memory Attention control;
+3. `large`: the medium tier plus aligned-GQA residual, attention-gated, and
+   dual-gated Memory Attention.
 
-One-site and two-site groups are matched internally. Their cross-group difference
-is a practical architecture ablation, not a pure estimate of injection-count
-causality.
-
-After the dense groups are healthy, run one-site and two-site Strided Memory
-Attention, followed by Dense-and-strided Memory Attention. These layouts test
-whether access to regularly spaced older records remains competitive when recent
-records are omitted or combined with dense memory.
-
-Preserve a separate stride-length ablation for Strided Memory Attention. Hold the
-chosen site count, memory-window capacity, data, training schedule and parameter
-configuration fixed while varying the physical-position write stride `C`. Report
-the resulting write count, effective memory span and measured compute for each
-stride. This ablation tests memory spacing; it is not folded into the primary
-dense-versus-fixed-route comparison.
+The `[3, 7]` layout and stride 8 are fixed development choices informed by
+private exploratory checks. They are not formal study results or claims of
+optimality. The active 100M manifests do not reopen those layout choices.
 
 The stride origin is the actual physical input sequence: zero-based position `t`
 writes when `(t + 1) % C == 0`. A synthetic BOS prepended by a diagnostic is an

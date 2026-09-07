@@ -181,6 +181,39 @@ def test_checkpoint_rejects_training_config_changes(tmp_path):
         )
 
 
+def test_old_attention_checkpoint_inherits_neutral_reader_and_fusion_defaults(tmp_path):
+    model, optimizer = _objects()
+    recorded = {
+        "variant": "memory_attention",
+        "memory_pattern": "dense",
+        "memory_write_mode": "dense",
+    }
+    path = save_checkpoint(
+        tmp_path / "old-attention.pt",
+        model=model,
+        optimizer=optimizer,
+        sampler_state=StatefulBlockSampler(5, seed=3).state_dict(),
+        train_state=TrainState(),
+        experiment_config=recorded,
+        data_manifest_sha256="same",
+    )
+    requested = {
+        **recorded,
+        "memory_num_key_value_heads": None,
+        "memory_reader_initialization": "zero_output",
+        "memory_attention_fusion": "residual",
+        "memory_attention_controller_hidden_size": None,
+    }
+    replacement, replacement_optimizer = _objects()
+    load_checkpoint(
+        path,
+        model=replacement,
+        optimizer=replacement_optimizer,
+        expected_manifest_sha256="same",
+        expected_experiment_config=requested,
+    )
+
+
 def test_evaluation_checkpoint_rejects_semantic_config_changes(tmp_path):
     model, optimizer = _objects()
     sampler = StatefulBlockSampler(5, seed=3)
@@ -392,6 +425,10 @@ def test_clean_break_rejects_old_checkpoint_format(tmp_path):
 @pytest.mark.parametrize("field,value", [
     ("memory_pattern", "strided"),
     ("memory_layers", [1]),
+    ("memory_num_key_value_heads", 1),
+    ("memory_reader_initialization", "aligned_gqa"),
+    ("memory_attention_fusion", "dual_gated"),
+    ("memory_attention_controller_hidden_size", 4),
     ("recurrent_merger", "recirculation"),
     ("recurrent_layers", [1]),
 ])

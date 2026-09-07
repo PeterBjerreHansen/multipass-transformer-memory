@@ -3,7 +3,8 @@
 The estimator intentionally counts the large matrix products that dominate
 Transformer training.  One multiply-add is counted as two FLOPs.  It includes
 the backbone projections, attention score/value products, LM-head projections,
-Memory Attention projections/attention, and recurrent controller/projection matrices.
+Memory Attention projections/attention/fusion controllers, and recurrent
+controller/projection matrices.
 
 LayerNorm/RMSNorm, activations, softmax, RoPE, masking/gathering, residual
 adds, embedding lookups, and optimizer bookkeeping are not assigned synthetic
@@ -185,6 +186,7 @@ class FlopBreakdown:
     memory_writer: int = 0
     memory_reader_projections: int = 0
     memory_reader_products: int = 0
+    memory_fusion_controller: int = 0
     recurrent_controller: int = 0
     recurrent_projection: int = 0
 
@@ -439,6 +441,8 @@ def estimate_pass(
     memory_token_visibility: str = "visible",
     memory_layers: Iterable[int] | str = "all",
     memory_num_key_value_heads: int | None = None,
+    memory_attention_fusion: str = "residual",
+    memory_attention_controller_hidden_size: int | None = None,
     memory_dense_window: int | None = None,
     memory_sparse_window: int | None = None,
     memory_sparse_stride: int | None = None,
@@ -564,6 +568,63 @@ def estimate_pass(
         adaptive_recirculation=recirculation_mode == "adaptive",
     )
     per_pass_extra = memory + recurrent
+    if uses_memory:
+        if memory_attention_fusion not in {
+            "residual",
+            "destination_gated",
+            "attention_gated",
+            "dual_gated",
+        }:
+            raise ValueError(
+                "memory_attention_fusion must be residual, destination_gated, "
+                "attention_gated, or dual_gated"
+            )
+        if memory_attention_fusion != "residual":
+            if memory_attention_controller_hidden_size is None:
+                raise ValueError(
+                    "gated memory attention fusion requires "
+                    "memory_attention_controller_hidden_size"
+                )
+            controller_width = _validate_positive(
+                "memory_attention_controller_hidden_size",
+                memory_attention_controller_hidden_size,
+            )
+            gate_count = 2 if memory_attention_fusion == "dual_gated" else 1
+            reader_layer_count = (
+                int(config.num_hidden_layers)
+                if memory_layers == "all"
+                else len(tuple(memory_layers))
+            )
+            controller = reader_layer_count * (
+                _linear_flops(
+                    physical_length,
+                    2 * int(config.hidden_size),
+                    controller_width,
+                )
+                + _linear_flops(
+                    physical_length, controller_width, controller_width
+                )
+                + _linear_flops(
+                    physical_length,
+                    controller_width,
+                    gate_count * int(config.hidden_size),
+                )
+            )
+            per_pass_extra = per_pass_extra + FlopBreakdown(
+                memory_fusion_controller=controller
+            )
+        elif memory_attention_controller_hidden_size is not None:
+            raise ValueError(
+                "memory_attention_controller_hidden_size is not used by "
+                "residual fusion"
+            )
+    elif (
+        memory_attention_fusion != "residual"
+        or memory_attention_controller_hidden_size is not None
+    ):
+        raise ValueError(
+            "memory attention fusion fields apply only to Memory Attention"
+        )
     if variant in {"recurrent_memory", "no_memory_adapter"} or (
         uses_memory and recurrent_merger is not None
     ):
@@ -647,6 +708,8 @@ def estimate_schedule(
     memory_token_visibility: str = "visible",
     memory_layers: Iterable[int] | str = "all",
     memory_num_key_value_heads: int | None = None,
+    memory_attention_fusion: str = "residual",
+    memory_attention_controller_hidden_size: int | None = None,
     memory_dense_window: int | None = None,
     memory_sparse_window: int | None = None,
     memory_sparse_stride: int | None = None,
@@ -684,6 +747,10 @@ def estimate_schedule(
             memory_token_visibility=memory_token_visibility,
             memory_layers=memory_layers,
             memory_num_key_value_heads=memory_num_key_value_heads,
+            memory_attention_fusion=memory_attention_fusion,
+            memory_attention_controller_hidden_size=(
+                memory_attention_controller_hidden_size
+            ),
             memory_dense_window=memory_dense_window,
             memory_sparse_window=memory_sparse_window,
             memory_sparse_stride=memory_sparse_stride,

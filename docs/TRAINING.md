@@ -191,8 +191,8 @@ Feedback NLL is disabled unless `feedback_eval_at_tokens` is nonempty.
 These thresholds must be a subset of `snapshot_at_tokens`.
 `feedback_eval_max_blocks` sets the number of complete prefix blocks.
 `feedback_eval_autocast_dtype` selects the [evaluation precision](../evaluation/README.md#precision).
-The [main frozen protocol](../benchmarks/development/frozen_backbone_comparison/README.md)
-documents the enabled milestones. The LR sweep leaves this schedule off.
+The [frozen comparison tiers](../benchmarks/development/frozen_backbone_comparison/README.md)
+document the shared enabled milestones. The LR sweep leaves this schedule off.
 
 After crossing a selected threshold, the trainer commits resumable state,
 publishes the durable snapshot, then evaluates full-block BOS-only feedback NLL

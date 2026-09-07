@@ -6,11 +6,10 @@ architecture, training and evaluation contracts until a stage below is complete.
 This plan does not authorize paid cloud runs.
 
 Implementation status: Stages 0–6 are implemented in the working tree. The
-stride ablation was fixed before results at two sites with physical strides
-`C = 8, 16, 32, 64`, memory capacity 32, and corresponding effective spans
-of 256, 512, 1,024, and 2,048 physical tokens. The local 20M injection-site and
-stride pilots are materialized but gated until LR qualification is reviewed.
-Stage 7 remains the next stage; its target-GPU checks have not been run.
+development defaults are `[3, 7]`, stride 8, `aligned_gqa` for the gated reader,
+and added-parameter LR `1e-3`. The frozen comparison is organized into nested
+`small`, `medium`, and `large` manifests; the small tier is primary and no tier
+has been launched. Stage 7 remains the target-GPU preflight and launch gate.
 
 ## Design constraints
 
@@ -185,23 +184,23 @@ for loading inputs and writing results.
 **Work**
 
 1. Replace the current unequal-site frozen study with two internally matched
-   study groups:
+   study tiers:
 
-   | Group | Sites | Arms |
-   | --- | --- | --- |
-   | One-site dense | `[3]` | No-memory, projected residual, Recirculation-inspired, dense attention |
-   | Two-site dense | `[3, 7]` | No-memory, projected residual, Recirculation-inspired, dense attention |
+   | Tier | Arms | Scope |
+   | --- | ---: | --- |
+   | `small` | 4 | Adapter, aligned destination-gated attention, recirculation, projected residual |
+   | `medium` | 7 | Small plus stride-8, dense-and-strided stride-8, zero-output residual attention |
+   | `large` | 10 | Medium plus aligned-reader residual, attention-gated, and dual-gated attention |
 
-2. Preserve the agreed 100M-token frozen-backbone protocol, native
-   initialization, per-microbatch 90/10 K=2/K=3 sampling and final-pass loss.
-3. Apply the same predefined LR grid to every newly parameterized arm. Do not
-   search additional architecture choices after observing full-run results.
-4. Add one-site and two-site Strided Memory Attention only after the dense groups
-   pass preflight; add Dense-and-strided Memory Attention afterward.
-5. Preserve the planned stride-length sub-study. Choose its site-count group
-   before looking at stride results, then vary only `memory_write_stride` while
-   holding memory capacity, parameterization, data and training schedule fixed.
-6. Keep preflight, qualification and scientific trajectories in separate output
+2. Preserve one common 100M-token frozen-backbone protocol, native
+   initialization, per-microbatch 90/10 K=2/K=3 sampling and final-pass loss
+   across all tiers.
+3. Keep every arm at the fixed `[3, 7]` reader layout. Do not repeat exploratory
+   one-site or stride-length matrices in the active frozen tiers.
+4. Make reader initialization and fusion explicit in every Memory Attention
+   config. Use aligned-GQA destination gating for the primary attention arm and
+   retain `zero_output` plus `residual` as a medium-tier control.
+5. Keep preflight, qualification and scientific trajectories in separate output
    directories. A qualification checkpoint is not the beginning of a 100M run.
 
 **Completion check**
@@ -239,31 +238,26 @@ for loading inputs and writing results.
 
 **Work**
 
-1. Run equal-budget LR qualification for the dense one-site and two-site groups.
-2. Lock one LR per arm using held-out NLL and basic numerical stability.
-3. Review `1e-3` as the common rate for the fresh 20M injection-site pilot,
-   changing it only if the sweep gives a clear stability or optimization reason;
-   then run that pilot.
-4. Copy the qualified two-site attention-family rates into the fresh 20M stride
-   pilot and run its dense reference, pure strides `C = 8, 16, 32, 64`, and
-   dense-plus-strided `C = 8, 16, 32` arms.
-5. Review both pilots before launching any fresh 100M trajectory. Do not
-   initialize a 100M arm from a pilot or qualification checkpoint.
-6. Launch fresh 100M trajectories for the dense groups, followed by the
-   predeclared strided and dense-and-strided extensions.
-7. Inspect normal validation first, then run the separate intervention and
-   fidelity diagnostics at selected snapshots.
-8. Produce curves against unique tokens, estimated FLOPs and measured time.
-9. Replicate only decisive finalists after the pipeline and selection policy are
+1. Retain `1e-3` as the common development rate. The completed base-family
+   qualification selected it uniformly; aligned-GQA and gated fusion adopt it
+   without a new sweep or a claim of per-cell LR optimality.
+2. Do not initialize a 100M arm from a pilot or qualification checkpoint.
+3. Launch the `small`, `medium`, or `large` manifest explicitly; the tiers are
+   nested and differ only in model count.
+4. Inspect normal validation first, then run separate feedback, intervention,
+   and fidelity diagnostics at selected snapshots.
+5. Produce curves against unique tokens, estimated FLOPs and measured time.
+6. Replicate only decisive finalists after the pipeline and selection policy are
    stable.
 
 **Completion check**
 
 - Every plotted point resolves to a checkpoint and study manifest.
-- One-site and two-site comparisons are never pooled as if site count were held
-  constant.
-- Both 20M pilots have fresh outputs, recorded rate choices and completed
-  manifests before the 100M study gate is opened.
+- The three nested tiers use identical protocol quality and differ only in arm
+  count; `[3, 7]` is a fixed development setting rather than a pooled estimate
+  from a separate site-count comparison.
+- The fixed layout, initialization, fusion, and LR choices are explicit in the
+  active configs before the 100M study gate is opened.
 - Parallel K=4, Live Feedback and standard K=1 remain separately labelled.
 - Intervention results are diagnostics, not routine stopping criteria.
 

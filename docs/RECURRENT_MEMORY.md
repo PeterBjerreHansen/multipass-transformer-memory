@@ -99,11 +99,16 @@ training and validation are removed from the codebase.
 
 ## Study and compatibility
 
-The frozen comparison has separate one-site and two-site groups containing the
-No-memory Adapter, both recurrent mergers, and Dense Memory Attention. Strided
-and dense-and-strided attention are later extensions. All use 2048-token blocks,
-identical training K distributions and objectives, and the same four-value LR
-qualification grid for each mechanism and site count.
+The frozen comparison is organized as nested `small`, `medium`, and `large`
+studies under
+[`benchmarks/development/frozen_backbone_comparison`](../benchmarks/development/frozen_backbone_comparison/README.md).
+Every tier uses the fixed `[3, 7]` reader layout and the same 2048-token
+blocks, K distribution, objective, and 100M-token protocol. The small tier
+contains the No-memory Adapter, both recurrent mergers, and dense Memory
+Attention with aligned-GQA destination gating. Medium adds stride-8
+retention and a zero-output residual-attention control; large adds the remaining
+aligned-reader fusion controls. Private exploratory checks do not form part of
+the active study contract.
 
 The new recurrent configs have distinct arm IDs and output directories. Old
 middle-layer weights cannot be resumed as late-memory weights. Checkpoint

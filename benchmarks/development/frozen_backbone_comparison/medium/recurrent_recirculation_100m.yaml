@@ -1,0 +1,7 @@
+extends: ../protocol_100m.yml
+variant: recurrent_memory
+recurrent_merger: recirculation
+recurrent_controller_hidden_size: 660
+memory_window: 1
+memory_layers: [3, 7]
+output_dir: benchmarks/development/frozen_backbone_comparison/medium/results/recurrent_recirculation_100m

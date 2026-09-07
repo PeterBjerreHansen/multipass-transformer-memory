@@ -157,6 +157,58 @@ def test_cached_exact_k_pass_matches_full_prefix(hybrid, mode, visibility, passe
             )
 
 
+@pytest.mark.parametrize(
+    "fusion",
+    ["residual", "destination_gated", "attention_gated", "dual_gated"],
+)
+@pytest.mark.parametrize("passes", [2, 3])
+def test_target_shaped_aligned_fusion_cached_exact_path_matches_full_prefix(
+    fusion, passes
+):
+    torch.manual_seed(222)
+    model = MemoryAttentionVariant(
+        MistralForCausalLM(
+            micro_config(
+                hidden_size=64,
+                intermediate_size=128,
+                num_attention_heads=32,
+                num_key_value_heads=16,
+                head_dim=2,
+                num_hidden_layers=8,
+                sliding_window=4,
+            ),
+            attention_backend="reference",
+        ),
+        memory_window=3,
+        memory_write_mode="dense",
+        memory_write_stride=1,
+        memory_layers=[3, 7],
+        memory_num_key_value_heads=16,
+        memory_reader_initialization="aligned_gqa",
+        memory_attention_fusion=fusion,
+        memory_attention_controller_hidden_size=(
+            None if fusion == "residual" else 64
+        ),
+        initialization_seed=909,
+    ).eval()
+    ids = sequence(model, "dense")
+    prompt_len = 4
+    with torch.no_grad():
+        state = prefill_exact_k_pass(model, ids[:, :prompt_len], passes=passes)
+        for position in range(prompt_len, ids.shape[1] + 1):
+            prefix = ids[:, :position]
+            full = model.compute_passes(prefix, passes=passes)
+            expected = model.backbone.lm_head(
+                full.final.hidden_states[:, -1:, :]
+            ).float()[:, -1, :]
+            torch.testing.assert_close(
+                state.next_token_logits, expected, atol=8e-5, rtol=8e-5
+            )
+            if position == ids.shape[1]:
+                break
+            state = exact_decode_step(model, state, ids[:, position : position + 1])
+
+
 @pytest.mark.parametrize("hybrid", [False, True])
 @pytest.mark.parametrize("mode,visibility", [
     ("periodic", "visible"),

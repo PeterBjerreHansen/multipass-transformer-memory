@@ -1,0 +1,61 @@
+name: medium
+status: planned
+learning_rates_qualified: true
+question: >-
+  Under the common frozen-backbone protocol, do the selected stride and
+  destination-gated Memory Attention representatives add useful behavior to
+  the small core comparison?
+data_artifacts:
+  data/dolmino/gpu_2048: f631956c92f94bdd61e4c073359e9e0e7c20e8ddc5bb3cd1a378954e93fa2fcb
+arms:
+  - {id: adapter_baseline_100m, config: adapter_baseline_100m.yaml}
+  - {id: dense_memory_attention_residual_100m, config: dense_memory_attention_residual_100m.yaml}
+  - {id: recurrent_recirculation_100m, config: recurrent_recirculation_100m.yaml}
+  - {id: recurrent_projected_residual_100m, config: recurrent_projected_residual_100m.yaml}
+  - {id: strided_memory_attention_stride8_100m, config: strided_memory_attention_stride8_100m.yaml}
+  - {id: dense_and_strided_memory_attention_stride8_100m, config: dense_and_strided_memory_attention_stride8_100m.yaml}
+  - {id: dense_memory_attention_destination_gated_aligned_100m, config: dense_memory_attention_destination_gated_aligned_100m.yaml}
+comparisons:
+  - name: core_representatives
+    arms:
+      - adapter_baseline_100m
+      - dense_memory_attention_residual_100m
+      - recurrent_recirculation_100m
+      - recurrent_projected_residual_100m
+    experimental_axes:
+      - variant
+      - memory_window
+      - memory_pattern
+      - memory_write_mode
+      - memory_position_encoding
+      - memory_num_key_value_heads
+      - memory_reader_initialization
+      - memory_attention_fusion
+      - memory_attention_controller_hidden_size
+      - recurrent_merger
+      - recurrent_controller_hidden_size
+    allowed_differences: []
+  - name: attention_retention
+    arms:
+      - dense_memory_attention_residual_100m
+      - strided_memory_attention_stride8_100m
+      - dense_and_strided_memory_attention_stride8_100m
+    experimental_axes:
+      - variant
+      - memory_window
+      - memory_pattern
+      - memory_write_mode
+      - memory_write_stride
+      - memory_dense_window
+      - memory_sparse_window
+      - memory_sparse_stride
+    allowed_differences: [batch_size, grad_accum_steps]
+  - name: destination_gate_candidate
+    arms:
+      - dense_memory_attention_residual_100m
+      - dense_memory_attention_destination_gated_aligned_100m
+    experimental_axes:
+      - memory_reader_initialization
+      - memory_attention_fusion
+      - memory_attention_controller_hidden_size
+    allowed_differences: []

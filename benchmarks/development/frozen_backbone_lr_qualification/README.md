@@ -76,12 +76,12 @@ uv run python scripts/run_study.py \
 ```
 
 Choose each mechanism's rate using final-pass K=4 validation NLL plus the
-minimal finite-loss/no-catastrophic-instability guardrail. The long comparison
-may use different selected rates per mechanism; retain `added_learning_rate` as
-an explicit allowed difference in the long comparison and report the qualification budget.
+minimal finite-loss/no-catastrophic-instability guardrail. Every tested group
+selected `1.0e-3`, which is used as the common frozen-comparison development
+rate. Report the qualification budget.
 
 The 2,048-token qualification supersedes the earlier 1,024-token rate sweep.
 The earlier qualification was invalidated with the padded artifact. This reset
 qualification was rerun on the clean artifact, and its selected `1.0e-3` rate
-is now carried by the frozen-comparison and ad-hoc pilot configs. Do not reuse
-the qualification checkpoints as initialization for those fresh trajectories.
+is now carried by the frozen comparison and private exploratory configs. Do not
+reuse the qualification checkpoints as initialization for fresh trajectories.

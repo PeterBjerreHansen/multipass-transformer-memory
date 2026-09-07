@@ -39,6 +39,9 @@ def build_variant(
     memory_layers: str | list[int] = "all",
     memory_position_encoding: str = "rope",
     memory_num_key_value_heads: int | None = None,
+    memory_reader_initialization: str = "zero_output",
+    memory_attention_fusion: str = "residual",
+    memory_attention_controller_hidden_size: int | None = None,
     memory_dense_window: int = 32,
     memory_sparse_window: int = 32,
     memory_sparse_stride: int = 32,
@@ -69,6 +72,14 @@ def build_variant(
             raise ValueError("memory_pattern and recurrent_layers apply only to Memory Attention")
         if recurrent_merger is not None and name != "recurrent_memory":
             raise ValueError("recurrent_merger requires recurrent_memory or Memory Attention")
+        if (
+            memory_reader_initialization != "zero_output"
+            or memory_attention_fusion != "residual"
+            or memory_attention_controller_hidden_size is not None
+        ):
+            raise ValueError(
+                "memory attention reader/fusion fields require Memory Attention"
+            )
     if name != "recirculation" and (
         recirculation_source_layer is not None or recirculation_destination_layer is not None
         or recirculation_alpha != 0.1 or recirculation_mode != "fixed"
@@ -145,6 +156,11 @@ def build_variant(
             memory_layers=memory_layers,
             memory_position_encoding=memory_position_encoding,
             memory_num_key_value_heads=memory_num_key_value_heads,
+            memory_reader_initialization=memory_reader_initialization,
+            memory_attention_fusion=memory_attention_fusion,
+            memory_attention_controller_hidden_size=(
+                memory_attention_controller_hidden_size
+            ),
             memory_dense_window=memory_dense_window,
             memory_sparse_window=memory_sparse_window,
             memory_sparse_stride=memory_sparse_stride,
@@ -189,6 +205,9 @@ def load_variant(
     memory_layers: str | list[int] = "all",
     memory_position_encoding: str = "rope",
     memory_num_key_value_heads: int | None = None,
+    memory_reader_initialization: str = "zero_output",
+    memory_attention_fusion: str = "residual",
+    memory_attention_controller_hidden_size: int | None = None,
     memory_dense_window: int = 32,
     memory_sparse_window: int = 32,
     memory_sparse_stride: int = 32,
@@ -225,6 +244,11 @@ def load_variant(
         memory_layers=memory_layers,
         memory_position_encoding=memory_position_encoding,
         memory_num_key_value_heads=memory_num_key_value_heads,
+        memory_reader_initialization=memory_reader_initialization,
+        memory_attention_fusion=memory_attention_fusion,
+        memory_attention_controller_hidden_size=(
+            memory_attention_controller_hidden_size
+        ),
         memory_dense_window=memory_dense_window,
         memory_sparse_window=memory_sparse_window,
         memory_sparse_stride=memory_sparse_stride,
@@ -258,6 +282,11 @@ def _architecture_kwargs(cfg: "ExperimentConfig") -> dict:
             "rope" if cfg.memory_position_encoding is None else cfg.memory_position_encoding
         ),
         memory_num_key_value_heads=cfg.memory_num_key_value_heads,
+        memory_reader_initialization=cfg.memory_reader_initialization,
+        memory_attention_fusion=cfg.memory_attention_fusion,
+        memory_attention_controller_hidden_size=(
+            cfg.memory_attention_controller_hidden_size
+        ),
         memory_dense_window=(
             32 if cfg.memory_dense_window is None else cfg.memory_dense_window
         ),

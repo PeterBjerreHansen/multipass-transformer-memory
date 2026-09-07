@@ -24,13 +24,20 @@ from ..attention.memory_local import (
 from ..feedback import MemoryAttentionState
 from ..config import canonical_memory_write_mode
 from .multipass import MultiPassVariant
-from .memory_modules import MemoryWriter as MemoryAttentionWriter
+from .memory_modules import (
+    MemoryWriter as MemoryAttentionWriter,
+)
+from .memory_attention_fusion import (
+    MEMORY_ATTENTION_FUSIONS,
+    MemoryAttentionFusion,
+)
 from .decoder import DecoderRun as MemoryAttentionCoreRun, run_memory_decoder
 
 
 MEMORY_WRITE_MODES = {"dense", "strided", "periodic", "memory_token"}
 MEMORY_TOKEN_VISIBILITIES = {"visible", "write_only"}
 MEMORY_POSITION_ENCODINGS = {"rope", "none"}
+MEMORY_READER_INITIALIZATIONS = {"zero_output", "aligned_gqa"}
 
 
 class MemoryAttentionReader(nn.Module):
@@ -43,6 +50,7 @@ class MemoryAttentionReader(nn.Module):
         window: int,
         num_key_value_heads: int | None = None,
         position_encoding: str = "rope",
+        initialization: str = "zero_output",
         initialization_seed: int,
     ):
         super().__init__()
@@ -68,6 +76,11 @@ class MemoryAttentionReader(nn.Module):
         if position_encoding not in MEMORY_POSITION_ENCODINGS:
             raise ValueError("position_encoding must be 'rope' or 'none'")
         self.position_encoding = str(position_encoding)
+        if initialization not in MEMORY_READER_INITIALIZATIONS:
+            raise ValueError(
+                "initialization must be 'zero_output' or 'aligned_gqa'"
+            )
+        self.initialization = str(initialization)
         self.rotary_emb = MistralRotaryEmbedding(
             self.head_dim,
             max_position_embeddings=int(config.max_position_embeddings),
@@ -98,13 +111,53 @@ class MemoryAttentionReader(nn.Module):
             self.o_proj = nn.Linear(
                 self.num_heads * self.head_dim, self.hidden_size, bias=False
             )
-            std = float(config.initializer_range)
-            for module in (self.q_proj, self.k_proj, self.v_proj):
-                nn.init.normal_(module.weight, mean=0.0, std=std)
-            # Retrofitting a pretrained backbone must start as an exact no-op.
-            # The output projection learns first; once it moves away from zero,
-            # gradients reach Q/K/V and the writer on subsequent updates.
-            nn.init.zeros_(self.o_proj.weight)
+            if self.initialization == "zero_output":
+                std = float(config.initializer_range)
+                for module in (self.q_proj, self.k_proj, self.v_proj):
+                    nn.init.normal_(module.weight, mean=0.0, std=std)
+                # Retrofitting a pretrained backbone starts as an exact no-op.
+                # The output projection learns first; once it moves away from
+                # zero, gradients reach Q/K/V and the writer.
+                nn.init.zeros_(self.o_proj.weight)
+            else:
+                self._initialize_aligned_gqa()
+
+    def _initialize_aligned_gqa(self) -> None:
+        """Initialize a norm-calibrated content reader in backbone coordinates.
+
+        Each KV head pools the matching query-head chunks. Q uses the same
+        pooled coordinates, while O maps each repeated GQA head back with the
+        reciprocal scale. This is an orthogonal projection onto the subspace
+        shared by each GQA group, rather than a literal identity (which cannot
+        exist when there are fewer KV than query heads).
+        """
+        projected_width = self.num_heads * self.head_dim
+        if projected_width != self.hidden_size:
+            raise ValueError(
+                "aligned_gqa requires hidden_size == num_attention_heads * head_dim"
+            )
+        group_size = self.num_heads // self.num_key_value_heads
+        scale = group_size ** -0.5
+        with torch.no_grad():
+            self.q_proj.weight.zero_()
+            self.k_proj.weight.zero_()
+            self.v_proj.weight.zero_()
+            self.o_proj.weight.zero_()
+            for kv_head in range(self.num_key_value_heads):
+                query_start = kv_head * group_size
+                for offset in range(self.head_dim):
+                    kv_row = kv_head * self.head_dim + offset
+                    for group_offset in range(group_size):
+                        query_head = query_start + group_offset
+                        feature = query_head * self.head_dim + offset
+                        query_row = feature
+                        self.k_proj.weight[kv_row, feature] = scale
+                        self.v_proj.weight[kv_row, feature] = scale
+                        self.o_proj.weight[feature, query_row] = scale
+                        for source_offset in range(group_size):
+                            source_head = query_start + source_offset
+                            source_feature = source_head * self.head_dim + offset
+                            self.q_proj.weight[query_row, source_feature] = scale
 
     @staticmethod
     def _validate_positions(
@@ -425,6 +478,9 @@ class MemoryAttentionVariant(MultiPassVariant):
         memory_layers: str | list[int] = "all",
         memory_position_encoding: str = "rope",
         memory_num_key_value_heads: int | None = None,
+        memory_reader_initialization: str = "zero_output",
+        memory_attention_fusion: str = "residual",
+        memory_attention_controller_hidden_size: int | None = None,
         initialization_seed: int = 4242,
     ):
         super().__init__(backbone)
@@ -464,6 +520,29 @@ class MemoryAttentionVariant(MultiPassVariant):
             raise ValueError("memory_token_visibility applies only to memory_token mode")
         if memory_position_encoding not in MEMORY_POSITION_ENCODINGS:
             raise ValueError("memory_position_encoding must be 'rope' or 'none'")
+        if memory_reader_initialization not in MEMORY_READER_INITIALIZATIONS:
+            raise ValueError(
+                "memory_reader_initialization must be zero_output or aligned_gqa"
+            )
+        if memory_attention_fusion not in MEMORY_ATTENTION_FUSIONS:
+            raise ValueError(
+                "memory_attention_fusion must be residual, destination_gated, "
+                "attention_gated, or dual_gated"
+            )
+        if memory_attention_fusion == "residual":
+            if memory_attention_controller_hidden_size is not None:
+                raise ValueError(
+                    "memory_attention_controller_hidden_size is not used by "
+                    "residual fusion"
+                )
+        elif (
+            memory_attention_controller_hidden_size is None
+            or int(memory_attention_controller_hidden_size) < 1
+        ):
+            raise ValueError(
+                "gated memory attention fusion requires a positive "
+                "memory_attention_controller_hidden_size"
+            )
 
         layer_count = len(backbone.model.layers)
         if memory_layers == "all":
@@ -486,6 +565,13 @@ class MemoryAttentionVariant(MultiPassVariant):
         self.memory_token_visibility = str(memory_token_visibility)
         self.memory_layers = selected_layers
         self.memory_position_encoding = str(memory_position_encoding)
+        self.memory_reader_initialization = str(memory_reader_initialization)
+        self.memory_attention_fusion = str(memory_attention_fusion)
+        self.memory_attention_controller_hidden_size = (
+            None
+            if memory_attention_controller_hidden_size is None
+            else int(memory_attention_controller_hidden_size)
+        )
         self.memory_num_key_value_heads = (
             int(backbone.config.num_key_value_heads)
             if memory_num_key_value_heads is None
@@ -510,7 +596,21 @@ class MemoryAttentionVariant(MultiPassVariant):
                     window=self.memory_window,
                     num_key_value_heads=self.memory_num_key_value_heads,
                     position_encoding=self.memory_position_encoding,
+                    initialization=self.memory_reader_initialization,
                     initialization_seed=int(initialization_seed) + layer_index,
+                )
+                for layer_index in self.memory_layers
+            }
+        )
+        self.memory_attention_fusions = nn.ModuleDict(
+            {
+                str(layer_index): MemoryAttentionFusion(
+                    hidden_size,
+                    mode=self.memory_attention_fusion,
+                    controller_hidden_size=(
+                        self.memory_attention_controller_hidden_size
+                    ),
+                    initialization_seed=int(initialization_seed) + 10_000 + layer_index,
                 )
                 for layer_index in self.memory_layers
             }
@@ -533,6 +633,19 @@ class MemoryAttentionVariant(MultiPassVariant):
         if self.memory_token_embedding is not None:
             yield self.memory_token_embedding
         yield from self.memory_readers.parameters()
+        yield from self.memory_attention_fusions.parameters()
+
+    def _fuse_memory(
+        self,
+        layer_index: int,
+        destination: torch.Tensor,
+        memory_delta: torch.Tensor,
+        *,
+        available: torch.Tensor,
+    ) -> torch.Tensor:
+        return self.memory_attention_fusions[str(layer_index)](
+            destination, memory_delta, available=available
+        )
 
     def memory_token_mask(self, input_ids: torch.Tensor) -> torch.Tensor:
         if input_ids.ndim != 2:
@@ -810,6 +923,7 @@ class MemoryAttentionVariant(MultiPassVariant):
                             memory_mask=memory.valid,
                             query_position_ids=memory_query_positions,
                         )
+                    available = memory.valid.any(dim=1, keepdim=True)
                 else:
                     assert isinstance(memory, MemoryAttentionBatch)
                     memory_delta = self._full_memory_delta(
@@ -818,7 +932,13 @@ class MemoryAttentionVariant(MultiPassVariant):
                         memory,
                         query_position_ids=memory_query_positions,
                     )
-                hidden_states = hidden_states + memory_delta
+                    available = memory.writes_before.gt(0)
+                hidden_states = self._fuse_memory(
+                    layer_index,
+                    hidden_states,
+                    memory_delta,
+                    available=available,
+                )
             if after_memory_attention is not None:
                 hidden_states = after_memory_attention(layer_index, hidden_states)
             return hidden_states

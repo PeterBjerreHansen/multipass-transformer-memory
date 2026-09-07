@@ -47,8 +47,8 @@ All write policies use the same components:
 - a bounded chronological `MemoryAttentionState` during cached/recurrent execution.
 
 Each selected reader layer performs ordinary self-attention first, adds its residual, reads the
-memory records, adds the memory-attention residual, then performs the normalized MLP residual. The
-reader is Mistral-shaped GQA and has its own query/memory RMSNorm plus Q/K/V/O
+memory records, fuses the memory read with the residual stream, then performs the normalized MLP
+residual. The reader is Mistral-shaped GQA and has its own query/memory RMSNorm plus Q/K/V/O
 projections.
 
 During cached inference, each retained memory record is projected once per
@@ -57,10 +57,43 @@ original linguistic sequence position before it enters the cache. Subsequent
 cached reads project and rotate only the query. The raw-memory and projected
 cache paths are required to be numerically identical.
 
-Reader output projections are zero-initialized. Memory Attention starts as an
-exact no-op retrofit: pass 2 and deeper passes equal the SWA Transformer at construction.
-The output projections can learn on the first optimizer step.
-Gradients can then reach Q/K/V and the writer as those projections become nonzero.
+The default `memory_reader_initialization: zero_output` uses random Q/K/V and a
+zero output projection. Memory Attention then starts as an exact no-op retrofit:
+pass 2 and deeper passes equal the SWA Transformer at construction. The output
+projections can learn on the first optimizer step. Gradients can then reach
+Q/K/V and the writer as those projections become nonzero.
+
+The explicit `memory_reader_initialization: aligned_gqa` alternative is nonzero.
+Within each GQA group, Q/K/V start in the same pooled backbone coordinates and
+O maps the repeated query heads back with reciprocal group scaling. It is an
+orthogonal projection onto the group-shared subspace, not a literal identity
+when the reader has fewer KV heads than query heads.
+
+Let `a` be the raw attention output and `d` the destination residual stream.
+The four supported fusion modes are:
+
+```text
+residual:          d' = d + a
+destination_gated: d' = beta(a,d) * d + a
+attention_gated:   d' = d + alpha(a,d) * a
+dual_gated:        d' = beta(a,d) * d + alpha(a,d) * a
+```
+
+The token- and feature-wise sigmoid gates are produced by the same controller
+form over `[a,d]`: LayerNorm followed by two GELU MLP layers and a gate-output
+projection. `alpha` initializes to 0.1 and `beta` to 0.9 using zero output
+weights and biased logits. The gates are independent and are not constrained
+to sum to one. Single-gate modes emit only their named gate; `dual_gated` emits
+both. Gated modes require `memory_attention_controller_hidden_size`, while
+residual fusion has no controller.
+
+Attention fusion does not norm-match `a` to `d`. This keeps all four modes on
+the same raw reader output and makes the study a direct decomposition of which
+contribution is gated. Positions with no strictly-past record bypass every
+fusion exactly. Reader initialization and fusion are separate architecture
+axes and are checked when loading weights. With the default zero-output reader,
+residual and attention-gated fusion are exact no-ops at construction; a
+destination gate can still alter available positions through its beta path.
 
 A memory record is
 
