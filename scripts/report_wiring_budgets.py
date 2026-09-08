@@ -28,6 +28,8 @@ def _initialization(cfg) -> str:
         return "zero_output_projection"
     if cfg.recurrent_merger == "recirculation":
         return "fixed_alpha_beta_controller"
+    if cfg.variant == "vanilla":
+        return "pretrained_backbone"
     return "zero_output_projection"
 
 
@@ -76,6 +78,7 @@ def build_report(study_path: Path, *, sequence_length: int) -> dict:
         added_parameters = sum(
             parameter.numel() for parameter in model.added_parameters()
         )
+        total_parameters = sum(parameter.numel() for parameter in model.parameters())
         probabilities = cfg.normalized_pass_schedule()[0]["probabilities"]
         estimate = estimate_schedule(
             model_config,
@@ -111,6 +114,7 @@ def build_report(study_path: Path, *, sequence_length: int) -> dict:
                 cfg.memory_attention_controller_hidden_size
             ),
             "added_parameters": added_parameters,
+            "total_parameters": total_parameters,
             "weighted_training_flops_per_sequence": estimate.weighted_training_flops,
             "relative_training_flops": estimate.relative_training_flops,
             "pass_probabilities": probabilities,
@@ -122,13 +126,28 @@ def build_report(study_path: Path, *, sequence_length: int) -> dict:
     matched_groups = {}
     for comparison_name, arm_ids in _study_comparisons(study_path):
         counts = [rows_by_arm[arm_id]["added_parameters"] for arm_id in arm_ids]
+        total_counts = [rows_by_arm[arm_id]["total_parameters"] for arm_id in arm_ids]
+        nonzero_counts = [count for count in counts if count > 0]
+        ratio = max(counts) / min(counts) if min(counts) > 0 else None
+        nonzero_ratio = (
+            max(nonzero_counts) / min(nonzero_counts) if nonzero_counts else None
+        )
         matched_groups[comparison_name] = {
             "arms": list(arm_ids),
-            "max_to_min_added_parameter_ratio": max(counts) / min(counts),
-            "within_ten_percent": max(counts) / min(counts) <= 1.1,
+            "contains_zero_added_parameter_baseline": any(count == 0 for count in counts),
+            "max_to_min_added_parameter_ratio": ratio,
+            "within_ten_percent": None if ratio is None else ratio <= 1.1,
+            "max_to_min_nonzero_added_parameter_ratio": nonzero_ratio,
+            "nonzero_added_parameters_within_ten_percent": (
+                None if nonzero_ratio is None else nonzero_ratio <= 1.1
+            ),
+            "max_to_min_total_parameter_ratio": max(total_counts) / min(total_counts),
+            "total_parameters_within_ten_percent": (
+                max(total_counts) / min(total_counts) <= 1.1
+            ),
         }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "study": study.name,
         "sequence_length": sequence_length,
         "model_config": str(model_config_path),

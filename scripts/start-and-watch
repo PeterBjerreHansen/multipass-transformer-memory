@@ -291,6 +291,7 @@ def _transfer(args: argparse.Namespace, remote_output: str) -> None:
         "rsync",
         "-a",
         "--partial",
+        "--delete-delay",
         "--stats",
         "-e",
         ssh_for_rsync,

@@ -159,6 +159,19 @@ Use one trajectory per arm, then rescale the x-axis for data, estimated compute,
 or training-time views during analysis. Do not rerun an arm solely to produce a
 different plot axis.
 
+### Staged trajectories
+
+A study manifest may declare named per-arm token targets. `run_study.py --stage`
+stops each arm at its own target through the trainer's existing
+`--until-unique-tokens` boundary. Every stage target must be an attainable
+microbatch boundary and a durable snapshot threshold; the final stage must equal
+the config's `max_unique_tokens`.
+
+Keep the final horizon and LR schedule in the arm config from the first stage.
+Do not shorten `max_unique_tokens` between stages: cosine schedule state and
+resume compatibility depend on that final horizon. The checkpoint, optimizer,
+sampler, pass scheduler, and RNG state resume normally at the next stage.
+
 ## Evaluation
 
 Trainer validation and standalone NLL now call the same parallel evaluator,

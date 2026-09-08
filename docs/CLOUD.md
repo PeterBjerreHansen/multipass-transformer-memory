@@ -6,7 +6,7 @@ Use a Linux CUDA host, persistent storage and the locked Python environment.
 
 ## Pre-training checks
 
-Run these checks before the frozen LR sweep. Preserve the study's effective optimizer batch.
+Run these checks before a frozen or unfrozen LR sweep. Preserve the study's effective optimizer batch.
 If microbatch size changes, adjust accumulation and record the resolved config.
 
 1. Stage the pinned model and packed dataset on the target host.
@@ -81,6 +81,9 @@ See [evaluation](../evaluation/README.md#precision) for precision choices.
 `scripts/start-and-watch` starts or observes remote training.
 It waits for a durable completed segment, transfers outputs and checks SHA-256 hashes.
 Only then does it apply the requested VM cleanup.
+Each transfer mirrors the remote run directory, removing stale local rolling
+checkpoint files that were pruned remotely while preserving excluded controller
+metadata.
 
 - `--cleanup shutdown` is the default.
 - `--cleanup delete` deletes the compute instance but retains attached volumes.
@@ -111,7 +114,7 @@ The wrapper sends a macOS notification when `osascript` is available, unless `--
 The current planned studies are not eligible until reviewed and locked.
 
 ```bash
-nohup caffeinate -dimsu ./scripts/run-cloud-study \
+nohup caffeinate -dimsu uv run ./scripts/run-cloud-study \
   --host <vm-ip> --vm-id <verda-vm-id> \
   --study-dir benchmarks/core/<locked-study> \
   > /tmp/tinymistral-cloud-study.log 2>&1 &
@@ -127,3 +130,15 @@ On failure, this wrapper attempts VM shutdown but retains remote artifacts.
 This differs from the one-run controller's failure behavior.
 Locally complete, checksum-verified arms are skipped on restart.
 Use repeated `--arm` options for a subset.
+
+For a manifest with per-arm staged targets, add `--stage <name>`. The controller
+passes each arm's target to the trainer, requires the transferred result to have
+reached that target, and retains the VM and intermediate remote outputs for exact resume.
+It deletes an arm's remote output only at that arm's final configured stage.
+
+```bash
+uv run ./scripts/run-cloud-study \
+  --host <vm-ip> --vm-id <verda-vm-id> \
+  --study-dir benchmarks/core/<locked-study> \
+  --stage early_100m
+```

@@ -51,7 +51,14 @@ def test_campaign_requires_verified_manifest_and_readable_current_checkpoint(tmp
     )
     (run / "run.json").write_text("{}\n", encoding="utf-8")
     (run / "segments.jsonl").write_text(
-        json.dumps({"event": "segment_end", "reason": "completed"}) + "\n",
+        json.dumps(
+            {
+                "event": "segment_end",
+                "reason": "completed",
+                "end_unique_tokens": 8,
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     (run / campaign.TRANSFER_MANIFEST).write_text(
@@ -59,6 +66,8 @@ def test_campaign_requires_verified_manifest_and_readable_current_checkpoint(tmp
     )
 
     assert campaign._local_complete(run)
+    assert campaign._local_complete(run, required_tokens=8)
+    assert not campaign._local_complete(run, required_tokens=9)
 
     pointer = json.loads(
         (run / "checkpoints" / "latest.json").read_text(encoding="utf-8")
@@ -69,6 +78,35 @@ def test_campaign_requires_verified_manifest_and_readable_current_checkpoint(tmp
         campaign._local_manifest(run), encoding="utf-8"
     )
     assert not campaign._local_complete(run)
+
+
+def test_intermediate_cloud_stage_retains_remote_checkpoint(tmp_path):
+    campaign = _load_extensionless("run_cloud_study_stage_test", "run-cloud-study")
+    args = SimpleNamespace(
+        study_dir="benchmarks/development/study",
+        local_root=tmp_path,
+        host="example.invalid",
+        vm_id="vm-1",
+        remote_root="/workspace/repo",
+        ssh_key=tmp_path / "key",
+        verda="verda",
+        poll_seconds=60.0,
+        transfer="all",
+        no_notify=True,
+    )
+
+    command = campaign._controller_command(
+        args,
+        "arm",
+        "arm.yaml",
+        "a" * 64,
+        until_unique_tokens=100,
+        final_stage=False,
+    )
+
+    assert command[-3:-1] == ["--expected-data-manifest-sha256", "a" * 64]
+    assert "--until-unique-tokens" in command
+    assert "--delete-remote-output" not in command
 
 
 def test_remote_identity_helpers_reject_config_or_run_path_mismatch(tmp_path):
@@ -208,6 +246,7 @@ def test_remote_project_commands_use_the_synced_environment():
     assert controller.REMOTE_PYTHON == ".venv/bin/python"
     source = (ROOT / "scripts" / "start-and-watch").read_text(encoding="utf-8")
     assert "/root/.local/bin" not in source
+    assert '"--delete-delay"' in source
 
 
 def test_cloud_study_blocks_unqualified_learning_rates(monkeypatch, tmp_path):
@@ -299,3 +338,32 @@ def test_cloud_study_plan_resolves_inherited_config_data_dir(monkeypatch, tmp_pa
     plan = campaign._study_plan("benchmarks/development/comparison")
 
     assert plan["arm"].config == "arm.yaml"
+    assert plan["arm"].until_unique_tokens == 65_536
+    assert plan["arm"].final_stage is True
+
+
+@pytest.mark.parametrize("final_stage", [False, True])
+def test_cloud_campaign_retains_vm_until_final_stage(tmp_path, monkeypatch, final_stage):
+    campaign = _load_extensionless("run_cloud_study_lifecycle_test", "run-cloud-study")
+    key = tmp_path / "key"
+    key.touch()
+    monkeypatch.setattr(sys, "argv", [
+        "run-cloud-study", "--host", "example.invalid", "--vm-id", "vm-1",
+        "--study-dir", "benchmarks/development/example",
+        "--ssh-key", str(key), "--local-root", str(tmp_path / "results"),
+        "--lock-file", str(tmp_path / "lock"), "--no-notify",
+    ])
+    monkeypatch.setattr(campaign, "_study_plan", lambda *a, **kw: {
+        "arm": campaign.CloudStudyArm("arm.yaml", "a" * 64, 100, final_stage),
+    })
+    completed = iter([False, True])
+    monkeypatch.setattr(campaign, "_local_complete", lambda *a, **kw: next(completed))
+    commands = []
+    monkeypatch.setattr(campaign, "_run", lambda command: commands.append(command))
+    deleted = []
+    monkeypatch.setattr(campaign, "_delete_vm", lambda args: deleted.append(args.vm_id))
+
+    assert campaign.main() == 0
+    assert len(commands) == 1
+    assert ("--delete-remote-output" in commands[0]) is final_stage
+    assert deleted == (["vm-1"] if final_stage else [])

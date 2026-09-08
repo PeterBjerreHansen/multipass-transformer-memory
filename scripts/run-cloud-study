@@ -33,6 +33,8 @@ TRANSFER_MANIFEST = ".transfer-manifest.sha256"
 class CloudStudyArm:
     config: str
     data_manifest_sha256: str
+    until_unique_tokens: int | None = None
+    final_stage: bool = True
 
 
 def _repo_root() -> Path:
@@ -53,7 +55,7 @@ def _quote(value: str) -> str:
     return repr(value)
 
 
-def _local_manifest(root: Path) -> str:
+def _local_manifest(root: Path, transfer: str = "all") -> str:
     rows: list[str] = []
     for path in sorted(item for item in root.rglob("*") if item.is_file()):
         relative = path.relative_to(root).as_posix()
@@ -63,6 +65,13 @@ def _local_manifest(root: Path) -> str:
             or relative.startswith(".rsync-partial/")
         ):
             continue
+        if transfer == "metadata":
+            if relative == "checkpoints" or relative.startswith("checkpoints/"):
+                continue
+            if relative.startswith("snapshots/") and relative.endswith(".safetensors"):
+                continue
+            if relative.endswith(".safetensors.tmp"):
+                continue
         digest = hashlib.sha256()
         with path.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -71,13 +80,16 @@ def _local_manifest(root: Path) -> str:
     return "\n".join(rows)
 
 
-def _local_complete(path: Path, *, expected_output: str | None = None) -> bool:
-    required = (
-        path / "run.json",
-        path / "segments.jsonl",
-        path / "checkpoints/latest.json",
-        path / TRANSFER_MANIFEST,
-    )
+def _local_complete(
+    path: Path,
+    *,
+    expected_output: str | None = None,
+    required_tokens: int | None = None,
+    transfer: str = "all",
+) -> bool:
+    required = [path / "run.json", path / "segments.jsonl", path / TRANSFER_MANIFEST]
+    if transfer == "all":
+        required.append(path / "checkpoints/latest.json")
     if not all(item.is_file() for item in required):
         return False
     try:
@@ -88,18 +100,19 @@ def _local_complete(path: Path, *, expected_output: str | None = None) -> bool:
                 return False
             if Path(recorded_output).as_posix().rstrip("/") != Path(expected_output).as_posix().rstrip("/"):
                 return False
-        if (path / TRANSFER_MANIFEST).read_text(encoding="utf-8") != _local_manifest(path):
+        if (path / TRANSFER_MANIFEST).read_text(encoding="utf-8") != _local_manifest(path, transfer):
             return False
-        pointer = json.loads(
-            (path / "checkpoints/latest.json").read_text(encoding="utf-8")
-        )
-        current = pointer.get("current")
-        if not isinstance(current, str) or Path(current).name != current:
-            return False
-        checkpoint = path / "checkpoints" / current
-        if not checkpoint.is_file():
-            return False
-        inspect_checkpoint(checkpoint)
+        if transfer == "all":
+            pointer = json.loads(
+                (path / "checkpoints/latest.json").read_text(encoding="utf-8")
+            )
+            current = pointer.get("current")
+            if not isinstance(current, str) or Path(current).name != current:
+                return False
+            checkpoint = path / "checkpoints" / current
+            if not checkpoint.is_file():
+                return False
+            inspect_checkpoint(checkpoint)
     except Exception:
         return False
     last_end = None
@@ -113,7 +126,14 @@ def _local_complete(path: Path, *, expected_output: str | None = None) -> bool:
                 last_end = record
     except OSError:
         return False
-    return bool(last_end and last_end.get("reason") == "completed")
+    return bool(
+        last_end
+        and last_end.get("reason") == "completed"
+        and (
+            required_tokens is None
+            or int(last_end.get("end_unique_tokens", -1)) >= required_tokens
+        )
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -138,14 +158,26 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--ssh-key", type=Path, default=Path("~/.ssh/id_ed25519").expanduser())
     parser.add_argument("--verda", default="verda")
     parser.add_argument("--poll-seconds", type=float, default=60.0)
+    parser.add_argument(
+        "--transfer",
+        choices=("all", "metadata"),
+        default="all",
+        help="archive all weights or only metrics/journal metadata",
+    )
     parser.add_argument("--lock-file", type=Path, default=Path(DEFAULT_LOCK))
     parser.add_argument("--keep-vm", action="store_true", help="do not delete the VM after all arms")
     parser.add_argument("--no-notify", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--stage",
+        help="run each selected arm to its target in the named STUDY.yaml stage",
+    )
     return parser
 
 
-def _study_plan(study_dir: str) -> dict[str, CloudStudyArm]:
+def _study_plan(
+    study_dir: str, *, stage_name: str | None = None
+) -> dict[str, CloudStudyArm]:
     relative = Path(study_dir)
     if relative.is_absolute():
         raise SystemExit("--study-dir must be relative to the repository root")
@@ -168,6 +200,15 @@ def _study_plan(study_dir: str) -> dict[str, CloudStudyArm]:
     pinned_data = dict(verification.data_artifacts)
     if not pinned_data:
         raise SystemExit("cloud study must pin its data manifest hash before execution")
+    stage = None
+    if stage_name is not None:
+        try:
+            stage = verification.stage(stage_name)
+        except KeyError as exc:
+            available = ", ".join(item.name for item in verification.stages) or "none"
+            raise SystemExit(
+                f"unknown study stage {stage_name!r}; available stages: {available}"
+            ) from exc
     raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
     plan: dict[str, CloudStudyArm] = {}
     for arm in raw["arms"]:
@@ -181,7 +222,17 @@ def _study_plan(study_dir: str) -> dict[str, CloudStudyArm]:
             raise SystemExit(
                 f"cloud study does not pin the data manifest used by {config_name}: {data_dir}"
             )
-        plan[str(arm["id"])] = CloudStudyArm(config_name, expected_sha256)
+        arm_id = str(arm["id"])
+        # A run without an explicit stage is still a final run.  Keep the
+        # configured horizon in the plan so a locally archived early-stage
+        # checkpoint cannot be mistaken for a completed full trajectory.
+        target = config.max_unique_tokens if stage is None else stage.target_for(arm_id)
+        plan[arm_id] = CloudStudyArm(
+            config_name,
+            expected_sha256,
+            until_unique_tokens=target,
+            final_stage=(target == config.max_unique_tokens),
+        )
     return plan
 
 
@@ -195,6 +246,9 @@ def _controller_command(
     arm: str,
     config_name: str,
     expected_data_manifest_sha256: str | None = None,
+    *,
+    until_unique_tokens: int | None = None,
+    final_stage: bool = True,
 ) -> list[str]:
     config = f"{args.study_dir}/{config_name}"
     remote_output = f"{args.study_dir}/results/{arm}"
@@ -222,11 +276,16 @@ def _controller_command(
         "--cleanup",
         "shutdown",
         "--transfer",
-        "all",
-        "--delete-remote-output",
+        args.transfer,
         "--poll-seconds",
         str(args.poll_seconds),
     ]
+    if until_unique_tokens is not None:
+        command.extend(
+            ["--until-unique-tokens", str(until_unique_tokens)]
+        )
+    if final_stage:
+        command.append("--delete-remote-output")
     if expected_data_manifest_sha256 is not None:
         command.extend(
             ["--expected-data-manifest-sha256", expected_data_manifest_sha256]
@@ -272,7 +331,7 @@ def _best_effort_shutdown(args: argparse.Namespace) -> None:
 
 def main() -> int:
     args = _parser().parse_args()
-    study_plan = _study_plan(args.study_dir)
+    study_plan = _study_plan(args.study_dir, stage_name=args.stage)
     if args.local_root is None:
         args.local_root = Path(args.study_dir) / "results"
     args.local_root = args.local_root.expanduser().resolve()
@@ -286,9 +345,11 @@ def main() -> int:
     if not args.dry_run and not args.ssh_key.is_file():
         raise SystemExit(f"SSH key does not exist: {args.ssh_key}")
 
+    retain_vm = args.keep_vm or any(not study_plan[arm].final_stage for arm in arms)
+
     print(f"INFO: study arms: {', '.join(arms)}")
     print(f"INFO: local root: {args.local_root}")
-    print(f"INFO: final VM action: {'keep' if args.keep_vm else 'delete compute instance'}")
+    print(f"INFO: final VM action: {'keep' if retain_vm else 'delete compute instance'}")
     if args.dry_run:
         for arm in arms:
             planned = study_plan[arm]
@@ -297,6 +358,8 @@ def main() -> int:
                 arm,
                 planned.config,
                 planned.data_manifest_sha256,
+                until_unique_tokens=planned.until_unique_tokens,
+                final_stage=planned.final_stage,
             )
             print("DRY-RUN: " + " ".join(_quote(item) for item in command))
         return 0
@@ -314,10 +377,18 @@ def main() -> int:
                 local_output = args.local_root / arm
                 remote_output = f"{args.study_dir}/results/{arm}"
                 print(f"\n=== ARM {index}/{len(arms)}: {arm} ===", flush=True)
-                if _local_complete(local_output, expected_output=remote_output):
+                if _local_complete(
+                    local_output,
+                    expected_output=remote_output,
+                    required_tokens=study_plan[arm].until_unique_tokens,
+                    transfer=args.transfer,
+                ):
                     print(f"SKIP: local artifacts are already complete: {local_output}", flush=True)
                     continue
-                print(f"RUN: transferring full artifacts to {local_output}", flush=True)
+                print(
+                    f"RUN: transferring {args.transfer} artifacts to {local_output}",
+                    flush=True,
+                )
                 planned = study_plan[arm]
                 _run(
                     _controller_command(
@@ -325,14 +396,21 @@ def main() -> int:
                         arm,
                         planned.config,
                         planned.data_manifest_sha256,
+                        until_unique_tokens=planned.until_unique_tokens,
+                        final_stage=planned.final_stage,
                     )
                 )
-                if not _local_complete(local_output, expected_output=remote_output):
+                if not _local_complete(
+                    local_output,
+                    expected_output=remote_output,
+                    required_tokens=planned.until_unique_tokens,
+                    transfer=args.transfer,
+                ):
                     raise RuntimeError(f"controller returned success but local arm is incomplete: {local_output}")
                 print(f"PASS: local artifacts complete: {local_output}", flush=True)
 
-            if args.keep_vm:
-                print("PASS: study complete; VM retained by request", flush=True)
+            if retain_vm:
+                print("PASS: selected stage complete; VM retained for resume or by request", flush=True)
             else:
                 print("INFO: all selected arms complete; deleting compute instance", flush=True)
                 _delete_vm(args)

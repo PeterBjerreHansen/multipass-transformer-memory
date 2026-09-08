@@ -41,6 +41,12 @@ Required top-level fields are:
 - `arms`: runnable arm IDs and their colocated config paths;
 - `comparisons`: groups of arms that are intended to be directly comparable.
 
+An optional `stages` list gives each named stage an exact target for every arm.
+Targets must increase, be attainable whole-microbatch boundaries, appear in
+each arm's `snapshot_at_tokens`, and end at that arm's configured
+`max_unique_tokens`. Different arms may therefore stop at different token
+presentations for compute matching.
+
 Core studies must use `status: locked`. A non-planned study must declare at
 least one runnable arm.
 
@@ -107,6 +113,10 @@ At execution time, `run_study.py` verifies the complete artifact, checks its
 manifest against the pinned hash, and enforces the learning-rate gate.
 `run-cloud-study` enforces the same gate and makes the remote launcher check the
 remote manifest hash before it starts training.
+
+Use `run_study.py --stage <name>` or `run-cloud-study --stage <name>` to stop
+each arm at its declared target. The final horizon remains in the config from
+the first launch, so LR schedules and resume compatibility do not change.
 
 `make check` includes this gate.
 

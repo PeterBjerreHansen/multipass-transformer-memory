@@ -58,6 +58,11 @@ def test_frozen_study_flop_report_uses_authoritative_arm_batching():
     assert (combined["batch_size"], combined["grad_accum_steps"]) == (4, 8)
     assert {row["optimizer_batch_tokens"] for row in rows.values()} == {65_536}
     assert all(row["estimated_training_flops_total"] > 0 for row in rows.values())
+    assert all(
+        row["estimated_training_flops_per_token_presentation"]
+        == row["estimated_training_flops_per_unique_token"]
+        for row in rows.values()
+    )
     assert rows["recurrent_recirculation_100m"]["training_forward"] == "parallel_multipass"
     assert rows["recurrent_recirculation_100m"]["relative_training_flops"] > 1.0
 

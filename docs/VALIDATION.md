@@ -98,6 +98,11 @@ Data preparation is tested for deterministic source allocation, checksums, and
 recorded source-balanced offsets. Related recipes must share validation
 settings, avoid overlapping training slices, and match their declared budgets.
 
+Staged study manifests are tested for complete per-arm target maps, increasing
+and attainable targets, durable snapshots, and final configured horizons. Cloud
+completion checks require the requested stage token count. Intermediate staged
+transfers retain remote recovery state and mirror remotely pruned checkpoints.
+
 ## Study and hardware gates
 
 `make check` runs pytest, byte-compilation, study-manifest verification, and

@@ -16,6 +16,7 @@ from typing import Any
 import yaml
 
 from .config import ExperimentConfig, load_experiment_config
+from .data.config import load_data_config
 
 
 _ARM_ID = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -39,6 +40,18 @@ class StudyArm:
 
 
 @dataclass(frozen=True, slots=True)
+class StudyStage:
+    name: str
+    targets: tuple[tuple[str, int], ...]
+
+    def target_for(self, arm_id: str) -> int:
+        try:
+            return dict(self.targets)[arm_id]
+        except KeyError as exc:
+            raise KeyError(f"stage {self.name!r} has no target for arm {arm_id!r}") from exc
+
+
+@dataclass(frozen=True, slots=True)
 class StudyVerification:
     manifest_path: Path
     name: str
@@ -47,6 +60,13 @@ class StudyVerification:
     comparison_names: tuple[str, ...]
     data_artifacts: tuple[tuple[str, str], ...]
     learning_rates_qualified: bool | None
+    stages: tuple[StudyStage, ...]
+
+    def stage(self, name: str) -> StudyStage:
+        for stage in self.stages:
+            if stage.name == name:
+                return stage
+        raise KeyError(name)
 
 
 def _repo_root(path: Path) -> Path:
@@ -125,6 +145,7 @@ def verify_study(path: str | Path) -> StudyVerification:
             "comparisons",
             "data_artifacts",
             "learning_rates_qualified",
+            "stages",
         }
     )
     if unknown_top:
@@ -195,6 +216,75 @@ def verify_study(path: str | Path) -> StudyVerification:
             )
         arms[arm_id] = StudyArm(arm_id, config_path, config)
         declared_config_paths.add(config_path.resolve())
+
+    stages_raw = _sequence(raw.get("stages", []), label="stages")
+    stages: list[StudyStage] = []
+    seen_stage_names: set[str] = set()
+    previous_targets: dict[str, int] = {}
+    for index, item in enumerate(stages_raw):
+        stage_raw = _mapping(item, label=f"stages[{index}]")
+        unknown_stage = sorted(set(stage_raw) - {"name", "targets"})
+        if unknown_stage:
+            raise StudyValidationError(f"unknown stage fields: {unknown_stage}")
+        stage_name = str(stage_raw.get("name", "")).strip()
+        if not _ARM_ID.fullmatch(stage_name) or stage_name in seen_stage_names:
+            raise StudyValidationError(
+                f"stage name must be valid and unique: {stage_name!r}"
+            )
+        seen_stage_names.add(stage_name)
+        targets_raw = _mapping(
+            stage_raw.get("targets", {}), label=f"stage {stage_name} targets"
+        )
+        if set(targets_raw) != set(arms):
+            raise StudyValidationError(
+                f"stage {stage_name!r} targets must exactly match study arms"
+            )
+        targets: dict[str, int] = {}
+        for arm_id, raw_target in targets_raw.items():
+            if isinstance(raw_target, bool) or not isinstance(raw_target, int):
+                raise StudyValidationError(
+                    f"stage {stage_name!r} target for {arm_id!r} must be an integer"
+                )
+            target = int(raw_target)
+            config = arms[arm_id].config
+            if target <= previous_targets.get(arm_id, 0):
+                raise StudyValidationError(
+                    f"stage targets for {arm_id!r} must be strictly increasing"
+                )
+            if target > config.max_unique_tokens:
+                raise StudyValidationError(
+                    f"stage {stage_name!r} target for {arm_id!r} exceeds max_unique_tokens"
+                )
+            if target not in set(config.snapshot_at_tokens or []):
+                raise StudyValidationError(
+                    f"stage {stage_name!r} target for {arm_id!r} must be listed in "
+                    "snapshot_at_tokens"
+                )
+            data_path = Path(config.data_dir)
+            if not data_path.is_absolute():
+                data_path = repo_root / data_path
+            data = load_data_config(data_path / "config.yaml")
+            microbatch_tokens = config.batch_size * data.sequence_length
+            if target % microbatch_tokens:
+                raise StudyValidationError(
+                    f"stage {stage_name!r} target for {arm_id!r} must be divisible by "
+                    f"batch_size * sequence_length ({microbatch_tokens})"
+                )
+            targets[arm_id] = target
+        previous_targets = targets
+        stages.append(StudyStage(stage_name, tuple(targets.items())))
+    if stages:
+        final_targets = dict(stages[-1].targets)
+        incomplete = {
+            arm_id: (final_targets[arm_id], arm.config.max_unique_tokens)
+            for arm_id, arm in arms.items()
+            if final_targets[arm_id] != arm.config.max_unique_tokens
+        }
+        if incomplete:
+            raise StudyValidationError(
+                "final stage targets must equal max_unique_tokens for every arm: "
+                f"{incomplete}"
+            )
 
     declared_artifacts = _mapping(
         raw.get("data_artifacts", {}), label="data_artifacts"
@@ -331,6 +421,7 @@ def verify_study(path: str | Path) -> StudyVerification:
         comparison_names=tuple(comparison_names),
         data_artifacts=tuple(sorted(data_artifacts.items())),
         learning_rates_qualified=learning_rates_qualified,
+        stages=tuple(stages),
     )
 
 

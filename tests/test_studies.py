@@ -22,7 +22,10 @@ def _write_config(
     batch_size: int = 1,
     passes: int = 2,
     init_from: str | None = None,
+    max_unique_tokens: int = 2048,
+    snapshot_at_tokens: list[int] | None = None,
 ) -> None:
+    snapshots = snapshot_at_tokens or [max_unique_tokens]
     lines = [
         "variant: recurrent_memory",
         "phase: B",
@@ -39,7 +42,7 @@ def _write_config(
         "architecture_seed: 4242",
         f"batch_size: {batch_size}",
         "grad_accum_steps: 1",
-        "max_unique_tokens: 2048",
+        f"max_unique_tokens: {max_unique_tokens}",
         "learning_rate: 1.0e-6",
         "pretrained_learning_rate: 1.0e-6",
         "added_learning_rate: 1.0e-6",
@@ -58,6 +61,7 @@ def _write_config(
         "eval_batches: 1",
         "eval_passes: 8",
         "checkpoint_every_tokens: 2048",
+        f"snapshot_at_tokens: {snapshots}",
         "resume_from: null",
         f"init_from: {init_from}" if init_from is not None else "init_from: null",
         "",
@@ -71,6 +75,16 @@ def _repo(tmp_path: Path) -> Path:
     )
     study = tmp_path / "benchmarks" / "development" / "example"
     study.mkdir(parents=True)
+    data = tmp_path / "data" / "dolmino" / "wiring_2048"
+    data.mkdir(parents=True)
+    (data / "config.yaml").write_text(
+        "output_dir: data/dolmino/wiring_2048\n"
+        "model_dir: checkpoints/TinyMistral-248M-v3\n"
+        "sequence_length: 2048\n"
+        "train_tokens: 8192\n"
+        "validation_tokens: 2048\n",
+        encoding="utf-8",
+    )
     return study
 
 
@@ -264,4 +278,82 @@ comparisons: []
     )
 
     with pytest.raises(StudyValidationError, match="must pin every arm data_dir"):
+        verify_study(study)
+
+
+def test_study_validates_per_arm_staged_targets(tmp_path):
+    study = _repo(tmp_path)
+    prefix = "benchmarks/development/example/results"
+    for arm_id in ("a", "b"):
+        _write_config(
+            study / f"{arm_id}.yaml",
+            output_dir=f"{prefix}/{arm_id}",
+            max_unique_tokens=4096,
+            snapshot_at_tokens=[2048, 4096],
+        )
+    (study / "STUDY.yaml").write_text(
+        """name: example
+status: planned
+question: Can arms stop at declared resumable stages?
+arms:
+  - {id: a, config: a.yaml}
+  - {id: b, config: b.yaml}
+stages:
+  - name: early
+    targets: {a: 2048, b: 2048}
+  - name: final
+    targets: {a: 4096, b: 4096}
+comparisons: []
+""",
+        encoding="utf-8",
+    )
+
+    result = verify_study(study)
+
+    assert tuple(stage.name for stage in result.stages) == ("early", "final")
+    assert result.stage("early").target_for("b") == 2048
+
+
+@pytest.mark.parametrize(
+    ("stages", "message"),
+    [
+        (
+            "  - name: early\n    targets: {a: 2048}\n",
+            "exactly match study arms",
+        ),
+        (
+            "  - name: early\n    targets: {a: 2048, b: 2048}\n"
+            "  - name: final\n    targets: {a: 2048, b: 4096}\n",
+            "strictly increasing",
+        ),
+        (
+            "  - name: final\n    targets: {a: 2048, b: 4096}\n",
+            "final stage targets",
+        ),
+    ],
+)
+def test_study_rejects_invalid_staged_targets(tmp_path, stages, message):
+    study = _repo(tmp_path)
+    prefix = "benchmarks/development/example/results"
+    for arm_id in ("a", "b"):
+        _write_config(
+            study / f"{arm_id}.yaml",
+            output_dir=f"{prefix}/{arm_id}",
+            max_unique_tokens=4096,
+            snapshot_at_tokens=[2048, 4096],
+        )
+    (study / "STUDY.yaml").write_text(
+        "name: example\n"
+        "status: planned\n"
+        "question: Are invalid stages rejected?\n"
+        "arms:\n"
+        "  - {id: a, config: a.yaml}\n"
+        "  - {id: b, config: b.yaml}\n"
+        "stages:\n"
+        f"{stages}"
+        "comparisons: []\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StudyValidationError, match=message):
         verify_study(study)

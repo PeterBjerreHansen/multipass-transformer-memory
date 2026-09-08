@@ -22,10 +22,10 @@ See [data](../docs/DATA.md), [study organization](../benchmarks/README.md) and
 | Command | Purpose |
 | --- | --- |
 | `train.py` | Train one config, optionally restoring a durable trajectory |
-| `run_study.py` | Verify pinned study data, run forward/backward checks, then train selected arms sequentially |
+| `run_study.py` | Verify pinned study data, run forward/backward checks, then train selected arms sequentially, optionally to per-arm `--stage` targets |
 | `cloud_preflight.py` | Check CUDA, input integrity, source/run compatibility and persistent storage |
 | `start-and-watch` | Start or observe a remote run, optionally check its data-manifest hash, transfer verified outputs, then apply requested Verda cleanup |
-| `run-cloud-study` | Apply that lifecycle to selected arms of a locked study and enforce its data/rate gates |
+| `run-cloud-study` | Apply that lifecycle to selected arms or one declared stage of a locked study and enforce its data/rate gates |
 
 `run_study.py --wire-only` does not perform an optimizer step.
 It does not replace the [real-trainer preflight](../docs/CLOUD.md#pre-training-checks).
@@ -61,6 +61,8 @@ See [cached inference](../docs/FEEDBACK_INFERENCE.md) for the lower-level feedba
 - `benchmark_training_efficiency.py`: synthetic training with real optimizer steps.
 - `benchmark_inference_efficiency.py`: synthetic full-pass and cached-continuation timing.
 - `estimate_training_flops.py`: dominant-matmul estimates from a suite or study.
+- `report_scaling_stages.py`: verify staged token targets against instantiated
+  parameter counts and per-arm dominant-matmul estimates.
 - `select_cuda_batch.py`: choose a candidate from an engineering batch report.
 
 Engineering grids are not scientific arms.

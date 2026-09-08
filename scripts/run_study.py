@@ -203,8 +203,14 @@ def main() -> None:
     )
     parser.add_argument("--no-resume-auto", action="store_true")
     parser.add_argument("--until-unique-tokens", type=int, default=None)
+    parser.add_argument(
+        "--stage",
+        help="run each selected arm to its target in the named STUDY.yaml stage",
+    )
     parser.add_argument("--allow-source-mismatch", action="store_true")
     args = parser.parse_args()
+    if args.stage is not None and args.until_unique_tokens is not None:
+        raise SystemExit("--stage and --until-unique-tokens are mutually exclusive")
 
     root = Path(__file__).resolve().parents[1]
     study_dir = args.study_dir if args.study_dir.is_absolute() else root / args.study_dir
@@ -225,6 +231,15 @@ def main() -> None:
             "study training is blocked until learning-rate qualification is complete; "
             "wire-only checks remain available"
         )
+    stage = None
+    if args.stage is not None:
+        try:
+            stage = verification.stage(args.stage)
+        except KeyError as exc:
+            available = ", ".join(item.name for item in verification.stages) or "none"
+            raise SystemExit(
+                f"unknown study stage {args.stage!r}; available stages: {available}"
+            ) from exc
     try:
         _verify_pinned_data_artifacts(
             verification,
@@ -252,8 +267,13 @@ def main() -> None:
         ]
         if not args.no_resume_auto and _should_resume_auto(configs[arm_id], root=root):
             command.append("--resume-auto")
-        if args.until_unique_tokens is not None:
-            command.extend(["--until-unique-tokens", str(args.until_unique_tokens)])
+        target_tokens = (
+            stage.target_for(arm_id)
+            if stage is not None
+            else args.until_unique_tokens
+        )
+        if target_tokens is not None:
+            command.extend(["--until-unique-tokens", str(target_tokens)])
         if args.allow_source_mismatch:
             command.append("--allow-source-mismatch")
         print(f"START: {arm_id} {' '.join(command)}", flush=True)

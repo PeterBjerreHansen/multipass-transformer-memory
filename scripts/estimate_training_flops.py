@@ -272,6 +272,7 @@ def build_study_report(
                 "max_unique_tokens": experiment.max_unique_tokens,
                 "estimated_training_flops_per_sequence": per_sequence,
                 "estimated_training_flops_per_unique_token": per_token,
+                "estimated_training_flops_per_token_presentation": per_token,
                 "estimated_training_flops_total": (
                     per_token * experiment.max_unique_tokens
                 ),
