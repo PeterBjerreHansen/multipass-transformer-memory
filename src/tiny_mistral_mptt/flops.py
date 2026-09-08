@@ -49,24 +49,6 @@ def _validate_positive(name: str, value: int) -> int:
     return value
 
 
-def memory_token_layout(
-    linguistic_length: int,
-    interval: int,
-) -> tuple[bool, ...]:
-    """Return ``True`` at physical positions occupied by a memory token."""
-    linguistic_length = _validate_positive("linguistic_length", linguistic_length)
-    interval = _validate_positive("interval", interval)
-    layout: list[bool] = []
-    remaining = linguistic_length
-    while remaining:
-        count = min(interval, remaining)
-        layout.extend([False] * count)
-        remaining -= count
-        if remaining:
-            layout.append(True)
-    return tuple(layout)
-
-
 def _causal_pairs(
     key_valid: tuple[bool, ...],
     sliding_window: int | None,
@@ -146,21 +128,14 @@ def memory_write_positions(
     linguistic_length: int,
     memory_write_mode: str,
     memory_write_stride: int | None = None,
-) -> tuple[bool, tuple[int, ...], tuple[bool, ...]]:
-    """Return physical layout, write positions, and self-attention key mask."""
+) -> tuple[int, ...]:
+    """Return physical positions that emit feedback records."""
     linguistic_length = _validate_positive("linguistic_length", linguistic_length)
     memory_write_mode = canonical_memory_write_mode(memory_write_mode)
-    if memory_write_mode not in {"dense", "periodic", "memory_token"}:
-        raise ValueError("memory_write_mode must be dense, strided, or memory_token")
+    if memory_write_mode not in {"dense", "periodic"}:
+        raise ValueError("memory_write_mode must be dense or strided")
 
-    if memory_write_mode == "memory_token":
-        if memory_write_stride is None:
-            raise ValueError("memory-token mode requires memory_write_stride")
-        layout = memory_token_layout(linguistic_length, memory_write_stride)
-        writes = tuple(index for index, is_memory in enumerate(layout) if is_memory)
-        return True, writes, layout
 
-    layout = (False,) * linguistic_length
     if memory_write_mode == "dense":
         writes = tuple(range(linguistic_length))
     else:
@@ -172,7 +147,7 @@ def memory_write_positions(
             for position in range(linguistic_length)
             if (position + 1) % stride == 0
         )
-    return False, writes, layout
+    return writes
 
 
 @dataclass(frozen=True, slots=True)
@@ -403,31 +378,6 @@ def _memory_breakdown(
     )
 
 
-def _recurrent_breakdown(
-    config: MistralConfig,
-    *,
-    sequence_length: int,
-    variant: str,
-    adaptive_recirculation: bool,
-) -> FlopBreakdown:
-    hidden_size = int(config.hidden_size)
-    if variant == "memory_add":
-        return FlopBreakdown(
-            recurrent_projection=_linear_flops(sequence_length, hidden_size, hidden_size)
-        )
-    if variant == "recirculation":
-        if not adaptive_recirculation:
-            return FlopBreakdown()
-        return FlopBreakdown(
-            recurrent_controller=(
-                _linear_flops(sequence_length, 2 * hidden_size, hidden_size)
-                + _linear_flops(sequence_length, hidden_size, hidden_size)
-                + _linear_flops(sequence_length, hidden_size, 2 * hidden_size)
-            )
-        )
-    return FlopBreakdown()
-
-
 def estimate_pass(
     config: MistralConfig,
     *,
@@ -438,7 +388,6 @@ def estimate_pass(
     memory_pattern: str | None = None,
     memory_write_mode: str | None = None,
     memory_write_stride: int | None = None,
-    memory_token_visibility: str = "visible",
     memory_layers: Iterable[int] | str = "all",
     memory_num_key_value_heads: int | None = None,
     memory_attention_fusion: str = "residual",
@@ -449,7 +398,6 @@ def estimate_pass(
     sparse_attention_stride: int | None = None,
     sparse_attention_window: int | None = None,
     sparse_attention_layers: Iterable[int] | str = "all",
-    recirculation_mode: str = "fixed",
     recurrent_merger: str | None = None,
     recurrent_controller_hidden_size: int | None = None,
     recurrent_layers: Iterable[int] | None = None,
@@ -467,8 +415,6 @@ def estimate_pass(
     if variant not in {
         "vanilla",
         "strided_self_attention",
-        "memory_add",
-        "recirculation",
         "no_memory_adapter",
         "recurrent_memory",
         *MEMORY_ATTENTION_VARIANTS,
@@ -498,24 +444,13 @@ def estimate_pass(
         physical_length = linguistic_sequence_length
         key_valid = (True,) * physical_length
     elif uses_memory:
-        uses_control_tokens, writes, layout = memory_write_positions(
+        writes = memory_write_positions(
             linguistic_length=linguistic_sequence_length,
             memory_write_mode=str(memory_write_mode),
             memory_write_stride=memory_write_stride,
         )
-        physical_length = len(layout)
-        if uses_control_tokens:
-            if memory_token_visibility not in {"visible", "write_only"}:
-                raise ValueError(
-                    "memory_token_visibility must be visible or write_only"
-                )
-            key_valid = (
-                tuple(not is_memory for is_memory in layout)
-                if memory_token_visibility == "write_only"
-                else (True,) * physical_length
-            )
-        else:
-            key_valid = (True,) * physical_length
+        physical_length = linguistic_sequence_length
+        key_valid = (True,) * physical_length
     else:
         writes = ()
         physical_length = linguistic_sequence_length
@@ -561,13 +496,7 @@ def estimate_pass(
     else:
         memory = FlopBreakdown()
 
-    recurrent = _recurrent_breakdown(
-        config,
-        sequence_length=physical_length,
-        variant=variant,
-        adaptive_recirculation=recirculation_mode == "adaptive",
-    )
-    per_pass_extra = memory + recurrent
+    per_pass_extra = memory
     if uses_memory:
         if memory_attention_fusion not in {
             "residual",
@@ -705,7 +634,6 @@ def estimate_schedule(
     memory_pattern: str | None = None,
     memory_write_mode: str | None = None,
     memory_write_stride: int | None = None,
-    memory_token_visibility: str = "visible",
     memory_layers: Iterable[int] | str = "all",
     memory_num_key_value_heads: int | None = None,
     memory_attention_fusion: str = "residual",
@@ -716,7 +644,6 @@ def estimate_schedule(
     sparse_attention_stride: int | None = None,
     sparse_attention_window: int | None = None,
     sparse_attention_layers: Iterable[int] | str = "all",
-    recirculation_mode: str = "fixed",
     recurrent_merger: str | None = None,
     recurrent_controller_hidden_size: int | None = None,
     recurrent_layers: Iterable[int] | None = None,
@@ -744,7 +671,6 @@ def estimate_schedule(
             memory_pattern=memory_pattern,
             memory_write_mode=memory_write_mode,
             memory_write_stride=memory_write_stride,
-            memory_token_visibility=memory_token_visibility,
             memory_layers=memory_layers,
             memory_num_key_value_heads=memory_num_key_value_heads,
             memory_attention_fusion=memory_attention_fusion,
@@ -757,7 +683,6 @@ def estimate_schedule(
             sparse_attention_stride=sparse_attention_stride,
             sparse_attention_window=sparse_attention_window,
             sparse_attention_layers=sparse_attention_layers,
-            recirculation_mode=recirculation_mode,
             recurrent_merger=recurrent_merger,
             recurrent_controller_hidden_size=recurrent_controller_hidden_size,
             recurrent_layers=recurrent_layers,

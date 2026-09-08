@@ -12,8 +12,6 @@ from .compatibility import normalize_legacy_variant_name
 from .config import canonical_memory_write_mode, canonical_variant_name, resolve_memory_attention_pattern
 from .variants import (
     ExperimentalVariant,
-    FBTVariant,
-    MemoryAddVariant,
     NoMemoryAdapterVariant,
     RecurrentMemoryVariant,
     MemoryAttentionRecurrentHybridVariant,
@@ -35,7 +33,6 @@ def build_variant(
     memory_pattern: str | None = None,
     memory_write_mode: str | None = None,
     memory_write_stride: int | None = None,
-    memory_token_visibility: str | None = None,
     memory_layers: str | list[int] = "all",
     memory_position_encoding: str = "rope",
     memory_num_key_value_heads: int | None = None,
@@ -48,24 +45,12 @@ def build_variant(
     sparse_attention_stride: int | None = None,
     sparse_attention_window: int | None = None,
     sparse_attention_layers: str | list[int] = "all",
-    prefix_mixin_probability: float = 0.0,
-    fbt_normalize_gate_input: bool = False,
-    fbt_latent_jitter_std: float = 0.0,
-    recirculation_source_layer: int | None = None,
-    recirculation_destination_layer: int | None = None,
-    recirculation_alpha: float = 0.1,
-    recirculation_mode: str = "fixed",
     recurrent_merger: str | None = None,
     recurrent_controller_hidden_size: int | None = None,
     recurrent_layers: list[int] | None = None,
 ) -> ExperimentalVariant:
     requested_name = normalize_legacy_variant_name(str(name))
     name = canonical_variant_name(requested_name)
-    if name == "recirculation":
-        raise ValueError(
-            "the middle-layer RecirculationVariant is archived; use "
-            "variant=recurrent_memory with recurrent_merger=recirculation"
-        )
     memory_write_mode = canonical_memory_write_mode(memory_write_mode)
     if name != "memory_attention":
         if memory_pattern is not None or recurrent_layers is not None:
@@ -80,11 +65,6 @@ def build_variant(
             raise ValueError(
                 "memory attention reader/fusion fields require Memory Attention"
             )
-    if name != "recirculation" and (
-        recirculation_source_layer is not None or recirculation_destination_layer is not None
-        or recirculation_alpha != 0.1 or recirculation_mode != "fixed"
-    ):
-        raise ValueError("recirculation_* fields apply only to legacy recirculation")
     if name == "vanilla":
         variant: ExperimentalVariant = SWATransformerVariant(backbone)
     elif name == "strided_self_attention":
@@ -99,16 +79,6 @@ def build_variant(
             sparse_attention_window=sparse_attention_window,
             sparse_attention_layers=sparse_attention_layers,
         )
-    elif name == "fbt":
-        variant = FBTVariant(
-            backbone,
-            initialization_seed=architecture_seed,
-            prefix_mixin_probability=prefix_mixin_probability,
-            normalize_gate_input=fbt_normalize_gate_input,
-            latent_jitter_std=fbt_latent_jitter_std,
-        )
-    elif name == "memory_add":
-        variant = MemoryAddVariant(backbone)
     elif name == "no_memory_adapter":
         variant = NoMemoryAdapterVariant(
             backbone,
@@ -127,32 +97,19 @@ def build_variant(
         memory_pattern, memory_write_mode = resolve_memory_attention_pattern(
             requested_name, memory_pattern, memory_write_mode
         )
-        if memory_pattern == "dense_and_strided":
-            if memory_write_stride is not None or memory_token_visibility is not None:
-                raise ValueError("dense-and-strided retention does not accept memory_write_* controls")
-            stride, visibility = 1, "visible"
-        elif memory_write_mode == "dense":
-            if memory_write_stride is not None or memory_token_visibility is not None:
-                raise ValueError("dense Memory Attention must not set memory_write_stride or memory_token_visibility")
-            stride, visibility = 1, "visible"
+        if memory_pattern == "dense_and_strided" or memory_write_mode == "dense":
+            if memory_write_stride is not None:
+                raise ValueError("dense retention must not set memory_write_stride")
+            stride = 1
         else:
             if memory_write_stride is None or int(memory_write_stride) <= 0:
-                raise ValueError("strided or memory-token Memory Attention requires positive memory_write_stride")
+                raise ValueError("strided Memory Attention requires positive memory_write_stride")
             stride = int(memory_write_stride)
-            if memory_write_mode == "memory_token":
-                if memory_token_visibility not in {"visible", "write_only"}:
-                    raise ValueError("memory-token Memory Attention requires memory_token_visibility")
-                visibility = str(memory_token_visibility)
-            else:
-                if memory_token_visibility is not None:
-                    raise ValueError("memory_token_visibility applies only to memory_token mode")
-                visibility = "visible"
         kwargs = dict(
             memory_pattern=memory_pattern,
             memory_window=memory_window,
             memory_write_mode="dense" if memory_pattern == "dense_and_strided" else memory_write_mode,
             memory_write_stride=stride,
-            memory_token_visibility=visibility,
             memory_layers=memory_layers,
             memory_position_encoding=memory_position_encoding,
             memory_num_key_value_heads=memory_num_key_value_heads,
@@ -201,7 +158,6 @@ def load_variant(
     memory_pattern: str | None = None,
     memory_write_mode: str | None = None,
     memory_write_stride: int | None = None,
-    memory_token_visibility: str | None = None,
     memory_layers: str | list[int] = "all",
     memory_position_encoding: str = "rope",
     memory_num_key_value_heads: int | None = None,
@@ -214,13 +170,6 @@ def load_variant(
     sparse_attention_stride: int | None = None,
     sparse_attention_window: int | None = None,
     sparse_attention_layers: str | list[int] = "all",
-    prefix_mixin_probability: float = 0.0,
-    fbt_normalize_gate_input: bool = False,
-    fbt_latent_jitter_std: float = 0.0,
-    recirculation_source_layer: int | None = None,
-    recirculation_destination_layer: int | None = None,
-    recirculation_alpha: float = 0.1,
-    recirculation_mode: str = "fixed",
     recurrent_merger: str | None = None,
     recurrent_controller_hidden_size: int | None = None,
     recurrent_layers: list[int] | None = None,
@@ -240,7 +189,6 @@ def load_variant(
         memory_pattern=memory_pattern,
         memory_write_mode=memory_write_mode,
         memory_write_stride=memory_write_stride,
-        memory_token_visibility=memory_token_visibility,
         memory_layers=memory_layers,
         memory_position_encoding=memory_position_encoding,
         memory_num_key_value_heads=memory_num_key_value_heads,
@@ -255,13 +203,6 @@ def load_variant(
         sparse_attention_stride=sparse_attention_stride,
         sparse_attention_window=sparse_attention_window,
         sparse_attention_layers=sparse_attention_layers,
-        prefix_mixin_probability=prefix_mixin_probability,
-        fbt_normalize_gate_input=fbt_normalize_gate_input,
-        fbt_latent_jitter_std=fbt_latent_jitter_std,
-        recirculation_source_layer=recirculation_source_layer,
-        recirculation_destination_layer=recirculation_destination_layer,
-        recirculation_alpha=recirculation_alpha,
-        recirculation_mode=recirculation_mode,
         recurrent_merger=recurrent_merger,
         recurrent_controller_hidden_size=recurrent_controller_hidden_size,
         recurrent_layers=recurrent_layers,
@@ -276,7 +217,6 @@ def _architecture_kwargs(cfg: "ExperimentConfig") -> dict:
         memory_pattern=cfg.memory_pattern,
         memory_write_mode=cfg.memory_write_mode,
         memory_write_stride=cfg.memory_write_stride,
-        memory_token_visibility=cfg.memory_token_visibility,
         memory_layers="all" if cfg.memory_layers is None else cfg.memory_layers,
         memory_position_encoding=(
             "rope" if cfg.memory_position_encoding is None else cfg.memory_position_encoding
@@ -303,13 +243,6 @@ def _architecture_kwargs(cfg: "ExperimentConfig") -> dict:
             if cfg.sparse_attention_layers is None
             else cfg.sparse_attention_layers
         ),
-        prefix_mixin_probability=cfg.prefix_mixin_probability,
-        fbt_normalize_gate_input=cfg.fbt_normalize_gate_input,
-        fbt_latent_jitter_std=cfg.fbt_latent_jitter_std,
-        recirculation_source_layer=cfg.recirculation_source_layer,
-        recirculation_destination_layer=cfg.recirculation_destination_layer,
-        recirculation_alpha=cfg.recirculation_alpha,
-        recirculation_mode=cfg.recirculation_mode,
         recurrent_merger=cfg.recurrent_merger,
         recurrent_controller_hidden_size=cfg.recurrent_controller_hidden_size,
         recurrent_layers=cfg.recurrent_layers,

@@ -5,7 +5,7 @@ from tiny_mistral_mptt.config import ExperimentConfig, load_experiment_config
 
 def _config(**overrides):
     values = {
-        "variant": "fbt",
+        "variant": "dense_memory_attention",
         "model_dir": "unused",
         "data_dir": "unused",
         "output_dir": "unused",
@@ -94,7 +94,6 @@ def test_memory_config_requires_coherent_write_policy():
     dense = _config(variant="memory_attention", memory_write_mode="dense")
     assert dense.memory_write_mode == "dense"
     assert dense.memory_write_stride is None
-    assert dense.memory_token_visibility is None
 
     periodic = _config(
         variant="memory_attention",
@@ -112,42 +111,19 @@ def test_memory_config_requires_coherent_write_policy():
     )
     assert strided.memory_write_mode == "strided"
 
-    mem = _config(
-        variant="memory_token_attention",
-        recurrent_merger="projected_residual", recurrent_layers=[3],
-        memory_write_mode="memory_token",
-        memory_write_stride=8,
-        memory_token_visibility="visible",
-    )
-    assert mem.memory_write_mode == "memory_token"
-    assert mem.memory_token_visibility == "visible"
-
     with pytest.raises(ValueError, match="require memory_write_mode"):
         _config(variant="memory_attention")
     with pytest.raises(ValueError, match="requires positive memory_write_stride"):
         _config(variant="memory_attention", memory_write_mode="periodic")
-    with pytest.raises(ValueError, match="requires memory_token_visibility"):
-        _config(
-            variant="memory_attention",
-            memory_write_mode="memory_token",
-            memory_write_stride=8,
-        )
     with pytest.raises(ValueError, match="must not set memory_write_stride"):
         _config(variant="memory_attention", memory_write_mode="dense", memory_write_stride=1)
-    with pytest.raises(ValueError, match="applies only"):
-        _config(
-            variant="memory_attention",
-            memory_write_mode="periodic",
-            memory_write_stride=8,
-            memory_token_visibility="write_only",
-        )
 
 
 def test_memory_fields_cannot_silently_change_other_variants():
     with pytest.raises(ValueError, match="supported only for Memory Attention variants"):
-        _config(variant="memory_add", memory_write_stride=4)
+        _config(variant="vanilla", memory_write_stride=4)
     with pytest.raises(ValueError, match="supported only for Memory Attention variants"):
-        _config(variant="memory_add", memory_layers=[3])
+        _config(variant="vanilla", memory_layers=[3])
 
 
 def test_dense_and_strided_memory_config_uses_explicit_dense_and_sparse_windows():
@@ -275,16 +251,7 @@ def test_memory_attention_reader_initialization_and_fusion_are_explicit():
             memory_attention_fusion="dual_gated",
         )
     with pytest.raises(ValueError, match="apply only to Memory Attention"):
-        _config(variant="memory_add", memory_reader_initialization="aligned_gqa")
-
-
-def test_middle_layer_recirculation_config_is_archived():
-    with pytest.raises(ValueError, match="variant must be one of"):
-        _config(
-            variant="recirculation",
-            recirculation_source_layer=3,
-            recirculation_destination_layer=1,
-        )
+        _config(variant="vanilla", memory_reader_initialization="aligned_gqa")
 
 
 def test_recirculation_inspired_controller_width_is_explicit():
@@ -345,30 +312,6 @@ def test_optional_recurrent_memory_requires_its_own_read_layers():
         )
 
 
-def test_recirculation_fields_cannot_silently_change_other_variants():
-    with pytest.raises(ValueError, match="apply only to recirculation"):
-        _config(
-            variant="memory_add",
-            recirculation_source_layer=3,
-            recirculation_destination_layer=1,
-        )
-
-
-def test_fbt_paper_recipe_fields_are_explicit_and_variant_scoped():
-    cfg = _config(
-        fbt_normalize_gate_input=True,
-        fbt_latent_jitter_std=0.02,
-        prefix_mixin_probability=1.0,
-    )
-    assert cfg.fbt_normalize_gate_input is True
-    assert cfg.fbt_latent_jitter_std == 0.02
-
-    with pytest.raises(ValueError, match=r"fbt_\* fields"):
-        _config(variant="memory_add", fbt_normalize_gate_input=True)
-    with pytest.raises(ValueError, match="finite and non-negative"):
-        _config(fbt_latent_jitter_std=-0.01)
-
-
 def test_early_stop_pass_depth_gates_are_canonicalized_and_validated():
     cfg = _config(
         eval_every_tokens=8,
@@ -410,7 +353,7 @@ def test_relative_config_inheritance_overrides_only_child_fields(tmp_path):
     base.write_text(
         "\n".join(
             (
-                "variant: fbt",
+                "variant: dense_memory_attention",
                 "model_dir: shared-model",
                 "data_dir: shared-data",
                 "output_dir: base-output",
@@ -426,7 +369,7 @@ def test_relative_config_inheritance_overrides_only_child_fields(tmp_path):
 
     cfg = load_experiment_config(child)
 
-    assert cfg.variant == "fbt"
+    assert cfg.variant == "dense_memory_attention"
     assert cfg.model_dir == "shared-model"
     assert cfg.data_dir == "shared-data"
     assert cfg.output_dir == "child-output"

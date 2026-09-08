@@ -16,7 +16,7 @@ Equation (1) mixes source and destination at the same input position; its update
 
 ## This repository
 
-Active parallel recirculation mixes the preceding position's previous-pass source into the current position's destination: see `_run_feedback_state` in [recirculation.py](../../src/tiny_mistral_mptt/variants/recirculation.py) and `shift_previous_hidden` in [multipass.py](../../src/tiny_mistral_mptt/variants/multipass.py). Online feedback likewise reads carried state before replacing it with the newly processed token's source.
+Active parallel recirculation mixes the preceding position's previous-pass source into the current position's destination: see `_run_feedback_state` in [recirculation.py](https://github.com/PeterBjerreHansen/multipass-transformer-memory/blob/5d4c2cd5a580974aba75b30c29971c71fc726308/src/tiny_mistral_mptt/variants/recirculation.py) and `shift_previous_hidden` in [multipass.py](../../src/tiny_mistral_mptt/variants/multipass.py). Online feedback likewise reads carried state before replacing it with the newly processed token's source.
 
 User decision on 2026-09-02: retain preceding-token mixing and do not introduce same-token mixing. Drop the proposed separate special feedback inference mode. Keep the paper-replay BPTT/TBPTT experiment and training mode deferred because training is too slow. Study manifests have not been changed.
 
@@ -30,7 +30,7 @@ No whole-block multi-pass training result or speed comparison against preceding-
 
 ## Local gradient checks
 
-On a tiny randomly initialized, frozen-backbone model, the current serial replay path produced nonzero controller gradients. Detaching every token's returned KV cache preserved logits exactly but left the language-model loss with no gradient path. The controller affects later predictions through that cache; freezing backbone parameters does not remove the need to differentiate through its operations. This agrees with the existing earlier-cache gradient test in [test_recirculation.py](../../tests/test_recirculation.py).
+On a tiny randomly initialized, frozen-backbone model, the current serial replay path produced nonzero controller gradients. Detaching every token's returned KV cache preserved logits exactly but left the language-model loss with no gradient path. The controller affects later predictions through that cache; freezing backbone parameters does not remove the need to differentiate through its operations. This agrees with the existing earlier-cache gradient test in [test_recirculation.py](https://github.com/PeterBjerreHansen/multipass-transformer-memory/blob/5d4c2cd5a580974aba75b30c29971c71fc726308/tests/test_recirculation.py).
 
 A diagnostic-only subclass removed the source shift from the parallel hook. Its K=2 loss trained the controller, but its logits differed from serial replay, including at the first position. Thus same-position adaptive mixing can be trained through parallel passes, but changing the source alignment alone does not reproduce the serial readout/replay policy. Neither check measures training throughput or model quality. No model implementation was changed.
 

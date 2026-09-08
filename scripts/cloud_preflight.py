@@ -12,7 +12,6 @@ from tiny_mistral.device import resolve_device
 from tiny_mistral.loading import verify_target_checkpoint
 from tiny_mistral_mptt.config import load_experiment_config
 from tiny_mistral_mptt.data.manifest import file_sha256, verify_artifact
-from tiny_mistral_mptt.data.packed_dataset import memory_token_physical_length
 from tiny_mistral_mptt.training.checkpoint import (
     candidate_checkpoint_paths,
     validate_checkpoint,
@@ -240,13 +239,7 @@ def main() -> None:
     batching = None
     if data_manifest is not None:
         linguistic_length = int(data_manifest.sequence_length)
-        if cfg.memory_write_mode == "memory_token":
-            assert cfg.memory_write_stride is not None
-            physical_length = memory_token_physical_length(
-                linguistic_length, int(cfg.memory_write_stride)
-            )
-        else:
-            physical_length = linguistic_length
+        physical_length = linguistic_length
         micro_tokens = cfg.batch_size * linguistic_length
         micro_positions = cfg.batch_size * physical_length
         batching = {
@@ -273,7 +266,6 @@ def main() -> None:
             "memory_window": cfg.memory_window,
             "memory_write_mode": cfg.memory_write_mode,
             "memory_write_stride": cfg.memory_write_stride,
-            "memory_token_visibility": cfg.memory_token_visibility,
             "memory_layers": cfg.memory_layers,
             "memory_position_encoding": cfg.memory_position_encoding,
             "memory_dense_window": cfg.memory_dense_window,

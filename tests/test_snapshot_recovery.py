@@ -20,7 +20,7 @@ def make_trainer(tmp_path, *, resume=False, **overrides):
     if not data.exists():
         make_artifact(data)
     cfg = ExperimentConfig.from_dict({
-        "variant": "memory_add", "device": "cpu", "model_dir": "unused",
+        "variant": "recurrent_memory", "memory_layers": [0], "memory_window": 1, "recurrent_merger": "projected_residual", "device": "cpu", "model_dir": "unused",
         "data_dir": str(data), "output_dir": str(tmp_path / "run"),
         "max_unique_tokens": 24, "attention_backend": "reference",
         "eval_batches": 0, "eval_every_tokens": 0, "checkpoint_every_tokens": 0,

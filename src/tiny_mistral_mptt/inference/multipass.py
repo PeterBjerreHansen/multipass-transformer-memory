@@ -89,9 +89,7 @@ def prefill_exact_k_pass(
             )
             for run in runs
         )
-    prediction_hidden = model.prediction_hidden_after_sequence(
-        runs[-1].hidden_states, input_ids
-    )
+    prediction_hidden = runs[-1].hidden_states[:, -1:, :]
     logits = model.backbone.lm_head(prediction_hidden).float()[:, -1, :]
     return ExactKPassState(
         prefill_passes=passes,
@@ -211,11 +209,9 @@ def exact_decode_step(
                 strict=True,
             )
         )
-    candidate_logits = model.backbone.lm_head(
+    logits = model.backbone.lm_head(
         new_runs[-1].hidden_states[:, -1:, :]
     ).float()[:, -1, :]
-    control = model.control_token_mask(token)[:, 0]
-    logits = torch.where(control[:, None], state.next_token_logits, candidate_logits)
     return ExactKPassState(
         prefill_passes=state.prefill_passes,
         streams=streams,
@@ -253,11 +249,9 @@ def live_feedback_decode_step(
             position=position,
         )
 
-    candidate_logits = model.backbone.lm_head(
+    logits = model.backbone.lm_head(
         run.hidden_states[:, -1:, :]
     ).float()[:, -1, :]
-    control = model.control_token_mask(token)[:, 0]
-    logits = torch.where(control[:, None], state.next_token_logits, candidate_logits)
     return LiveFeedbackState(
         prefill_passes=state.prefill_passes,
         decode_mode=state.decode_mode,

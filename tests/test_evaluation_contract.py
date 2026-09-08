@@ -9,7 +9,7 @@ from conftest import micro_config
 from test_pass_depth_eval import make_artifact
 from tiny_mistral.modeling import MistralForCausalLM
 from tiny_mistral_mptt.config import ExperimentConfig
-from tiny_mistral_mptt.data.packed_dataset import PackedTokenDataset, MemoryTokenPackedDataset
+from tiny_mistral_mptt.data.packed_dataset import PackedTokenDataset
 from tiny_mistral_mptt.evaluation import common
 from tiny_mistral_mptt.evaluation.interventions import evaluate_memory_interventions
 from tiny_mistral_mptt.evaluation.lm_eval_adapter import (
@@ -26,19 +26,18 @@ from tiny_mistral_mptt.evaluation.settings import resolve_evaluation_settings
 from tiny_mistral_mptt.training.trainer import Trainer
 from tiny_mistral_mptt.model_factory import build_variant
 from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionVariant
-from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
 from tiny_mistral_mptt.variants.recurrent_memory import RecurrentMemoryVariant
 from tiny_mistral_mptt.variants.vanilla import VanillaVariant
 
 
 class Rows:
-    """Unequal scored-token counts per physical block exercise token weighting."""
+    """Two distinct source blocks exercise token scoring and aggregation."""
     manifest = SimpleNamespace(source_ids={"a": 0, "b": 1})
     split = "validation"
 
-    def __init__(self, controls=False):
+    def __init__(self):
         self.rows = torch.tensor([
-            [1, 7, 97 if controls else 3, 14, 97 if controls else 9, 22, 6, 12],
+            [1, 7, 3, 14, 9, 22, 6, 12],
             [1, 8, 5, 16, 13, 25, 4, 11],
         ])
         self.sequence_length = self.rows.shape[1]
@@ -74,34 +73,30 @@ def test_hybrid_interventions_use_explicit_attention_channel_names(merger):
         )
 
 
-def make_model(kind="memory_add"):
+def make_model(kind="projected_residual"):
     torch.manual_seed(48)
     backbone = MistralForCausalLM(micro_config(), attention_backend="reference")
     if kind == "vanilla":
         return VanillaVariant(backbone)
-    if kind == "memory_token":
-        return MemoryAttentionVariant(
-            backbone, memory_write_mode="memory_token", memory_write_stride=2,
-            memory_token_visibility="write_only", memory_window=3,
-        )
     if kind in {"projected_residual", "recirculation"}:
-        return RecurrentMemoryVariant(backbone, memory_layers=[1], merger=kind)
+        model = RecurrentMemoryVariant(backbone, memory_layers=[0], merger=kind)
+        if kind == "projected_residual":
+            with torch.no_grad():
+                model.memory_mergers["0"].projection.weight.copy_(0.05 * torch.eye(model.config.hidden_size))
+        return model
     if kind == "no_memory":
         return build_variant("no_memory_adapter", backbone, memory_layers=[1])
     if kind == "dense_attention":
         return build_variant(
             "dense_memory_attention", backbone, memory_layers=[1], memory_window=3
         )
-    model = MemoryAddVariant(backbone)
-    with torch.no_grad():
-        model.memory_projection.weight.copy_(0.05 * torch.eye(model.config.hidden_size))
-    return model
+    raise ValueError(kind)
 
 
-@pytest.mark.parametrize("kind", ["vanilla", "memory_add", "memory_token", "projected_residual", "recirculation"])
+@pytest.mark.parametrize("kind", ["vanilla", "projected_residual", "recirculation"])
 def test_parallel_nll_pass_depth_and_manual_token_weighting_agree(kind):
     model = make_model(kind)
-    data = Rows(controls=kind == "memory_token")
+    data = Rows()
     passes = 1 if kind == "vanilla" else 3
     nll = evaluate_nll(model, data, device="cpu", passes=passes)
     depth = evaluate_pass_depth(model, data, device="cpu", passes=passes)
@@ -124,8 +119,6 @@ def test_parallel_nll_pass_depth_and_manual_token_weighting_agree(kind):
     assert nll.nll == sum(losses) / sum(counts)
     assert nll.predicted_tokens_by_source == dict(zip(("a", "b"), counts))
     assert nll.nll_by_source == dict(zip(("a", "b"), [v / c for v, c in zip(losses, counts)]))
-    if kind == "memory_token":
-        assert counts == [5, 7]
 
 
 @pytest.mark.parametrize("precision", [None, "bfloat16"])
@@ -143,9 +136,12 @@ def test_trainer_and_standalone_share_resolved_precision_and_results(tmp_path, m
     train, val = PackedTokenDataset(root, "train"), PackedTokenDataset(root, "validation")
     model = make_model()
     cfg = ExperimentConfig(
-        variant="memory_add", device="cpu", model_dir="unused", data_dir=str(root),
+        variant="recurrent_memory", device="cpu", model_dir="unused", data_dir=str(root),
         output_dir=str(tmp_path / "run"), eval_passes=passes, eval_batches=2,
         autocast_dtype=precision, attention_backend="reference",
+        memory_layers=[0],
+        memory_window=1,
+        recurrent_merger="projected_residual",
     )
     trainer = Trainer(model=model, config=cfg, train_data=train, validation_data=val, device=torch.device("cpu"))
     record = trainer._evaluate()
@@ -158,16 +154,15 @@ def test_trainer_and_standalone_share_resolved_precision_and_results(tmp_path, m
     assert len(calls) == (2 if precision else 0)
 
 
-def test_metadata_identifies_actual_prefix_and_memory_token_view(tmp_path):
+def test_metadata_identifies_actual_prefix_and_packed_artifact(tmp_path):
     root = tmp_path / "data"
     make_artifact(root)
-    data = MemoryTokenPackedDataset(PackedTokenDataset(root, "validation"), interval=2)
-    result = evaluate_nll(make_model("memory_token"), data, device="cpu", max_blocks=1)
+    data = PackedTokenDataset(root, "validation")
+    result = evaluate_nll(make_model(), data, device="cpu", max_blocks=1)
     identity = result.evaluation["data"]
     assert identity["selection"] == {"kind": "prefix_blocks", "start": 0, "stop": 1}
-    assert identity["physical_sequence_length"] == 11
+    assert identity["physical_sequence_length"] == 8
     assert identity["linguistic_sequence_length"] == 8
-    assert identity["memory_token_interval"] == 2
     assert len(identity["manifest_sha256"]) == 64
     assert identity["declared_token_sha256"] == data.manifest.validation.data_sha256
     assert result.predicted_tokens == 7
@@ -238,13 +233,13 @@ def test_standard_cached_and_parallel_harness_score_identical_targets(max_length
 
 
 def test_diagnostic_and_intervention_targets_keep_existing_coverage():
-    model, data = make_model("memory_token"), Rows(controls=True)
+    model, data = make_model(), Rows()
     result = evaluate_feedback_continuation(model, data, device="cpu", prefill_passes=2,
         prompt_tokens=2, continuation_tokens=6, horizons=[6])
-    assert result.predicted_tokens_per_mode == 10
-    assert result.predicted_tokens_by_offset == (1, 2, 1, 2, 2, 2)
-    assert result.horizons[0].predicted_tokens == 10
-    assert result.predicted_tokens_by_source == {"a": 4, "b": 6}
+    assert result.predicted_tokens_per_mode == 12
+    assert result.predicted_tokens_by_offset == (2, 2, 2, 2, 2, 2)
+    assert result.horizons[0].predicted_tokens == 12
+    assert result.predicted_tokens_by_source == {"a": 6, "b": 6}
     assert "vanilla_nll" not in asdict(result.horizons[0])
     assert "standard_k1_nll" in asdict(result.horizons[0])
     intervention = evaluate_memory_interventions(model, data, device="cpu")
@@ -252,7 +247,7 @@ def test_diagnostic_and_intervention_targets_keep_existing_coverage():
     assert intervention["baseline_pass1"]["nll"] == depth.nll_by_pass[0]
     pass2 = intervention["transitions"]["2"]["conditions"]["real_memory"]
     assert pass2["nll"] == depth.nll_by_pass[1]
-    assert pass2["predicted_tokens"] == 12
+    assert pass2["predicted_tokens"] == 14
 
 
 @pytest.mark.parametrize(
@@ -283,7 +278,7 @@ def test_primary_wiring_interventions_cover_every_condition_through_k4(kind):
 
 
 def test_experiment_defaults_and_independent_overrides_do_not_mutate_config():
-    cfg = ExperimentConfig(variant="memory_add", eval_passes=4, autocast_dtype="bfloat16")
+    cfg = ExperimentConfig(variant="recurrent_memory", eval_passes=4, autocast_dtype="bfloat16", memory_layers=[0], memory_window=1, recurrent_merger="projected_residual")
     before = cfg.to_dict()
     settings = resolve_evaluation_settings(cfg, make_model())
     assert (settings.passes, settings.prefill_passes, settings.decode_mode) == (4, 4, "feedback")

@@ -85,14 +85,10 @@ def main() -> None:
     train_data = load_packed_dataset_for_experiment(
         cfg.data_dir,
         "train",
-        memory_write_mode=cfg.memory_write_mode,
-        memory_write_stride=cfg.memory_write_stride,
     )
     validation_data = load_packed_dataset_for_experiment(
         cfg.data_dir,
         "validation",
-        memory_write_mode=cfg.memory_write_mode,
-        memory_write_stride=cfg.memory_write_stride,
     )
 
     signal.signal(signal.SIGINT, _request_stop)

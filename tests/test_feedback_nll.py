@@ -18,7 +18,7 @@ from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionVariant
 from tiny_mistral_mptt.variants.recurrent_memory import RecurrentMemoryVariant
 
 
-@pytest.mark.parametrize("kind", ["memory_add", "memory_token", "projected_residual", "recirculation",
+@pytest.mark.parametrize("kind", ["projected_residual", "recirculation",
                                   "dense", "strided", "dense_and_strided",
                                   "hybrid_projected_residual", "hybrid_recirculation"])
 def test_bos_feedback_matches_observed_token_reference_and_model_owned_targets(kind, monkeypatch):
@@ -45,7 +45,7 @@ def test_bos_feedback_matches_observed_token_reference_and_model_owned_targets(k
                             memory_write_mode=kind, memory_write_stride=2, memory_window=3)
     else:
         model = make_model(kind)
-    data = Rows(controls=kind == "memory_token")
+    data = Rows()
     data.rows[:, 0] = 21  # The first data token is deliberately not BOS.
     prompts = []
     original = feedback.prefill_live_feedback

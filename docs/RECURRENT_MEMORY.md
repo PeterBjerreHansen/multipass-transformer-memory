@@ -2,7 +2,7 @@
 
 This is the active recurrent architecture for the frozen comparison. It replaces
 the middle-layer source used by the older `variant: recirculation` arm. That
-shifted implementation is retained only as legacy source code; the active config
+shifted implementation has been removed; the active config
 and model factories reject it. Its paper-replay policy has been deleted.
 
 ## Shared memory contract

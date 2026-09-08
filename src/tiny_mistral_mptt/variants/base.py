@@ -55,12 +55,9 @@ class ExperimentalVariant(nn.Module):
         """Parameters absent from the validated vanilla backbone."""
         return ()
 
-    def control_token_mask(self, input_ids: torch.Tensor) -> torch.Tensor:
-        """Architecture control positions excluded from linguistic-token accounting."""
-        return torch.zeros_like(input_ids, dtype=torch.bool)
 
     def linguistic_token_count(self, input_ids: torch.Tensor) -> int:
-        return int((~self.control_token_mask(input_ids)).sum().item())
+        return input_ids.numel()
 
     def build_lm_labels(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Default ordinary next-token targets aligned to prediction positions."""

@@ -109,113 +109,13 @@ class StatefulBlockSampler:
             raise ValueError("invalid serialized sampler position")
 
 
-def memory_token_physical_length(linguistic_length: int, interval: int) -> int:
-    """Physical positions after inserting a MEM slot every ``interval`` data tokens.
-
-    No trailing MEM is inserted after the final linguistic token because it
-    would have no future token to serve inside the packed block.
-    """
-    if linguistic_length < 1 or interval < 1:
-        raise ValueError("linguistic_length and interval must be positive")
-    return linguistic_length + (linguistic_length - 1) // interval
-
-
-def insert_memory_tokens(
-    ids: torch.Tensor,
-    *,
-    memory_token_id: int,
-    interval: int,
-) -> torch.Tensor:
-    """Insert input-only memory-control positions into ordinary token blocks.
-
-    ``ids`` is [B,T] and must contain only linguistic vocabulary IDs. A MEM is
-    inserted after each complete group of ``interval`` linguistic tokens when
-    at least one later linguistic token remains. The transformation is
-    deterministic and preserves the ordinary-token order exactly.
-    """
-    if ids.ndim != 2:
-        raise ValueError("ids must be [B,T]")
-    if interval < 1 or memory_token_id < 0:
-        raise ValueError("interval must be positive and memory_token_id non-negative")
-    seq_len = ids.shape[1]
-    pieces: list[torch.Tensor] = []
-    cursor = 0
-    while cursor < seq_len:
-        end = min(cursor + interval, seq_len)
-        pieces.append(ids[:, cursor:end])
-        cursor = end
-        if cursor < seq_len:
-            pieces.append(
-                torch.full(
-                    (ids.shape[0], 1),
-                    int(memory_token_id),
-                    dtype=ids.dtype,
-                    device=ids.device,
-                )
-            )
-    return torch.cat(pieces, dim=1)
-
-
-class MemoryTokenPackedDataset:
-    """Deterministic view inserting ``<MEM>`` into an ordinary packed artifact.
-
-    The backing artifact remains linguistically tokenized and source/provenance
-    stable.  The view adds architecture control positions only at load time,
-    which keeps ``max_unique_tokens`` interpretable as actual data tokens.
-    Different memory cadences should use backing artifacts whose linguistic
-    sequence lengths expand to the same desired physical context length.
-    """
-
-    def __init__(self, base: PackedTokenDataset, *, interval: int):
-        if interval < 1:
-            raise ValueError("memory-token interval must be positive")
-        self.base = base
-        self.interval = int(interval)
-        self.memory_token_id = int(base.manifest.vocab_size)
-        self.manifest = base.manifest
-        self.artifact_dir = base.artifact_dir
-        self.split = base.split
-        self.linguistic_sequence_length = int(base.sequence_length)
-        self.sequence_length = memory_token_physical_length(
-            self.linguistic_sequence_length, self.interval
-        )
-
-    def __len__(self) -> int:
-        return len(self.base)
-
-    def block(self, index: int, *, device: torch.device | str | None = None) -> torch.Tensor:
-        ordinary = self.base.block(index, device=device)[None, :]
-        return insert_memory_tokens(
-            ordinary, memory_token_id=self.memory_token_id, interval=self.interval
-        )[0]
-
-    def batch(self, indices: list[int], *, device: torch.device | str | None = None) -> torch.Tensor:
-        ordinary = self.base.batch(indices, device=device)
-        return insert_memory_tokens(
-            ordinary, memory_token_id=self.memory_token_id, interval=self.interval
-        )
-
-    def source_id(self, index: int) -> int:
-        return self.base.source_id(index)
-
-    def source_ids(self, indices: list[int]) -> list[int]:
-        return self.base.source_ids(indices)
-
-
 def load_packed_dataset_for_experiment(
     artifact_dir: str | Path,
     split: str,
     *,
-    memory_write_mode: str | None = None,
-    memory_write_stride: int | None = None,
     verify_integrity: bool = False,
-) -> PackedTokenDataset | MemoryTokenPackedDataset:
+) -> PackedTokenDataset:
     artifact_dir = Path(artifact_dir)
     if verify_integrity:
         verify_artifact(artifact_dir)
-    base = PackedTokenDataset(artifact_dir, split)
-    if memory_write_mode in {"memory_token"}:
-        if memory_write_stride is None:
-            raise ValueError("memory_token dataset view requires memory_write_stride")
-        return MemoryTokenPackedDataset(base, interval=int(memory_write_stride))
-    return base
+    return PackedTokenDataset(artifact_dir, split)

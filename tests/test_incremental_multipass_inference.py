@@ -12,8 +12,6 @@ from tiny_mistral_mptt.inference import (
     prefill_exact_k_pass,
     prefill_live_feedback,
 )
-from tiny_mistral_mptt.variants.fbt import FBTVariant
-from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
 from tiny_mistral_mptt.variants.recurrent_memory import RecurrentMemoryVariant
 
 
@@ -46,7 +44,7 @@ def test_k1_extension_preserves_projected_memory_before_feedback_conversion(merg
         )
 
 
-@pytest.mark.parametrize("variant_name", ["memory_add", "fbt"])
+@pytest.mark.parametrize("variant_name", ["projected_residual", "recirculation"])
 def test_bos_only_is_an_ordinary_feedback_prefill_and_remains_causal(variant_name):
     model = make_variant(variant_name)
     bos = torch.tensor([[model.config.bos_token_id]])
@@ -69,13 +67,13 @@ def make_variant(name: str):
         micro_config(num_hidden_layers=2, sliding_window=4),
         attention_backend="reference",
     )
-    if name == "memory_add":
-        model = MemoryAddVariant(backbone)
+    if name == "projected_residual":
+        model = RecurrentMemoryVariant(backbone, memory_layers=[0], merger="projected_residual")
         with torch.no_grad():
             dim = model.config.hidden_size
-            model.memory_projection.weight.copy_(0.05 * torch.eye(dim))
-    elif name == "fbt":
-        model = FBTVariant(backbone, initialization_seed=987)
+            model.memory_mergers["0"].projection.weight.copy_(0.05 * torch.eye(dim))
+    elif name == "recirculation":
+        model = RecurrentMemoryVariant(backbone, initialization_seed=987, memory_layers=[0], merger="recirculation")
     else:
         raise AssertionError(name)
     return model.eval()
@@ -86,7 +84,7 @@ def sample_ids():
 
 
 def test_generic_inference_modes_require_canonical_temporal_names():
-    model = make_variant("memory_add")
+    model = make_variant("projected_residual")
     prompt = sample_ids()[:, :4]
 
     exact = prefill(model, prompt, passes=2, mode="exact_k_pass")
@@ -106,14 +104,14 @@ def test_generic_inference_modes_require_canonical_temporal_names():
         prefill(model, prompt, passes=2, mode="exact_incremental")  # type: ignore[arg-type]
 
 
-def test_fbt_cached_feedback_prefill_is_supported():
-    model = make_variant("fbt")
+def test_recirculation_cached_feedback_prefill_is_supported():
+    model = make_variant("recirculation")
     prompt = sample_ids()[:, :5]
     state = prefill_exact_k_pass(model, prompt, passes=2)
     assert state.prefill_passes == 2
 
 
-@pytest.mark.parametrize("variant_name", ["memory_add", "fbt"])
+@pytest.mark.parametrize("variant_name", ["projected_residual", "recirculation"])
 @pytest.mark.parametrize("passes", [1, 2, 3, 4])
 def test_cached_exact_k_pass_matches_full_recomputation_for_arbitrary_k(
     variant_name, passes
@@ -162,7 +160,7 @@ def test_cached_exact_k_pass_matches_full_recomputation_for_arbitrary_k(
                     assert layer_cache.seq_len <= model.config.sliding_window - 1
 
 
-@pytest.mark.parametrize("variant_name", ["memory_add", "fbt"])
+@pytest.mark.parametrize("variant_name", ["projected_residual", "recirculation"])
 @pytest.mark.parametrize("passes", [2, 3, 4])
 def test_recurrent_handoff_is_exact_for_first_processed_token(
     variant_name, passes
@@ -208,7 +206,7 @@ def test_recurrent_handoff_is_exact_for_first_processed_token(
         assert recurrent_after.next_position == exact_after.next_position == 7
 
 
-@pytest.mark.parametrize("variant_name", ["memory_add", "fbt"])
+@pytest.mark.parametrize("variant_name", ["projected_residual", "recirculation"])
 def test_k1_standard_decode_and_exact_are_vanilla_cached_inference(variant_name):
     model = make_variant(variant_name)
     ids = sample_ids()
@@ -255,7 +253,7 @@ def test_k1_standard_decode_and_exact_are_vanilla_cached_inference(variant_name)
             )
 
 
-@pytest.mark.parametrize("variant_name", ["memory_add", "fbt"])
+@pytest.mark.parametrize("variant_name", ["projected_residual", "recirculation"])
 def test_k1_feedback_decode_is_independent_of_prefill_depth(variant_name):
     model = make_variant(variant_name)
     ids = sample_ids()
@@ -283,8 +281,8 @@ def test_k1_feedback_decode_is_independent_of_prefill_depth(variant_name):
         assert not torch.equal(standard.last_hidden, feedback.last_hidden)
 
 
-def test_memory_add_recurrent_state_keeps_exactly_one_feedback_vector():
-    model = make_variant("memory_add")
+def test_projected_residual_recurrent_state_keeps_exactly_one_feedback_vector():
+    model = make_variant("projected_residual")
     ids = sample_ids()
     with torch.no_grad():
         state = prefill_live_feedback(
@@ -299,5 +297,5 @@ def test_memory_add_recurrent_state_keeps_exactly_one_feedback_vector():
             assert state.feedback_memory is not None
             assert state.feedback_memory.shape[1] == 1
             torch.testing.assert_close(
-                state.feedback_memory, state.last_hidden, atol=0, rtol=0
+                state.feedback_memory, model.writer(state.last_hidden), atol=0, rtol=0
             )

@@ -45,10 +45,8 @@ def causal_lm_loss_from_labels(
 ) -> torch.Tensor:
     """Cross-entropy for position-aligned labels.
 
-    Unlike ordinary shifted language-model loss, this form can represent
-    architecture control slots: positions with ``ignore_index`` predict
-    nothing, while an earlier linguistic position may target the next
-    linguistic token across one or more control slots.
+    Positions with ``ignore_index`` contribute no prediction target, including
+    the final position of a packed next-token training block.
     """
     if logits.ndim != 3 or labels.ndim != 2 or logits.shape[:2] != labels.shape:
         raise ValueError("logits [B,T,V] and labels [B,T] must align")

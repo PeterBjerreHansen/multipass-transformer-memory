@@ -9,13 +9,12 @@ from typing import Any
 
 import yaml
 
-from .compatibility import normalize_legacy_variant_name
+from .compatibility import discard_retired_defaults, normalize_legacy_variant_name
 
 MEMORY_ATTENTION_PRESETS = {
     "dense_memory_attention": ("dense", "dense"),
     "strided_memory_attention": ("strided", "strided"),
     "dense_and_strided_memory_attention": ("dense_and_strided", None),
-    "memory_token_attention": ("dense", "memory_token"),
 }
 MEMORY_ATTENTION_VARIANT_ALIASES = {
     "swa_transformer": "vanilla",
@@ -43,9 +42,8 @@ def resolve_memory_attention_pattern(
 ) -> tuple[str, str | None]:
     """Resolve an explicit pattern or descriptive preset and reject conflicts.
 
-    Dense/strided describe ordinary-token records. Explicit MEM writing is a
-    separate source policy with dense access over its committed records.
-    Combined retention uses a dense source and no memory_write_* controls.
+    Dense/strided describe ordinary-token records. Combined retention uses a
+    dense source and no memory_write_* controls.
     """
     name = normalize_legacy_variant_name(name)
     preset = MEMORY_ATTENTION_PRESETS.get(name)
@@ -60,7 +58,7 @@ def resolve_memory_attention_pattern(
     if pattern is None:
         if write_mode in {"strided", "periodic"}:
             pattern = "strided"
-        elif write_mode in {"dense", "memory_token"}:
+        elif write_mode == "dense":
             pattern = "dense"
         else:
             raise ValueError("Memory Attention configs require memory_write_mode or memory_pattern")
@@ -71,7 +69,7 @@ def resolve_memory_attention_pattern(
             raise ValueError("dense-and-strided retention does not accept memory_write_mode")
     elif write_mode is None:
         write_mode = pattern
-    elif pattern == "dense" and write_mode not in {"dense", "memory_token"}:
+    elif pattern == "dense" and write_mode != "dense":
         raise ValueError("dense memory_pattern conflicts with memory_write_mode")
     elif pattern == "strided" and write_mode not in {"strided", "periodic"}:
         raise ValueError("strided memory_pattern conflicts with memory_write_mode")
@@ -80,7 +78,7 @@ def resolve_memory_attention_pattern(
 
 MEMORY_ATTENTION_VARIANTS = {"memory_attention", *MEMORY_ATTENTION_PRESETS}
 SUPPORTED_VARIANTS = {
-    "vanilla", "swa_transformer", "strided_self_attention", "fbt", "memory_add",
+    "vanilla", "swa_transformer", "strided_self_attention",
     "no_memory_adapter", "recurrent_memory", *MEMORY_ATTENTION_VARIANTS,
 }
 SUPPORTED_LR_SCHEDULES = {"constant", "cosine", "piecewise_linear"}
@@ -391,7 +389,6 @@ class ExperimentConfig:
     memory_pattern: str | None = None
     memory_write_mode: str | None = None
     memory_write_stride: int | None = None
-    memory_token_visibility: str | None = None
     memory_layers: str | list[int] | None = None
     memory_position_encoding: str | None = None
     # Reader width used for genuine parameter/compute matching; defaults to the
@@ -411,13 +408,6 @@ class ExperimentConfig:
     sparse_attention_stride: int | None = None
     sparse_attention_window: int | None = None
     sparse_attention_layers: str | list[int] | None = None
-    prefix_mixin_probability: float = 0.0
-    fbt_normalize_gate_input: bool = False
-    fbt_latent_jitter_std: float = 0.0
-    recirculation_source_layer: int | None = None
-    recirculation_destination_layer: int | None = None
-    recirculation_alpha: float = 0.1
-    recirculation_mode: str = "fixed"
     # Late emitted memory, read at memory_layers; no paper-replay policy.
     recurrent_merger: str | None = None
     recurrent_controller_hidden_size: int | None = None
@@ -697,72 +687,21 @@ class ExperimentConfig:
             if self.recurrent_controller_hidden_size < 1:
                 raise ValueError("recurrent_controller_hidden_size must be positive")
 
-        if self.variant == "recirculation":
-            if self.recirculation_mode not in {"fixed", "adaptive"}:
-                raise ValueError("recirculation_mode must be 'fixed' or 'adaptive'")
-            if (
-                self.variant == "recirculation"
-                and self.phase == "A"
-                and self.recirculation_mode == "fixed"
-            ):
-                raise ValueError(
-                    "basic fixed recirculation has no Phase-A parameters; use phase B"
-                )
-            if (
-                self.recirculation_source_layer is None
-                or self.recirculation_destination_layer is None
-            ):
-                raise ValueError(
-                    "recirculation requires source and destination layer fields"
-                )
-            if not (
-                0
-                <= self.recirculation_destination_layer
-                < self.recirculation_source_layer
-            ):
-                raise ValueError(
-                    "recirculation requires destination_layer < source_layer"
-                )
-            if not math.isfinite(float(self.recirculation_alpha)) or not 0.0 <= float(
-                self.recirculation_alpha
-            ) <= 1.0:
-                raise ValueError("recirculation_alpha must be finite in [0, 1]")
-        elif (
-            self.recirculation_source_layer is not None
-            or self.recirculation_destination_layer is not None
-            or self.recirculation_alpha != 0.1
-            or self.recirculation_mode != "fixed"
-        ):
-            raise ValueError(
-                "recirculation_* fields apply only to recirculation variants"
-            )
-
         if self.variant in MEMORY_ATTENTION_VARIANTS:
             self.memory_pattern, self.memory_write_mode = resolve_memory_attention_pattern(
                 self.variant, self.memory_pattern, self.memory_write_mode
             )
         if self.variant in MEMORY_ATTENTION_VARIANTS and self.memory_pattern != "dense_and_strided":
-            if self.memory_write_mode not in {"dense", "strided", "periodic", "memory_token"}:
+            if self.memory_write_mode not in {"dense", "strided", "periodic"}:
                 raise ValueError(
-                    "Memory Attention configs require memory_write_mode: dense|strided|memory_token"
+                    "Memory Attention configs require memory_write_mode: dense|strided"
                 )
             if self.memory_write_mode == "dense":
                 if self.memory_write_stride is not None:
                     raise ValueError("dense Memory Attention must not set memory_write_stride")
-                if self.memory_token_visibility is not None:
-                    raise ValueError("dense Memory Attention must not set memory_token_visibility")
             elif self.memory_write_mode in {"strided", "periodic"}:
                 if self.memory_write_stride is None or self.memory_write_stride <= 0:
                     raise ValueError("strided Memory Attention requires positive memory_write_stride")
-                if self.memory_token_visibility is not None:
-                    raise ValueError("memory_token_visibility applies only to memory_token mode")
-            else:
-                if self.memory_write_stride is None or self.memory_write_stride <= 0:
-                    raise ValueError("memory-token Memory Attention requires positive memory_write_stride")
-                if self.memory_token_visibility not in {"visible", "write_only"}:
-                    raise ValueError(
-                        "memory-token Memory Attention requires memory_token_visibility: visible|write_only"
-                    )
             if self.memory_layers is None:
                 raise ValueError("Memory Attention configs require memory_layers")
             self.memory_layers = _coerce_layer_indices(
@@ -785,7 +724,6 @@ class ExperimentConfig:
             if (
                 self.memory_write_mode is not None
                 or self.memory_write_stride is not None
-                or self.memory_token_visibility is not None
             ):
                 raise ValueError("Dense-and-strided Memory Attention uses dense retention, not memory_write_* fields")
             if self.memory_dense_window is None or self.memory_sparse_window is None:
@@ -815,7 +753,7 @@ class ExperimentConfig:
             )
             if any(value is not None for value in (
                 self.memory_write_mode, self.memory_write_stride,
-                self.memory_token_visibility, self.memory_position_encoding,
+                self.memory_position_encoding,
                 self.memory_dense_window, self.memory_sparse_window, self.memory_sparse_stride,
             )) or self.memory_window != 1:
                 raise ValueError("recurrent memory retains one dense record; attention memory controls do not apply")
@@ -827,14 +765,13 @@ class ExperimentConfig:
             )
             if any(value is not None for value in (
                 self.memory_write_mode, self.memory_write_stride,
-                self.memory_token_visibility, self.memory_position_encoding,
+                self.memory_position_encoding,
                 self.memory_dense_window, self.memory_sparse_window, self.memory_sparse_stride,
             )):
                 raise ValueError("no-memory adapter does not accept memory retention controls")
         elif (
             self.memory_write_mode is not None
             or self.memory_write_stride is not None
-            or self.memory_token_visibility is not None
             or self.memory_layers is not None
             or self.memory_position_encoding is not None
             or self.memory_dense_window is not None
@@ -860,26 +797,6 @@ class ExperimentConfig:
             or self.sparse_attention_layers is not None
         ):
             raise ValueError("sparse_attention_* fields require variant=strided_self_attention")
-        if (
-            not math.isfinite(float(self.prefix_mixin_probability))
-            or not 0.0 <= float(self.prefix_mixin_probability) <= 1.0
-        ):
-            raise ValueError("prefix_mixin_probability must be finite and in [0, 1]")
-        if self.variant != "fbt" and self.prefix_mixin_probability != 0.0:
-            raise ValueError(
-                "prefix_mixin_probability is currently supported only for variant=fbt"
-            )
-        if not isinstance(self.fbt_normalize_gate_input, bool):
-            raise ValueError("fbt_normalize_gate_input must be boolean")
-        if (
-            not math.isfinite(float(self.fbt_latent_jitter_std))
-            or self.fbt_latent_jitter_std < 0.0
-        ):
-            raise ValueError("fbt_latent_jitter_std must be finite and non-negative")
-        if self.variant != "fbt" and (
-            self.fbt_normalize_gate_input or self.fbt_latent_jitter_std != 0.0
-        ):
-            raise ValueError("fbt_* fields are supported only for variant=fbt")
         schedule = self.normalized_pass_schedule()
         pass_counts = {passes for stage in schedule for passes in stage["probabilities"]}
         single_pass_variants = {"vanilla", "strided_self_attention", "swa_transformer"}
@@ -922,7 +839,7 @@ class ExperimentConfig:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ExperimentConfig":
         reject_removed_paper_policy(raw)
-        raw = dict(raw)
+        raw = discard_retired_defaults(raw)
         # Older multipass run.json/checkpoints serialized these unused defaults.
         raw.pop("recirculation_activation_checkpointing", None)
         raw.pop("recirculation_bptt_truncate_tokens", None)

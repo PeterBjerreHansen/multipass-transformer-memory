@@ -34,8 +34,7 @@ from .memory_attention_fusion import (
 from .decoder import DecoderRun as MemoryAttentionCoreRun, run_memory_decoder
 
 
-MEMORY_WRITE_MODES = {"dense", "strided", "periodic", "memory_token"}
-MEMORY_TOKEN_VISIBILITIES = {"visible", "write_only"}
+MEMORY_WRITE_MODES = {"dense", "strided", "periodic"}
 MEMORY_POSITION_ENCODINGS = {"rope", "none"}
 MEMORY_READER_INITIALIZATIONS = {"zero_output", "aligned_gqa"}
 
@@ -160,6 +159,7 @@ class MemoryAttentionReader(nn.Module):
                             self.q_proj.weight[query_row, source_feature] = scale
 
     @staticmethod
+
     def _validate_positions(
         position_ids: torch.Tensor | None,
         *,
@@ -474,7 +474,6 @@ class MemoryAttentionVariant(MultiPassVariant):
         memory_sparse_stride: int = 32,
         memory_write_mode: str | None = None,
         memory_write_stride: int = 8,
-        memory_token_visibility: str = "visible",
         memory_layers: str | list[int] = "all",
         memory_position_encoding: str = "rope",
         memory_num_key_value_heads: int | None = None,
@@ -501,7 +500,7 @@ class MemoryAttentionVariant(MultiPassVariant):
             memory_write_stride = 1
         elif memory_pattern == "strided" and canonical_memory_write_mode(memory_write_mode) != "periodic":
             raise ValueError("strided memory_pattern conflicts with memory_write_mode")
-        elif memory_pattern == "dense" and memory_write_mode not in {"dense", "memory_token"}:
+        elif memory_pattern == "dense" and memory_write_mode != "dense":
             raise ValueError("dense memory_pattern conflicts with memory_write_mode")
         self.memory_pattern = memory_pattern
         self.memory_dense_window = int(memory_dense_window)
@@ -511,13 +510,9 @@ class MemoryAttentionVariant(MultiPassVariant):
             raise ValueError("memory_window must be positive")
         memory_write_mode = canonical_memory_write_mode(memory_write_mode)
         if memory_write_mode not in MEMORY_WRITE_MODES:
-            raise ValueError("memory_write_mode must be 'dense', 'strided', or 'memory_token'")
+            raise ValueError("memory_write_mode must be 'dense' or 'strided'")
         if memory_write_stride <= 0:
             raise ValueError("memory_write_stride must be positive")
-        if memory_token_visibility not in MEMORY_TOKEN_VISIBILITIES:
-            raise ValueError("memory_token_visibility must be 'visible' or 'write_only'")
-        if memory_write_mode != "memory_token" and memory_token_visibility != "visible":
-            raise ValueError("memory_token_visibility applies only to memory_token mode")
         if memory_position_encoding not in MEMORY_POSITION_ENCODINGS:
             raise ValueError("memory_position_encoding must be 'rope' or 'none'")
         if memory_reader_initialization not in MEMORY_READER_INITIALIZATIONS:
@@ -562,7 +557,6 @@ class MemoryAttentionVariant(MultiPassVariant):
         self.memory_window = int(memory_window)
         self.memory_write_mode = str(memory_write_mode)
         self.memory_write_stride = int(memory_write_stride)
-        self.memory_token_visibility = str(memory_token_visibility)
         self.memory_layers = selected_layers
         self.memory_position_encoding = str(memory_position_encoding)
         self.memory_reader_initialization = str(memory_reader_initialization)
@@ -577,18 +571,10 @@ class MemoryAttentionVariant(MultiPassVariant):
             if memory_num_key_value_heads is None
             else int(memory_num_key_value_heads)
         )
-        self.memory_token_id = base_vocab if memory_write_mode == "memory_token" else None
         self.base_vocab_size = base_vocab
 
         hidden_size = int(backbone.config.hidden_size)
         self.writer = MemoryAttentionWriter(hidden_size)
-        if self.memory_write_mode == "memory_token":
-            # Zero-init is deliberately conservative: the control slot begins
-            # without adding lexical content but can contextualize through the
-            # transformer's attention and learns in Phase A as an added param.
-            self.memory_token_embedding = nn.Parameter(torch.zeros(hidden_size))
-        else:
-            self.register_parameter("memory_token_embedding", None)
         self.memory_readers = nn.ModuleDict(
             {
                 str(layer_index): MemoryAttentionReader(
@@ -620,18 +606,9 @@ class MemoryAttentionVariant(MultiPassVariant):
             for cache_index, layer_index in enumerate(self.memory_layers)
         }
 
-    @property
-    def uses_memory_tokens(self) -> bool:
-        return self.memory_write_mode == "memory_token"
-
-    def phase_a_first_pass_requires_grad(self) -> bool:
-        return self.uses_memory_tokens
-
     def added_parameters(self) -> Iterable[nn.Parameter]:
         yield from super().added_parameters()
         yield from self.writer.parameters()
-        if self.memory_token_embedding is not None:
-            yield self.memory_token_embedding
         yield from self.memory_readers.parameters()
         yield from self.memory_attention_fusions.parameters()
 
@@ -647,33 +624,6 @@ class MemoryAttentionVariant(MultiPassVariant):
             destination, memory_delta, available=available
         )
 
-    def memory_token_mask(self, input_ids: torch.Tensor) -> torch.Tensor:
-        if input_ids.ndim != 2:
-            raise ValueError("input_ids must be [B,T]")
-        if not self.uses_memory_tokens:
-            return torch.zeros_like(input_ids, dtype=torch.bool)
-        assert self.memory_token_id is not None
-        return input_ids.eq(self.memory_token_id)
-
-    def control_token_mask(self, input_ids: torch.Tensor) -> torch.Tensor:
-        return self.memory_token_mask(input_ids)
-
-    def prediction_hidden_after_sequence(
-        self, hidden_states: torch.Tensor, input_ids: torch.Tensor
-    ) -> torch.Tensor:
-        if hidden_states.shape[:2] != input_ids.shape:
-            raise ValueError("hidden_states/input_ids token shapes differ")
-        if not self.uses_memory_tokens:
-            return hidden_states[:, -1:, :]
-        ordinary = ~self.memory_token_mask(input_ids)
-        if bool((ordinary.sum(dim=1) == 0).any()):
-            raise ValueError("memory-token sequence has no linguistic position")
-        positions = torch.arange(input_ids.shape[1], device=input_ids.device)[None, :]
-        last = torch.where(ordinary, positions, torch.full_like(positions, -1)).max(dim=1).values
-        return hidden_states.gather(
-            1, last[:, None, None].expand(-1, 1, hidden_states.shape[-1])
-        )
-
     def _validate_input_ids(self, input_ids: torch.Tensor) -> None:
         if input_ids.ndim != 2:
             raise ValueError("input_ids must be [B,T]")
@@ -683,55 +633,13 @@ class MemoryAttentionVariant(MultiPassVariant):
         if input_ids.device.type == "cpu":
             if bool((input_ids < 0).any()):
                 raise ValueError("input IDs must be non-negative")
-            upper = self.base_vocab_size + (1 if self.uses_memory_tokens else 0)
+            upper = self.base_vocab_size
             if bool((input_ids >= upper).any()):
                 raise ValueError("input ID lies outside this variant's input vocabulary")
-            if not self.uses_memory_tokens and bool((input_ids >= self.base_vocab_size).any()):
-                raise ValueError("strided Memory Attention accepts only ordinary vocabulary IDs")
 
     def input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         self._validate_input_ids(input_ids)
-        if not self.uses_memory_tokens:
-            return self.backbone.model.embed_tokens(input_ids)
-        assert self.memory_token_id is not None and self.memory_token_embedding is not None
-        is_mem = input_ids.eq(self.memory_token_id)
-        safe_ids = input_ids.masked_fill(is_mem, 0)
-        ordinary = self.backbone.model.embed_tokens(safe_ids)
-        mem = self.memory_token_embedding.to(dtype=ordinary.dtype)[None, None, :]
-        return torch.where(is_mem[:, :, None], mem, ordinary)
-
-    def self_attention_key_mask(self, input_ids: torch.Tensor) -> torch.Tensor | None:
-        if not self.uses_memory_tokens or self.memory_token_visibility == "visible":
-            return None
-        # Asymmetric write-only semantics: MEM remains a query and can read its
-        # causal prefix, but its K/V is unavailable to every later query.
-        return ~self.memory_token_mask(input_ids)
-
-    def build_lm_labels(self, input_ids: torch.Tensor) -> torch.Tensor:
-        if not self.uses_memory_tokens:
-            return super().build_lm_labels(input_ids)
-        self._validate_input_ids(input_ids)
-        is_mem = self.memory_token_mask(input_ids)
-        ordinary = ~is_mem
-        bsz, seq_len = input_ids.shape
-        positions = torch.arange(seq_len, device=input_ids.device, dtype=torch.long)
-        sentinel = torch.full((bsz, seq_len), seq_len, device=input_ids.device, dtype=torch.long)
-        candidates = torch.where(ordinary, positions[None, :].expand(bsz, -1), sentinel)
-        # For each physical position, find the nearest ordinary position strictly
-        # to its right. This stays device-side; the former Python reverse scan
-        # synchronized once per token on CUDA/MPS.
-        suffix_min = torch.flip(
-            torch.cummin(torch.flip(candidates, dims=(1,)), dim=1).values,
-            dims=(1,),
-        )
-        next_index = torch.cat(
-            (suffix_min[:, 1:], torch.full((bsz, 1), seq_len, device=input_ids.device, dtype=torch.long)),
-            dim=1,
-        )
-        safe_index = next_index.clamp(max=max(seq_len - 1, 0))
-        next_token = input_ids.gather(1, safe_index)
-        valid = ordinary & next_index.lt(seq_len)
-        return torch.where(valid, next_token, torch.full_like(input_ids, -100))
+        return self.backbone.model.embed_tokens(input_ids)
 
     def write_mask(self, input_ids: torch.Tensor) -> torch.Tensor:
         self._validate_input_ids(input_ids)
@@ -741,29 +649,18 @@ class MemoryAttentionVariant(MultiPassVariant):
             positions = torch.arange(input_ids.shape[1], device=input_ids.device)
             row = (positions + 1).remainder(self.memory_write_stride).eq(0)
             return row[None, :].expand(input_ids.shape[0], -1)
-        return self.memory_token_mask(input_ids)
+        raise RuntimeError("invalid memory write mode")
 
     def sequence_positions(self, input_ids: torch.Tensor) -> torch.Tensor:
-        """Return cross-attention coordinates anchored to linguistic sequence positions.
-
-        Ordinary dense/strided inputs use their physical token positions. In
-        memory-token mode, an inserted control position inherits the preceding
-        linguistic boundary and therefore does not inflate memory age.
-        """
+        """Return physical input positions for strict-past cross-attention."""
         self._validate_input_ids(input_ids)
-        if not self.uses_memory_tokens:
-            positions = torch.arange(
-                input_ids.shape[1], device=input_ids.device, dtype=torch.long
-            )
-            return positions[None, :].expand(input_ids.shape[0], -1)
-        ordinary = ~self.memory_token_mask(input_ids)
-        positions = ordinary.long().cumsum(dim=1) - 1
-        return positions.clamp_min(0)
+        positions = torch.arange(
+            input_ids.shape[1], device=input_ids.device, dtype=torch.long
+        )
+        return positions[None, :].expand(input_ids.shape[0], -1)
 
     def next_sequence_positions(self, input_ids: torch.Tensor) -> torch.Tensor:
         self._validate_input_ids(input_ids)
-        if self.uses_memory_tokens:
-            return (~self.memory_token_mask(input_ids)).sum(dim=1, dtype=torch.long)
         return torch.full(
             (input_ids.shape[0],),
             input_ids.shape[1],
@@ -799,6 +696,7 @@ class MemoryAttentionVariant(MultiPassVariant):
         return torch.stack(rows, dim=0), torch.stack(masks, dim=0)
 
     @staticmethod
+
     def _compact_written_positions(
         positions: torch.Tensor,
         write_mask: torch.Tensor,
@@ -853,6 +751,7 @@ class MemoryAttentionVariant(MultiPassVariant):
         )
 
     @staticmethod
+
     def _cache_next_position(past_key_values: tuple[LayerKVCache, ...]) -> int:
         if not past_key_values:
             raise ValueError("past_key_values must not be empty")
@@ -868,7 +767,6 @@ class MemoryAttentionVariant(MultiPassVariant):
         *,
         past_key_values: tuple[LayerKVCache, ...] | None,
         use_cache: bool,
-        self_attention_mask: torch.Tensor | None = None,
         query_position_ids: torch.Tensor | None = None,
         after_memory_attention: Callable[[int, torch.Tensor], torch.Tensor] | None = None,
     ) -> MemoryAttentionCoreRun:
@@ -949,7 +847,6 @@ class MemoryAttentionVariant(MultiPassVariant):
             after_attention=read_memory,
             past_key_values=past_key_values,
             use_cache=use_cache,
-            attention_mask=self_attention_mask,
         )
 
     def _full_memory_delta(
@@ -993,7 +890,6 @@ class MemoryAttentionVariant(MultiPassVariant):
         *,
         past_key_values: tuple[LayerKVCache, ...] | None,
         use_cache: bool,
-        self_attention_mask: torch.Tensor | None = None,
         query_position_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, tuple[LayerKVCache, ...] | None]:
         """Compatibility wrapper for a memory-only decoder pass."""
@@ -1002,7 +898,6 @@ class MemoryAttentionVariant(MultiPassVariant):
             memory,
             past_key_values=past_key_values,
             use_cache=use_cache,
-            self_attention_mask=self_attention_mask,
             query_position_ids=query_position_ids,
         )
         return run.hidden_states, run.past_key_values
@@ -1019,7 +914,6 @@ class MemoryAttentionVariant(MultiPassVariant):
             memory,
             past_key_values=None,
             use_cache=False,
-            self_attention_mask=self.self_attention_key_mask(input_ids),
         )
         return hidden
 
@@ -1035,7 +929,6 @@ class MemoryAttentionVariant(MultiPassVariant):
             memory,
             past_key_values=None,
             use_cache=True,
-            self_attention_mask=self.self_attention_key_mask(input_ids),
         )
         if cache is None:
             raise RuntimeError("cached Memory Attention prefill did not return KV state")
@@ -1059,7 +952,6 @@ class MemoryAttentionVariant(MultiPassVariant):
             feedback_memory,
             past_key_values=past_key_values,
             use_cache=True,
-            self_attention_mask=self.self_attention_key_mask(token),
             query_position_ids=query_positions,
         )
         if cache is None:
@@ -1072,12 +964,6 @@ class MemoryAttentionVariant(MultiPassVariant):
         if token.shape != (state.batch_size, 1):
             raise ValueError("cached Memory Attention token must be [B,1]")
         query_positions = state.next_sequence_positions[:, None]
-        if self.uses_memory_tokens:
-            query_positions = torch.where(
-                self.memory_token_mask(token),
-                (query_positions - 1).clamp_min(0),
-                query_positions,
-            )
         return query_positions
 
     def _state_from_memory_batch(self, memory: MemoryAttentionBatch) -> MemoryAttentionState:
@@ -1135,8 +1021,6 @@ class MemoryAttentionVariant(MultiPassVariant):
         if hidden_states.ndim != 3 or hidden_states.shape[1] < 1:
             raise ValueError("hidden_states must be non-empty [B,T,D]")
         if input_ids is None:
-            if self.memory_write_mode == "memory_token":
-                raise ValueError("memory-token mode requires input_ids to seed feedback memory")
             input_ids = torch.zeros(hidden_states.shape[:2], dtype=torch.long, device=hidden_states.device)
         return self._state_from_memory_batch(self.build_memory(hidden_states, input_ids))
 
@@ -1155,8 +1039,7 @@ class MemoryAttentionVariant(MultiPassVariant):
                 raise ValueError("strided cached write requires absolute position")
             trigger = (int(position) + 1) % self.memory_write_stride == 0
             return torch.full((token.shape[0],), trigger, dtype=torch.bool, device=token.device)
-        assert self.memory_token_id is not None
-        return token[:, 0].eq(self.memory_token_id)
+        raise RuntimeError("invalid memory write mode")
 
     def _append_memory(
         self,
@@ -1261,16 +1144,7 @@ class MemoryAttentionVariant(MultiPassVariant):
             raise ValueError("Memory Attention feedback update requires current token")
         current_positions = feedback_memory.next_sequence_positions
         next_positions = current_positions + 1
-        if self.uses_memory_tokens:
-            is_memory = self.memory_token_mask(token)[:, 0]
-            write_positions = torch.where(
-                is_memory, (current_positions - 1).clamp_min(0), current_positions
-            )
-            next_positions = torch.where(
-                is_memory, current_positions, next_positions
-            )
-        else:
-            write_positions = current_positions
+        write_positions = current_positions
         return self._append_memory(
             feedback_memory,
             new_hidden,
@@ -1295,6 +1169,7 @@ class MemoryAttentionVariant(MultiPassVariant):
         )
 
     @staticmethod
+
     def _gather_rows(values: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
         return torch.gather(
             values,

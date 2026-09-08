@@ -13,7 +13,7 @@ from tiny_mistral.device import synchronize
 
 from ..config import ExperimentConfig
 from ..data.manifest import file_sha256, verify_artifact
-from ..data.packed_dataset import MemoryTokenPackedDataset, PackedTokenDataset, StatefulBlockSampler
+from ..data.packed_dataset import PackedTokenDataset, StatefulBlockSampler
 from ..evaluation.pass_depth import evaluate_pass_depth
 from ..evaluation.common import block_limit, precision_metadata
 from ..evaluation.feedback import feedback_evaluation_metadata
@@ -39,7 +39,7 @@ from .provenance import hardware_provenance, source_provenance
 from .schedule import lr_multiplier
 
 
-Dataset = PackedTokenDataset | MemoryTokenPackedDataset
+Dataset = PackedTokenDataset
 
 
 def _set_seed(seed: int) -> None:
@@ -176,21 +176,9 @@ class Trainer:
         self.manifest_path = Path(config.data_dir) / "manifest.json"
         self.manifest_sha256 = file_sha256(self.manifest_path)
 
-        # Memory-token views expand physical positions but preserve a constant
-        # number of linguistic/data tokens in every backing block. Avoid
-        # per-microbatch GPU synchronizations by deriving this from the view.
-        self.linguistic_per_block = int(
-            getattr(train_data, "linguistic_sequence_length", train_data.sequence_length)
-        )
-        validation_linguistic = int(
-            getattr(validation_data, "linguistic_sequence_length", validation_data.sequence_length)
-        )
-        if self.linguistic_per_block <= 0 or validation_linguistic != self.linguistic_per_block:
-            raise ValueError("train/validation linguistic block lengths must match and be positive")
-        # One eager semantic check catches a mismatched model/view before paid work.
-        probe = train_data.batch([0], device="cpu")
-        if model.linguistic_token_count(probe) != self.linguistic_per_block:
-            raise ValueError("dataset control-token layout disagrees with model semantics")
+        self.linguistic_per_block = int(train_data.sequence_length)
+        if self.linguistic_per_block <= 0 or validation_data.sequence_length != self.linguistic_per_block:
+            raise ValueError("train/validation block lengths must match and be positive")
 
         _set_seed(config.seed)
         self.sampler = StatefulBlockSampler(len(train_data), seed=config.seed + 1)

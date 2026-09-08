@@ -4,10 +4,8 @@ import torch
 from conftest import micro_config
 from tiny_mistral.modeling import MistralForCausalLM
 from tiny_mistral_mptt.training.phases import configure_phase
-from tiny_mistral_mptt.variants.fbt import FBTVariant
-from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
-from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
 from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionVariant
+from tiny_mistral_mptt.variants.recurrent_memory import RecurrentMemoryVariant
 
 
 pytestmark = pytest.mark.skipif(
@@ -16,14 +14,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.mark.parametrize("variant_name", ["fbt", "memory_add", "memory_attention"])
+@pytest.mark.parametrize("variant_name", ["recirculation", "projected_residual", "memory_attention"])
 def test_multipass_variants_forward_backward_on_mps(variant_name):
     config = micro_config()
     backbone = MistralForCausalLM(config, attention_backend="auto").to("mps", dtype=torch.float32)
-    if variant_name == "fbt":
-        model = FBTVariant(backbone, initialization_seed=17)
-    elif variant_name == "memory_add":
-        model = MemoryAddVariant(backbone)
+    if variant_name == "recirculation":
+        model = RecurrentMemoryVariant(backbone, initialization_seed=17, memory_layers=[0], merger="recirculation")
+    elif variant_name == "projected_residual":
+        model = RecurrentMemoryVariant(backbone, memory_layers=[0], merger="projected_residual")
     else:
         model = MemoryAttentionVariant(backbone, memory_window=4, memory_write_mode="dense", memory_write_stride=1, initialization_seed=17)
     model = model.to("mps", dtype=torch.float32)
@@ -37,7 +35,7 @@ def test_multipass_variants_forward_backward_on_mps(variant_name):
     assert all(bool(torch.isfinite(grad).all().item()) for grad in grads)
 
 
-@pytest.mark.parametrize("variant_name", ["memory_add", "memory_attention", "recirculation"])
+@pytest.mark.parametrize("variant_name", ["projected_residual", "memory_attention", "recirculation"])
 @pytest.mark.parametrize("passes", [2, 3])
 def test_incremental_memory_inference_on_mps(variant_name, passes):
     from tiny_mistral_mptt.inference import (
@@ -51,10 +49,10 @@ def test_incremental_memory_inference_on_mps(variant_name, passes):
     backbone = MistralForCausalLM(
         config, attention_backend="auto"
     ).to("mps", dtype=torch.float32)
-    if variant_name == "memory_add":
-        model = MemoryAddVariant(backbone)
+    if variant_name == "projected_residual":
+        model = RecurrentMemoryVariant(backbone, memory_layers=[0], merger="projected_residual")
         with torch.no_grad():
-            model.memory_projection.weight.copy_(
+            model.memory_mergers["0"].projection.weight.copy_(
                 0.05 * torch.eye(config.hidden_size, device="mps")
             )
     elif variant_name == "memory_attention":
@@ -62,8 +60,8 @@ def test_incremental_memory_inference_on_mps(variant_name, passes):
             backbone, memory_window=3, memory_write_mode="dense", memory_write_stride=1, initialization_seed=17
         )
     else:
-        model = RecirculationVariant(
-            backbone, source_layer=1, destination_layer=0, alpha=0.1
+        model = RecurrentMemoryVariant(
+            backbone, memory_layers=[0], merger="recirculation"
         )
     model = model.to("mps", dtype=torch.float32).eval()
     ids = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]], device="mps")

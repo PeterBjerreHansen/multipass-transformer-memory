@@ -14,7 +14,6 @@ from tiny_mistral_mptt.inference.multipass import (
 from tiny_mistral_mptt.training.phases import configure_phase
 from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionWriter
 from tiny_mistral_mptt.variants.memory_modules import MemoryWriter
-from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
 from tiny_mistral_mptt.variants.recurrent_memory import RecurrentMemoryVariant
 
 
@@ -58,11 +57,14 @@ def test_projected_residual_starts_as_exact_vanilla_at_every_pass():
 
 def test_recirculation_merger_reuses_the_existing_adaptive_rule():
     variant = make_variant("recirculation")
-    old = RecirculationVariant(copy.deepcopy(variant.backbone), source_layer=1, destination_layer=0, mode="adaptive")
     merger = variant.memory_mergers["0"]
-    merger.controller.load_state_dict(old.adaptive_controller.state_dict())
     memory, destination = torch.randn(2, 4, 32), torch.randn(2, 4, 32)
-    torch.testing.assert_close(merger(destination, memory), old._mix(memory, destination), atol=0, rtol=0)
+    alpha, beta = merger.controller(memory, destination)
+    normalized_memory = memory * (
+        destination.norm(dim=-1, keepdim=True) / memory.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    )
+    expected = alpha * normalized_memory + beta * destination
+    torch.testing.assert_close(merger(destination, memory), expected, atol=0, rtol=0)
 
 
 @pytest.mark.parametrize("merger", ["projected_residual", "recirculation"])

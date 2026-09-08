@@ -34,7 +34,6 @@ def test_efficiency_suite_cases_have_required_dimensions():
             assert merged["variant"] in {
                 "swa_transformer",
                 "strided_self_attention",
-                "recirculation",
                 "memory_attention",
                 "dense_and_strided_memory_attention",
             }
@@ -59,4 +58,4 @@ def test_precision_suites_compare_fp32_and_bfloat16_on_each_backend():
         modes = {case.get("autocast_dtype") for case in raw["cases"]}
         assert modes == {None, "bfloat16"}
         pairs = {(case["variant"], case["passes"]) for case in raw["cases"]}
-    assert pairs == {("swa_transformer", 1), ("recirculation", 2), ("memory_attention", 3)}
+    assert pairs == {("swa_transformer", 1), ("memory_attention", 3)}

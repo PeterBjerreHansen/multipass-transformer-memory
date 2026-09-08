@@ -1,0 +1,61 @@
+{
+  "revision": "5d4c2cd5a580974aba75b30c29971c71fc726308",
+  "files": [
+    {
+      "path": "src/tiny_mistral_mptt/variants/fbt.py",
+      "sha256": "04b98d692a016f00ecaa422ad5a7f8ae35ed91ff94a6adb27bd3f4585b79a03c"
+    },
+    {
+      "path": "src/tiny_mistral_mptt/variants/memory_attention.py",
+      "sha256": "361eb9d0df2e9529d0565703aa25f3ea4438e61a81fec8c2c9d603f73d64274b"
+    },
+    {
+      "path": "src/tiny_mistral_mptt/variants/memory_attention_recurrent_hybrid.py",
+      "sha256": "637c5e3395e272fbcdf27e38419d3f07a6a872ecfc64331aa290131220a01b24"
+    },
+    {
+      "path": "src/tiny_mistral_mptt/data/packed_dataset.py",
+      "sha256": "c485c29d39e46d37ef6c78805da167b213e95ca24feb662cfeab8e5385fe5fc7"
+    },
+    {
+      "path": "src/tiny_mistral_mptt/inference/multipass.py",
+      "sha256": "31ab671685c2d650e3f236db9d687c028e8704e9642d1a6f645c15b3d0c55a51"
+    },
+    {
+      "path": "tests/test_fbt_variant.py",
+      "sha256": "9d8998240863294716b51dfd7f832c240d445fbf3eed4c241eead302efb11b18"
+    },
+    {
+      "path": "tests/test_memory_attention_variant.py",
+      "sha256": "62bb377cb6e13303a496944943887709d57a9d0afb2a943c7c258471c405c331"
+    },
+    {
+      "path": "tests/test_memory_attention_incremental_inference.py",
+      "sha256": "d9858bcf18ff117f4c3132442385d07995f23e6c5f4592abacd46b6012aef362"
+    },
+    {
+      "path": "tests/test_memory_attention_projected_cache.py",
+      "sha256": "8a8f102dac3017f5cee4c8feadc95d69037c29ca2bc747b635b7f568e8ad6d7d"
+    },
+    {
+      "path": "tests/test_memory_attention_recurrent_hybrid.py",
+      "sha256": "49e8f22503e7dcfee32c4bbdd131c0615ef53d06517098b3b79e596422684b9e"
+    },
+    {
+      "path": "tests/test_memory_token_training_recovery.py",
+      "sha256": "5eae37efa3fbd9d3caae28a342575921d9ae71618a7f43f907c6b3958f6dd49d"
+    },
+    {
+      "path": "tests/conftest.py",
+      "sha256": "683fcb89a9fab7406039878f5f335a8cf9c9c06a3c0e24b3e5dd94eaaacf2c7d"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "9c134b675fb691d3b269067e9e89de8ad6998ed42a446681415164c3f043b0fe"
+    },
+    {
+      "path": "uv.lock",
+      "sha256": "4334c465f3b39032ea8378b556f4a030ec6f5d30bb9d2b8917a75995c9e03fef"
+    }
+  ]
+}

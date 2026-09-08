@@ -126,8 +126,7 @@ def packed_evaluation_metadata(
         "selection": {"kind": "prefix_blocks", "start": 0, "stop": blocks},
         "available_blocks": len(dataset),
         "physical_sequence_length": dataset.sequence_length,
-        "linguistic_sequence_length": getattr(dataset, "linguistic_sequence_length", dataset.sequence_length),
-        "memory_token_interval": getattr(dataset, "interval", None),
+        "linguistic_sequence_length": dataset.sequence_length,
     }
     artifact_dir = getattr(dataset, "artifact_dir", None)
     if artifact_dir is not None:

@@ -22,7 +22,6 @@ def _initialization(cfg) -> str:
         "dense_memory_attention",
         "strided_memory_attention",
         "dense_and_strided_memory_attention",
-        "memory_token_attention",
     }:
         return cfg.memory_reader_initialization
     if cfg.variant == "no_memory_adapter" or cfg.recurrent_merger == "projected_residual":
@@ -34,7 +33,7 @@ def _initialization(cfg) -> str:
 
 def _retention(cfg, sequence_length: int) -> dict:
     if cfg.memory_pattern == "strided":
-        _, writes, _ = memory_write_positions(
+        writes = memory_write_positions(
             linguistic_length=sequence_length,
             memory_write_mode=str(cfg.memory_write_mode),
             memory_write_stride=cfg.memory_write_stride,
@@ -87,7 +86,6 @@ def build_report(study_path: Path, *, sequence_length: int) -> dict:
             memory_pattern=cfg.memory_pattern,
             memory_write_mode=cfg.memory_write_mode,
             memory_write_stride=cfg.memory_write_stride,
-            memory_token_visibility=cfg.memory_token_visibility or "visible",
             memory_layers="all" if cfg.memory_layers is None else cfg.memory_layers,
             memory_num_key_value_heads=cfg.memory_num_key_value_heads,
             memory_attention_fusion=cfg.memory_attention_fusion,

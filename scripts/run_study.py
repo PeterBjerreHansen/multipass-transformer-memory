@@ -114,8 +114,6 @@ def _wire_arm(config_path: Path, *, wire_device: str | None) -> None:
     train_data = load_packed_dataset_for_experiment(
         cfg.data_dir,
         "train",
-        memory_write_mode=cfg.memory_write_mode,
-        memory_write_stride=cfg.memory_write_stride,
     )
     configure_phase(model, cfg.phase)
     model.train()

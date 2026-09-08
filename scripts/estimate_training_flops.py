@@ -13,6 +13,7 @@ import yaml
 
 from tiny_mistral.config import MistralConfig, tiny_mistral_248m_config
 from tiny_mistral_mptt.flops import estimate_schedule
+from tiny_mistral_mptt.compatibility import discard_retired_defaults
 from tiny_mistral_mptt.config import (
     canonical_variant_name, load_experiment_config, reject_removed_paper_policy,
 )
@@ -28,7 +29,6 @@ ARCHITECTURE_FIELDS = (
     "memory_pattern",
     "memory_write_mode",
     "memory_write_stride",
-    "memory_token_visibility",
     "memory_layers",
     "memory_position_encoding",
     "memory_num_key_value_heads",
@@ -41,13 +41,9 @@ ARCHITECTURE_FIELDS = (
     "sparse_attention_stride",
     "sparse_attention_window",
     "sparse_attention_layers",
-    "recirculation_mode",
     "recurrent_merger",
     "recurrent_controller_hidden_size",
     "recurrent_layers",
-    "recirculation_source_layer",
-    "recirculation_destination_layer",
-    "recirculation_alpha",
 )
 
 
@@ -116,6 +112,7 @@ def _estimator_metadata(config: MistralConfig) -> dict[str, Any]:
 
 def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[int, float]):
     reject_removed_paper_policy(case)
+    case = discard_retired_defaults(case)
     variant = str(case["variant"])
     implementation_variant = canonical_variant_name(variant)
     training_forward = str(case.get("training_forward", "parallel_multipass"))
@@ -135,7 +132,6 @@ def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[i
         memory_pattern=case.get("memory_pattern"),
         memory_write_mode=case.get("memory_write_mode"),
         memory_write_stride=case.get("memory_write_stride"),
-        memory_token_visibility=str(case.get("memory_token_visibility", "visible")),
         memory_layers=memory_layers,
         memory_num_key_value_heads=case.get("memory_num_key_value_heads"),
         memory_attention_fusion=str(
@@ -150,7 +146,6 @@ def _estimate_case(config: MistralConfig, case: dict[str, Any], schedule: dict[i
         sparse_attention_stride=case.get("sparse_attention_stride"),
         sparse_attention_window=case.get("sparse_attention_window"),
         sparse_attention_layers=case.get("sparse_attention_layers", "all"),
-        recirculation_mode=str(case.get("recirculation_mode", "fixed")),
         recurrent_merger=case.get("recurrent_merger"),
         recurrent_controller_hidden_size=case.get(
             "recurrent_controller_hidden_size"

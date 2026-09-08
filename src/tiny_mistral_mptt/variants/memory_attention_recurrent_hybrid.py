@@ -18,8 +18,7 @@ class MemoryAttentionRecurrentHybridVariant(MemoryAttentionVariant):
 
     Both channels consume final normalized source states through one shared
     writer. Attention reads run before recurrent mergers at overlapping layers,
-    after self-attention and before the MLP. MEM records do not advance the
-    preceding-ordinary-token recurrent state.
+    after self-attention and before the MLP.
     """
 
     def __init__(
@@ -49,38 +48,12 @@ class MemoryAttentionRecurrentHybridVariant(MemoryAttentionVariant):
         if previous_hidden.ndim != 3 or input_ids.shape != previous_hidden.shape[:2]:
             raise ValueError("previous_hidden/input_ids must align as [B,T,D]/[B,T]")
         bsz, seq_len = input_ids.shape
-        if not self.uses_memory_tokens:
-            shifted = torch.zeros_like(previous_hidden)
-            if seq_len > 1:
-                shifted[:, 1:, :] = previous_hidden[:, :-1, :]
-            valid = torch.ones((bsz, seq_len), dtype=torch.bool, device=input_ids.device)
-            valid[:, 0] = False
-            return shifted, valid
-
-        ordinary = ~self.memory_token_mask(input_ids)
-        positions = torch.arange(seq_len, device=input_ids.device, dtype=torch.long)
-        candidates = torch.where(
-            ordinary,
-            positions[None, :].expand(bsz, -1),
-            torch.full((bsz, seq_len), -1, device=input_ids.device, dtype=torch.long),
-        )
-        inclusive = torch.cummax(candidates, dim=1).values
-        strict = torch.cat(
-            (
-                torch.full((bsz, 1), -1, device=input_ids.device, dtype=torch.long),
-                inclusive[:, :-1],
-            ),
-            dim=1,
-        )
-        safe = strict.clamp_min(0)
-        gathered = previous_hidden.gather(
-            1, safe[:, :, None].expand(-1, -1, previous_hidden.shape[-1])
-        )
-        valid = strict.ge(0)
-        return (
-            torch.where(valid[:, :, None], gathered, torch.zeros_like(gathered)),
-            valid,
-        )
+        shifted = torch.zeros_like(previous_hidden)
+        if seq_len > 1:
+            shifted[:, 1:, :] = previous_hidden[:, :-1, :]
+        valid = torch.ones((bsz, seq_len), dtype=torch.bool, device=input_ids.device)
+        valid[:, 0] = False
+        return shifted, valid
 
     def _previous_ordinary_hidden(
         self,
@@ -92,6 +65,7 @@ class MemoryAttentionRecurrentHybridVariant(MemoryAttentionVariant):
         return source
 
     @staticmethod
+
     def _coerce_pass_source(
         previous_source: HybridPassSource | torch.Tensor,
     ) -> HybridPassSource:
@@ -142,7 +116,7 @@ class MemoryAttentionRecurrentHybridVariant(MemoryAttentionVariant):
 
         core = self._run_attention_core(
             token_embeddings, memory, past_key_values=past_key_values,
-            use_cache=use_cache, self_attention_mask=self.self_attention_key_mask(input_ids),
+            use_cache=use_cache,
             query_position_ids=query_position_ids, after_memory_attention=merge,
         )
         return HiddenRun(
@@ -246,6 +220,7 @@ class MemoryAttentionRecurrentHybridVariant(MemoryAttentionVariant):
         )
 
     # Hidden-only compatibility hooks.
+
     def _run_feedback_hidden(
         self,
         input_ids: torch.Tensor,
@@ -287,19 +262,7 @@ class MemoryAttentionRecurrentHybridVariant(MemoryAttentionVariant):
         hidden_states: torch.Tensor,
         input_ids: torch.Tensor | None,
     ) -> torch.Tensor:
-        if not self.uses_memory_tokens:
-            return hidden_states[:, -1:, :].detach()
-        if input_ids is None:
-            raise ValueError("memory-token hybrid state requires input_ids")
-        ordinary = ~self.memory_token_mask(input_ids)
-        if bool((ordinary.sum(dim=1) == 0).any()):
-            raise ValueError("each sequence needs at least one ordinary token for hybrid state")
-        positions = torch.arange(input_ids.shape[1], device=input_ids.device)[None, :]
-        last = torch.where(ordinary, positions, torch.full_like(positions, -1)).max(dim=1).values
-        gathered = hidden_states.gather(
-            1, last[:, None, None].expand(-1, 1, hidden_states.shape[-1])
-        )
-        return gathered.detach()
+        return hidden_states[:, -1:, :].detach()
 
     def _feedback_memory_from_hidden(
         self,
@@ -335,17 +298,7 @@ class MemoryAttentionRecurrentHybridVariant(MemoryAttentionVariant):
             token=token,
             position=position,
         )
-        if self.uses_memory_tokens:
-            if token is None:
-                raise ValueError("memory-token hybrid update requires current token")
-            is_mem = self.memory_token_mask(token)[:, 0]
-            recurrent = torch.where(
-                is_mem[:, None, None],
-                feedback_memory.recurrent_memory,
-                self.writer(source.recurrent_hidden).detach(),
-            )
-        else:
-            recurrent = self.writer(source.recurrent_hidden).detach()
+        recurrent = self.writer(source.recurrent_hidden).detach()
         return HybridFeedbackState(recurrent_memory=recurrent, memory_attention=memory)
 
 

@@ -6,8 +6,8 @@ from tiny_mistral.modeling import MistralForCausalLM
 from tiny_mistral_mptt.evaluation.feedback_continuation import (
     evaluate_feedback_continuation,
 )
-from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
 from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionVariant
+from tiny_mistral_mptt.variants.recurrent_memory import RecurrentMemoryVariant
 
 
 class TinyDataset:
@@ -32,9 +32,9 @@ def make_model():
     backbone = MistralForCausalLM(
         micro_config(sliding_window=4), attention_backend="reference"
     )
-    model = MemoryAddVariant(backbone).eval()
+    model = RecurrentMemoryVariant(backbone, memory_layers=[0], merger="projected_residual").eval()
     with torch.no_grad():
-        model.memory_projection.weight.copy_(
+        model.memory_mergers["0"].projection.weight.copy_(
             0.05 * torch.eye(model.config.hidden_size)
         )
     return model

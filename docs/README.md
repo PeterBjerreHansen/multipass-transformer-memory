@@ -12,7 +12,7 @@ Historical records and research notes do not override those configs or the curre
 | In what order should the agreed work be implemented and verified? | [Staged implementation plan](DEVELOPMENT_PLAN.md) |
 | Which model families are active or historical? | [Architecture map](ARCHITECTURES.md) |
 | How do the recurrent mergers work? | [Recurrent memory](RECURRENT_MEMORY.md) |
-| How do attention memory, retention and MEM slots work? | [Memory Attention](MEMORY_ATTENTION.md) |
+| How do attention memory and retention work? | [Memory Attention](MEMORY_ATTENTION.md) |
 | How are packed data and splits constructed? | [Data contract](DATA.md) |
 | How do training, resume and snapshots work? | [Training contract](TRAINING.md) |
 | What do NLL, feedback, precision and downstream results mean? | [Evaluation contract](../evaluation/README.md) |
@@ -42,3 +42,6 @@ Do not rewrite historical results to match new model names or reader layouts.
 Verify behavior against the implementation before changing a contract.
 Update the owning study when a default changes. Update the development plan when a task is deferred or completed.
 Run `make check` after edits. Documentation tests check local links, examples and selected config-backed protocol values.
+
+Preserved FBT and explicit memory-token source, matching tests and reproduction
+instructions live in the [reference archive](../historical/implementations/feedback/README.md).

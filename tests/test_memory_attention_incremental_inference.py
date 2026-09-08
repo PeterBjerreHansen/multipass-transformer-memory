@@ -15,7 +15,7 @@ from tiny_mistral_mptt.variants.memory_attention import MemoryAttentionVariant
 from tiny_mistral_mptt.variants.memory_attention_recurrent_hybrid import MemoryAttentionRecurrentHybridVariant
 
 
-def make_model(*, mode="periodic", visibility="visible", hybrid=False, stride=2):
+def make_model(*, mode="periodic", hybrid=False, stride=2):
     torch.manual_seed(222)
     backbone = MistralForCausalLM(
         micro_config(num_hidden_layers=2, sliding_window=4),
@@ -28,7 +28,6 @@ def make_model(*, mode="periodic", visibility="visible", hybrid=False, stride=2)
         memory_window=3,
         memory_write_mode=mode,
         memory_write_stride=stride,
-        memory_token_visibility=visibility,
         memory_layers=[1],
         initialization_seed=909,
     )
@@ -41,9 +40,6 @@ def make_model(*, mode="periodic", visibility="visible", hybrid=False, stride=2)
 
 
 def sequence(model, mode):
-    if mode == "memory_token":
-        V = model.config.vocab_size
-        return torch.tensor([[1, 2, V, 3, 14, V, 9, 31, V, 51, 12]])
     return torch.tensor([[1, 7, 3, 14, 22, 9, 31, 4, 51, 12, 6]])
 
 
@@ -103,11 +99,11 @@ def test_periodic_cached_and_full_paths_agree_for_multiple_strides(stride):
                 )
 
 
-@pytest.mark.parametrize("mode,visibility", [
-    ("dense", "visible"), ("periodic", "visible"), ("memory_token", "write_only"),
+@pytest.mark.parametrize("mode", [
+    "dense", "periodic",
 ])
-def test_k1_conversion_preserves_attention_memory_after_incremental_extension(mode, visibility):
-    model = make_model(mode=mode, visibility=visibility)
+def test_k1_conversion_preserves_attention_memory_after_incremental_extension(mode):
+    model = make_model(mode=mode)
     ids = sequence(model, mode)
     state = prefill_exact_k_pass(model, ids[:, :1], passes=1)
     for position in range(1, 9):
@@ -125,15 +121,13 @@ def test_k1_conversion_preserves_attention_memory_after_incremental_extension(mo
 
 
 @pytest.mark.parametrize("hybrid", [False, True])
-@pytest.mark.parametrize("mode,visibility", [
-    ("dense", "visible"),
-    ("periodic", "visible"),
-    ("memory_token", "visible"),
-    ("memory_token", "write_only"),
+@pytest.mark.parametrize("mode", [
+    "dense",
+    "periodic",
 ])
 @pytest.mark.parametrize("passes", [1, 2, 3])
-def test_cached_exact_k_pass_matches_full_prefix(hybrid, mode, visibility, passes):
-    model = make_model(mode=mode, visibility=visibility, hybrid=hybrid)
+def test_cached_exact_k_pass_matches_full_prefix(hybrid, mode, passes):
+    model = make_model(mode=mode, hybrid=hybrid)
     ids = sequence(model, mode)
     prompt_len = 4
     with torch.no_grad():
@@ -142,7 +136,7 @@ def test_cached_exact_k_pass_matches_full_prefix(hybrid, mode, visibility, passe
             prefix = ids[:, :position]
             full = model.compute_passes(prefix, passes=passes)
             expected_logits = model.backbone.lm_head(
-                model.prediction_hidden_after_sequence(full.final.hidden_states, prefix)
+                full.final.hidden_states[:, -1:, :]
             ).float()[:, -1, :]
             torch.testing.assert_close(state.next_token_logits, expected_logits, atol=8e-5, rtol=8e-5)
             if position == ids.shape[1]:
@@ -210,14 +204,12 @@ def test_target_shaped_aligned_fusion_cached_exact_path_matches_full_prefix(
 
 
 @pytest.mark.parametrize("hybrid", [False, True])
-@pytest.mark.parametrize("mode,visibility", [
-    ("periodic", "visible"),
-    ("memory_token", "visible"),
-    ("memory_token", "write_only"),
+@pytest.mark.parametrize("mode", [
+    "periodic",
 ])
 @pytest.mark.parametrize("passes", [2, 3])
-def test_recurrent_first_transition_matches_exact(hybrid, mode, visibility, passes):
-    model = make_model(mode=mode, visibility=visibility, hybrid=hybrid)
+def test_recurrent_first_transition_matches_exact(hybrid, mode, passes):
+    model = make_model(mode=mode, hybrid=hybrid)
     ids = sequence(model, mode)
     prompt = ids[:, :5]
     token = ids[:, 5:6]
@@ -246,37 +238,3 @@ def test_periodic_memory_state_is_bounded_and_only_commits_on_trigger():
         state = live_feedback_decode_step(model, state, ids[:, 5:6])
         assert isinstance(state.feedback_memory, MemoryAttentionState)
         assert state.feedback_memory.valid.sum() >= before.valid.sum()
-
-
-def test_memory_token_hybrid_state_preserves_recurrent_memory_across_mem_decode():
-    model = make_model(mode="memory_token", hybrid=True)
-    ids = sequence(model, "memory_token")
-    # prompt ends immediately before first MEM
-    prompt = ids[:, :2]
-    mem = ids[:, 2:3]
-    with torch.no_grad():
-        state = prefill_live_feedback(
-            model, prompt, passes=2, decode_mode="feedback"
-        )
-        assert isinstance(state.feedback_memory, HybridFeedbackState)
-        old_memory = state.feedback_memory.recurrent_memory.clone()
-        state = live_feedback_decode_step(model, state, mem)
-    assert isinstance(state.feedback_memory, HybridFeedbackState)
-    torch.testing.assert_close(state.feedback_memory.recurrent_memory, old_memory, atol=0, rtol=0)
-    assert state.feedback_memory.memory_attention.valid.any()
-
-
-def test_write_only_mem_stays_in_kv_cache_position_but_is_marked_invalid():
-    model = make_model(mode="memory_token", visibility="write_only")
-    V = model.config.vocab_size
-    prompt = torch.tensor([[1, 2, V]])
-    with torch.no_grad():
-        state = prefill_exact_k_pass(model, prompt, passes=2)
-    for stream in state.streams:
-        for cache in stream.past_key_values:
-            # The physical MEM position is retained so RoPE/cache positions are
-            # unchanged, but it is not exposed as a self-attention K/V key.
-            assert cache.seq_len == 3
-            assert cache.next_position == 3
-            assert cache.key_valid is not None
-            assert cache.key_valid.tolist() == [[True, True, False]]

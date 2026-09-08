@@ -20,9 +20,7 @@ suites/precision_cuda.yaml
 suites/precision_mps.yaml
 ```
 
-These are engineering grids, not authoritative arm configurations. Their
-recirculation cases use the older shifted middle-layer model, not the two
-late-memory mergers in the active frozen study. Context-scaling suites may
+These are engineering grids, not authoritative arm configurations. Context-scaling suites may
 include shorter inputs without reviving a 1024-token scientific study. Use the explicit Makefile
 targets to run them. Successful rows report linguistic and physical-position
 throughput, optimizer-step timing, projected hours, precision, and available

@@ -1,6 +1,4 @@
 from .base import ExperimentalVariant, TrainOutput
-from .fbt import FBTVariant
-from .memory_add import MemoryAddVariant
 from .multipass import HiddenRun, MultiPassResult, MultiPassVariant, PassResult, shift_previous_hidden
 from .no_memory_adapter import NoMemoryAdapterVariant
 from .recurrent_memory import RecurrentMemoryVariant
@@ -19,8 +17,6 @@ from .vanilla import SWATransformerVariant, SwaTransformerVariant, VanillaVarian
 
 __all__ = [
     "ExperimentalVariant",
-    "FBTVariant",
-    "MemoryAddVariant",
     "HiddenRun",
     "MultiPassResult",
     "MultiPassVariant",

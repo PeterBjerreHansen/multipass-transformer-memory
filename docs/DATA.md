@@ -21,13 +21,12 @@ corresponding benchmark files are archival provenance only, not active runnable
 studies.
 
 Evaluation now records the selected prefix blocks, split and manifest identity,
-physical/linguistic lengths, control cadence and target counts. Do not assume
+block lengths and target counts. Do not assume
 that the training monitoring split is the independent evaluation artifact, or
 that adding BOS leaves scored-token coverage unchanged. See
 [the evaluation contract](../evaluation/README.md).
 
-BOS-only feedback prepends a context BOS without altering packed data or MEM
-insertion cadence. It scores all data tokens and separately reports the aligned
+BOS-only feedback prepends a context BOS without altering packed data. It scores all data tokens and separately reports the aligned
 score excluding the first token; it does not replace a block's first token with BOS.
 
 Generated binaries and manifests remain local/ignored.
@@ -69,32 +68,6 @@ checking their hashes and rejects any recorded padding/control ID. Training and
 the packed-data evaluation CLIs run this complete verification before consuming
 an artifact; lightweight dataset construction still checks the manifest
 contract and expected file sizes.
-
-## Memory-token data view
-
-Explicit `<MEM>` positions are **not** written into the stored Dolmino artifact
-and do not require tokenizer mutation. `MemoryTokenPackedDataset` wraps the
-ordinary artifact at load time and inserts control ID V, where V is the base
-vocabulary size.
-
-For N linguistic tokens and cadence C:
-
-```text
-physical positions = N + floor((N - 1) / C)
-```
-
-No trailing MEM is inserted after the final linguistic token because there is no
-following linguistic token inside that block. Ordinary token order and source ID
-are unchanged.
-
-This means every standard backing block remains 2048
-**linguistic** tokens. At C=8 the Memory Attention model processes 2303 physical positions.
-That extra compute is intentional and separately accounted; it avoids silently
-reducing the text/data dose for MEM experiments.
-
-The model's maximum position range must fit the expanded block.
-The trainer validates this before training. The cloud preflight reports expanded
-batching but does not replace the trainer's checks.
 
 ## Active split ownership
 

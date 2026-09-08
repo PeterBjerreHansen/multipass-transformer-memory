@@ -35,7 +35,6 @@ def make_hybrid(*, mode: str = "periodic", merger="projected_residual", layers=(
         memory_window=3,
         memory_write_mode=mode,
         memory_write_stride=2,
-        memory_token_visibility="visible",
         memory_layers=[1],
         initialization_seed=991,
     )
@@ -110,7 +109,7 @@ def test_phase_a_trains_attention_reader_and_recurrent_merger(merger):
 
 @pytest.mark.parametrize("merger", ["projected_residual", "recirculation"])
 @pytest.mark.parametrize("layers", [(0,), (1,), (0, 1, 2)])
-@pytest.mark.parametrize("mode", ["periodic", "memory_token"])
+@pytest.mark.parametrize("mode", ["periodic"])
 def test_cached_exact_k_pass_matches_full_prefix(mode, merger, layers):
     model = make_hybrid(mode=mode, merger=merger, layers=layers).eval()
     with torch.no_grad():
@@ -121,11 +120,7 @@ def test_cached_exact_k_pass_matches_full_prefix(mode, merger, layers):
         model.memory_readers["1"].o_proj.weight.copy_(
             torch.eye(model.config.hidden_size)
         )
-    if mode == "memory_token":
-        vocab = model.config.vocab_size
-        ids = torch.tensor([[1, 2, vocab, 3, 4, vocab, 5]])
-    else:
-        ids = torch.tensor([[1, 2, 3, 4, 5, 6, 7]])
+    ids = torch.tensor([[1, 2, 3, 4, 5, 6, 7]])
 
     prompt_length = 4
     with torch.no_grad():
@@ -134,9 +129,7 @@ def test_cached_exact_k_pass_matches_full_prefix(mode, merger, layers):
             prefix = ids[:, :position]
             full = model.compute_passes(prefix, passes=2)
             expected = model.backbone.lm_head(
-                model.prediction_hidden_after_sequence(
-                    full.final.hidden_states, prefix
-                )
+                full.final.hidden_states[:, -1:, :]
             ).float()[:, -1, :]
             torch.testing.assert_close(
                 state.next_token_logits, expected, atol=8e-5, rtol=8e-5
@@ -146,21 +139,15 @@ def test_cached_exact_k_pass_matches_full_prefix(mode, merger, layers):
                     model, state, ids[:, position : position + 1]
                 )
 
-    if mode == "memory_token":
-        assert isinstance(state.streams[-1].feedback_memory, HybridFeedbackState)
-
 
 @pytest.mark.parametrize("merger", ["projected_residual", "recirculation"])
-@pytest.mark.parametrize("pattern", ["dense", "strided", "dense_and_strided", "memory_token"])
+@pytest.mark.parametrize("pattern", ["dense", "strided", "dense_and_strided"])
 def test_hybrid_k1_conversion_and_feedback_keep_emitted_state(merger, pattern):
     fields = {"memory_pattern": pattern}
     if pattern == "dense_and_strided":
         fields.update(memory_dense_window=2, memory_sparse_window=2, memory_sparse_stride=2)
     elif pattern == "strided":
         fields["memory_write_stride"] = 2
-    elif pattern == "memory_token":
-        fields = {"memory_write_mode": "memory_token", "memory_write_stride": 2,
-                  "memory_token_visibility": "write_only"}
     model = build_variant("memory_attention", make_backbone(), memory_layers=[1],
                           recurrent_merger=merger, recurrent_layers=[1], **fields).eval()
     with torch.no_grad():
@@ -169,8 +156,6 @@ def test_hybrid_k1_conversion_and_feedback_keep_emitted_state(merger, pattern):
         if merger == "projected_residual":
             model.memory_mergers["1"].projection.weight.fill_(0.03)
         ids = torch.tensor([[1, 2, 3, 4, 5, 6]])
-        if pattern == "memory_token":
-            ids = torch.tensor([[1, 2, model.memory_token_id, 3, 4, model.memory_token_id, 5]])
         state = prefill_exact_k_pass(model, ids[:, :1], passes=1)
         for position in range(1, ids.shape[1] - 1):
             state = exact_decode_step(model, state, ids[:, position:position + 1])

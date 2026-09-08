@@ -20,7 +20,6 @@ from tiny_mistral_mptt.evaluation.settings import add_execution_arguments, resol
 
 
 SUPPORTED = {
-    "memory_add",
     "no_memory_adapter",
     "recurrent_memory",
     "memory_attention",
@@ -72,8 +71,6 @@ def main() -> None:
     dataset = load_packed_dataset_for_experiment(
         evaluation_data_dir,
         "validation",
-        memory_write_mode=cfg.memory_write_mode,
-        memory_write_stride=cfg.memory_write_stride,
         verify_integrity=True,
     )
     result = evaluate_memory_interventions(

@@ -190,7 +190,6 @@ def _decode_loop(
             # Keep this in lockstep with evaluate_feedback_continuation. The
             # .cpu() calls deliberately retain the host-synchronization cost of
             # the current evaluator rather than hiding it from the benchmark.
-            valid = ~model.control_token_mask(target)[:, 0]
             exact_state, recurrent_state, vanilla_state = state
             for current in (
                 exact_state.next_token_logits,
@@ -198,8 +197,8 @@ def _decode_loop(
                 vanilla_state.next_token_logits,
             ):
                 _ = F.cross_entropy(
-                    current[valid].float(),
-                    target[valid, 0],
+                    current.float(),
+                    target[:, 0],
                     reduction="sum",
                 ).detach().cpu()
         state = step(model, state, target)

@@ -44,7 +44,7 @@ def test_checkpoint_restores_model_optimizer_sampler_and_all_counters(tmp_path):
         optimizer=optimizer,
         sampler_state=sampler.state_dict(),
         train_state=state,
-        experiment_config={"variant": "memory_attention", "memory_write_mode": "memory_token"},
+        experiment_config={"variant": "memory_attention", "memory_write_mode": "dense"},
         data_manifest_sha256="manifest-hash",
     )
     expected_parameters = {name: tensor.detach().clone() for name, tensor in model.state_dict().items()}
@@ -324,7 +324,6 @@ def test_constant_lr_resume_may_extend_stopping_budget(tmp_path):
     assert state.unique_tokens_seen == 4
 
 
-
 def test_scheduled_resume_rejects_changed_horizon(tmp_path):
     model, optimizer = _objects()
     sampler = StatefulBlockSampler(5, seed=3)
@@ -366,7 +365,7 @@ def test_output_and_operational_checkpoint_schedule_are_relocatable(tmp_path):
         sampler_state=sampler.state_dict(),
         train_state=TrainState(unique_tokens_seen=7, model_positions_seen=7),
         experiment_config={
-            "variant": "memory_add",
+            "variant": "recurrent_memory", "memory_layers": [0], "memory_window": 1, "recurrent_merger": "projected_residual",
             "phase": "B",
             "output_dir": "old",
             "checkpoint_every_tokens": 64,
@@ -383,7 +382,7 @@ def test_output_and_operational_checkpoint_schedule_are_relocatable(tmp_path):
         optimizer=replacement_optimizer,
         expected_manifest_sha256="same",
         expected_experiment_config={
-            "variant": "memory_add",
+            "variant": "recurrent_memory", "memory_layers": [0], "memory_window": 1, "recurrent_merger": "projected_residual",
             "phase": "B",
             "output_dir": "new",
             "checkpoint_every_tokens": 1000,

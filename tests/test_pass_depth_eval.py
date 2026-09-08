@@ -10,7 +10,7 @@ from tiny_mistral_mptt.data.prepare import PreparationRequest, materialize_from_
 from tiny_mistral_mptt.data.recipes import DOLMINO_50B_SOURCES
 from tiny_mistral_mptt.evaluation.nll import evaluate_nll
 from tiny_mistral_mptt.evaluation.pass_depth import evaluate_pass_depth
-from tiny_mistral_mptt.variants.fbt import FBTVariant
+from tiny_mistral_mptt.variants.recurrent_memory import RecurrentMemoryVariant
 
 
 def fake_docs(offset: int):
@@ -45,9 +45,11 @@ def test_pass_depth_evaluator_reports_each_pass_and_hidden_deltas(tmp_path):
     make_artifact(data_dir)
     dataset = PackedTokenDataset(data_dir, "validation")
     torch.manual_seed(9)
-    model = FBTVariant(
+    model = RecurrentMemoryVariant(
         MistralForCausalLM(micro_config(), attention_backend="reference"),
         initialization_seed=10,
+        memory_layers=[0],
+        merger="recirculation",
     )
     result = evaluate_pass_depth(model, dataset, device="cpu", passes=3, max_blocks=2)
     assert result.blocks == 2
@@ -58,15 +60,15 @@ def test_pass_depth_evaluator_reports_each_pass_and_hidden_deltas(tmp_path):
     assert all(value >= 0 for value in result.hidden_delta_rms)
 
 
-def test_memory_add_zero_init_pass_depth_is_exact_fixed_point(tmp_path):
-    from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
-
-    data_dir = tmp_path / "data-memory-add"
+def test_projected_residual_zero_init_pass_depth_is_exact_fixed_point(tmp_path):
+    data_dir = tmp_path / "data-projected-residual"
     make_artifact(data_dir)
     dataset = PackedTokenDataset(data_dir, "validation")
     torch.manual_seed(13)
-    model = MemoryAddVariant(
-        MistralForCausalLM(micro_config(), attention_backend="reference")
+    model = RecurrentMemoryVariant(
+        MistralForCausalLM(micro_config(), attention_backend="reference"),
+        memory_layers=[0],
+        merger="projected_residual",
     )
     result = evaluate_pass_depth(model, dataset, device="cpu", passes=4, max_blocks=2)
     assert len(result.nll_by_pass) == 4
@@ -78,9 +80,11 @@ def test_nll_rejects_zero_block_limit(tmp_path):
     data_dir = tmp_path / "data-nll-limit"
     make_artifact(data_dir)
     dataset = PackedTokenDataset(data_dir, "validation")
-    model = FBTVariant(
+    model = RecurrentMemoryVariant(
         MistralForCausalLM(micro_config(), attention_backend="reference"),
         initialization_seed=10,
+        memory_layers=[0],
+        merger="recirculation",
     )
     with pytest.raises(ValueError, match="max_blocks must be positive"):
         evaluate_nll(model, dataset, device="cpu", max_blocks=0)
@@ -90,9 +94,11 @@ def test_nll_records_explicit_multipass_depth(tmp_path):
     data_dir = tmp_path / "data-nll-passes"
     make_artifact(data_dir)
     dataset = PackedTokenDataset(data_dir, "validation")
-    model = FBTVariant(
+    model = RecurrentMemoryVariant(
         MistralForCausalLM(micro_config(), attention_backend="reference"),
         initialization_seed=10,
+        memory_layers=[0],
+        merger="recirculation",
     )
     result = evaluate_nll(model, dataset, device="cpu", passes=2, max_blocks=1)
     assert result.passes == 2

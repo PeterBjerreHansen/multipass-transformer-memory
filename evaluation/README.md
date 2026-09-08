@@ -74,8 +74,7 @@ and hidden-state deltas. It no longer defaults independently to K=8; request
 
 Targets come from `model.build_lm_labels`. Ordinary blocks score positions
 1 through L-1 as next-token targets: the first token is not predicted and no BOS
-is prepended. Input-only MEM slots are excluded while predictions bridge to the
-next linguistic token. Loss is summed in FP32, then divided by the number of
+is prepended. Loss is summed in FP32, then divided by the number of
 scored tokens, globally and per source. Sources with different target counts
 are not equally weighted. Empty target selections fail explicitly.
 
@@ -131,9 +130,7 @@ BOS tokens in the artifact are preserved and scored as data.
 
 The decoder consumes BOS plus the first 2047 data tokens, then scores the final
 target without consuming it. Thus no extra context position or block truncation
-is needed. In memory-token views, the existing insertion cadence is retained;
-BOS does not count toward it. Labels remain model-owned: in `A <MEM> B`, A
-predicts B and MEM logits are ignored, although MEM is consumed into the cache.
+is needed.
 
 ```bash
 uv run python scripts/evaluate_nll.py \
@@ -168,8 +165,7 @@ The final scored target need not be consumed into the cache.
 
 The adapter records scored-token operations and generated-token counts. These
 are execution totals, including repeated candidate requests, not counts of
-unique documents. The current text adapter does not insert a physical MEM
-schedule; memory-token downstream evaluation remains unsupported in that sense.
+unique documents.
 
 ## Result identity and comparison
 
@@ -188,8 +184,8 @@ scoring. Verify artifacts explicitly when using lower-level evaluator APIs.
 Trainer records identify live weights by run, segment, optimizer step and token
 count, rather than claiming that an unsaved state is a checkpoint. Downstream
 results retain suite/tokenizer hashes, task configs, raw samples and available candidate
-margins. The same contract can be used by a future fresh unfrozen experiment;
-freezing is not an evaluation mode.
+margins. The planned fresh unfrozen experiment uses the same contract; freezing
+is not an evaluation mode.
 
 Older standalone results may have used FP32 despite a BF16 training config.
 Do not relabel them as BF16 or combine unmatched settings.
@@ -209,4 +205,4 @@ it is not feedback-only cost. BF16 is not uniformly faster across these paths.
 
 See [training](../docs/TRAINING.md) for snapshot recovery and scheduling.
 The [development plan](../docs/DEVELOPMENT_PLAN.md) tracks batching, expanded
-interventions and the separate unfrozen study.
+interventions and the staged unfrozen study.

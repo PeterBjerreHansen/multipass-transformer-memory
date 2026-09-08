@@ -97,27 +97,14 @@ The trainer consumes whole packed blocks. An exact linguistic-token budget must
 be divisible by `batch_size * linguistic_tokens_per_block`; the final optimizer
 update may use fewer accumulation microsteps, but blocks are never cropped.
 
-## Memory-token accounting
+## Token accounting
 
-The backing dataset contains only linguistic tokens. In
-`memory_write_mode: memory_token`, a deterministic view inserts physical MEM
-positions. A backing block of N linguistic tokens and cadence C becomes
+Each ordinary input token occupies one model position. `unique_tokens_seen` and
+`model_positions_seen` both count token presentations; `token_equivalent_compute`
+counts those positions multiplied by the sampled pass count. Existing counter
+names are retained in checkpoint and telemetry schemas.
 
-```text
-P = N + floor((N - 1) / C)
-```
-
-physical positions. Thus the trainer records separate counters:
-
-```text
-unique_tokens_seen       += linguistic tokens
-model_positions_seen     += physical positions
-token_equivalent_compute += physical positions * effective passes
-```
-
-`max_unique_tokens`, pass scheduling, and LR scheduling use linguistic tokens.
-Training metrics additionally report linguistic tokens/s and model positions/s.
-This keeps data dose comparable while making the extra MEM computation visible.
+`max_unique_tokens`, pass scheduling, and LR scheduling use token presentations.
 Despite its name, `unique_tokens_seen` counts consumed linguistic positions.
 It is not a corpus-wide deduplication counter. The sampler reshuffles and repeats
 the artifact if the requested budget exceeds its stored training split.
@@ -129,9 +116,8 @@ K=2 updates. Each record includes those counts, an interval pass histogram, and
 the interval duration. A graceful signal flushes the unfinished interval with
 `log_interval_partial: true` before checkpointing.
 
-See [Memory Attention](MEMORY_ATTENTION.md) for MEM labels and the Phase-A
-embedding gradient path. See [evaluation precision](../evaluation/README.md#precision)
-for FP32 storage, autocast and overrides.
+See [evaluation precision](../evaluation/README.md#precision) for FP32 storage,
+autocast and overrides.
 
 ## Checkpoint cadence and validation
 

@@ -23,11 +23,8 @@ def test_factory_exposes_only_clean_memory_names_and_policies():
     assert dense.memory_write_mode == "dense"
 
     hybrid = build_variant(
-        "memory_token_attention",
+        "dense_memory_attention",
         backbone(),
-        memory_write_mode="memory_token",
-        memory_write_stride=8,
-        memory_token_visibility="write_only",
         recurrent_merger="projected_residual", recurrent_layers=[0],
     )
     assert isinstance(hybrid, MemoryAttentionRecurrentHybridVariant)
@@ -166,30 +163,6 @@ def test_factory_builds_dense_and_strided_memory_without_a_write_policy_axis():
         )
 
 
-
-def test_factory_requires_memory_token_visibility_explicitly():
-    with pytest.raises(ValueError, match="memory_token_visibility"):
-        build_variant(
-            "memory_attention",
-            backbone(),
-            memory_write_mode="memory_token",
-            memory_write_stride=8,
-        )
-
-
-def test_factory_rejects_archived_middle_layer_recirculation():
-    two_layer_backbone = MistralForCausalLM(
-        micro_config(num_hidden_layers=2), attention_backend="reference"
-    )
-    with pytest.raises(ValueError, match="archived"):
-        build_variant(
-            "recirculation",
-            two_layer_backbone,
-            recirculation_source_layer=1,
-            recirculation_destination_layer=0,
-        )
-
-
 def test_factory_builds_optional_late_recurrent_memory_hybrid():
     model = build_variant(
         "memory_attention",
@@ -248,8 +221,6 @@ def test_factory_builds_four_fusions_with_identical_aligned_readers():
     ("strided_memory_attention", "strided", "strided", {"memory_write_stride": 2}),
     ("dense_and_strided_memory_attention", "dense_and_strided", None,
      {"memory_dense_window": 2, "memory_sparse_window": 2, "memory_sparse_stride": 2}),
-    ("memory_token_attention", "dense", "memory_token",
-     {"memory_write_stride": 2, "memory_token_visibility": "write_only"}),
 ])
 def test_descriptive_names_are_presets_of_one_implementation(name, pattern, mode, fields):
     config = ExperimentConfig(variant=name, max_unique_tokens=1, **fields)
@@ -286,8 +257,13 @@ def test_conflicting_presets_fail_in_config_and_factory(fields):
     {"recurrent_merger": "projected_residual"},
     {"recurrent_merger": "unknown", "recurrent_layers": [0]},
     {"recurrent_merger": "recirculation", "recurrent_layers": [2]},
-    {"recirculation_source_layer": 1, "recirculation_destination_layer": 0},
 ])
 def test_factory_rejects_incomplete_or_obsolete_hybrid_settings(fields):
     with pytest.raises(ValueError):
         build_variant("dense_memory_attention", backbone(), **fields)
+
+
+@pytest.mark.parametrize("variant", ["fbt", "memory_add", "recirculation", "memory_token_attention"])
+def test_factory_rejects_retired_variants(variant):
+    with pytest.raises(ValueError, match="unknown variant"):
+        build_variant(variant, backbone())

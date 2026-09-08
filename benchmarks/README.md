@@ -13,60 +13,23 @@ that directory defines the current contract or participates in automatic study
 discovery. `ad_hoc/` is ignored local scratch space and must not be cited as a
 study.
 
-## Current experimental contract
+## Studies and contracts
 
-The active scientific program is intentionally small:
-
-1. `development/frozen_backbone_lr_qualification/` gives each of five feedback
-   mechanisms a four-value LR sweep under an equal 5M-token budget.
-2. `development/frozen_backbone_comparison/` contains nested small, medium, and
-   large 100M-token frozen-backbone comparisons. They share one protocol and
-   differ only in the number of mechanisms tested. The small tier is primary.
-   Both recurrent mergers use the same late memory emission rule as the
-   attention variants.
-
-These studies use 2048-token blocks and parallel K=4 validation. The nominal
-optimizer batch is 65,536 tokens per update: standard arms use batch 8 with
-four accumulation steps, while the memory-heavy
-`dense_and_strided_memory_attention` arm uses batch 4 with eight accumulation
-steps. Downstream
-tasks use K=4 context prefill followed by ordinary feedback decoding. Paper
-replay/BPTT execution is deleted. The old 1024-token studies and their associated
-efficiency suite have been deleted rather than archived in the repo.
-The active data inputs are `data/dolmino/gpu_2048` for these studies and
-`data/dolmino/wiring_2048` for wiring/pre-training checks. Former staged and
-long-run data recipes were retired with the clean-slate reset.
-A future unfrozen study must start fresh and qualify per-model learning rates.
-
-The previous GPU qualification and comparison trajectories were discarded after
-the tokenizer-padding audit. The clean artifact must be regenerated and the
-qualification restarted before any frozen result is promoted. Promotion means
-moving the reviewed study definition to `core/` and setting `status: locked`
-after review.
-Each active `STUDY.yaml` pins the regenerated data manifest hash; the study
-runner verifies that exact artifact before wiring or training. The 100M
-comparison remains blocked until its per-model learning rates are qualified.
-Before its first retained run, update each `output_dir` to the new arm-local
-path and verify the manifest. Do not move a live or resumable trajectory.
+The [development index](development/README.md) links the frozen and unfrozen
+studies. Each study owns its settings, status, launch requirements and results.
+The [research plan](../docs/RESEARCH_PLAN.md) defines the comparison questions;
+[training](../docs/TRAINING.md) and [evaluation](../evaluation/README.md) define
+shared execution semantics.
 
 Each development or core study owns a `STUDY.yaml`, runnable arm configs, and
-its `results/` directory. Active feedback arms use whole-block parallel
-multipass training. The schema and comparison rules are
-defined below.
+its `results/` directory. An arm config may use one relative `extends` path to
+inherit a shared YAML fragment; child fields override inherited fields. Shared
+fragments use `.yml`, while runnable arm configs use `.yaml` and must appear in
+the manifest. Absolute parents and inheritance cycles are rejected.
 
-An arm config may use one relative `extends` path to inherit a shared YAML
-fragment; child fields override inherited fields. Shared fragments use the
-`.yml` suffix, while runnable arm configs use `.yaml` and must appear in the
-study manifest. Absolute parents and inheritance cycles are rejected.
-
-Raw checkpoints and run telemetry remain ignored under `results/<arm>/`.
-Compact summaries may be tracked beside them when they are needed for a paper.
-
-Inference/evaluation rules and durable snapshot recovery are shared across
-studies. Next work is in [the development plan](../docs/DEVELOPMENT_PLAN.md). The
-[A6000 timing report](development/inference_efficiency/README.md) supports keeping
-routine K=4 checks and limiting optional feedback evaluation to selected durable
-snapshots, initially one full block per arm.
+Raw checkpoints and telemetry remain ignored under `results/<arm>/`. Keep compact
+summaries beside them when they are needed to interpret results. Do not move a
+live or resumable trajectory.
 
 ## `STUDY.yaml`
 

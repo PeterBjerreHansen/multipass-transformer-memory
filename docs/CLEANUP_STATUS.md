@@ -1,8 +1,17 @@
 # Cleanup review ledger
 
-Updated 2026-09-03. This ledger preserves the original review issue numbers.
+Updated 2026-09-08. This ledger preserves the original review issue numbers.
 Current behavior belongs in the [documentation map](README.md).
 Pending work and user decisions belong in the [development plan](DEVELOPMENT_PLAN.md).
+
+## Supported-runtime cleanup (2026-09-08)
+
+MemoryAdd and middle-layer Recirculation implementations are removed. FBT and
+explicit memory-token attention are preserved as [reference source](../historical/implementations/feedback/README.md)
+with matching tests and revision information. Active data, labels, positions and
+decoding now use ordinary tokens only. Generic inference, evaluation and recovery
+tests use supported recurrent models. Frozen studies and the unfrozen schedule
+are retained. Navigation pages link to study-owned protocol and status information.
 
 ## Completed work
 

@@ -14,7 +14,7 @@ from tiny_mistral_mptt.data.recipes import DOLMINO_50B_SOURCES
 from tiny_mistral_mptt.model_factory import build_variant
 from tiny_mistral_mptt.training.trainer import Trainer
 from tiny_mistral_mptt.training.checkpoint import candidate_checkpoint_paths
-from tiny_mistral_mptt.variants.fbt import FBTVariant
+from tiny_mistral_mptt.variants.recurrent_memory import RecurrentMemoryVariant
 
 
 def fake_docs(offset: int):
@@ -44,14 +44,6 @@ def make_artifact(root: Path):
     )
 
 
-def make_fbt(seed=123):
-    torch.manual_seed(17)
-    return FBTVariant(
-        MistralForCausalLM(micro_config(), attention_backend="reference"),
-        initialization_seed=seed,
-    )
-
-
 def make_adaptive_recirculation(seed=123):
     torch.manual_seed(17)
     return build_variant(
@@ -64,16 +56,15 @@ def make_adaptive_recirculation(seed=123):
     )
 
 
-
 def test_phase_a_fixed_two_pass_training_counts_compute_and_freezes_backbone(tmp_path):
     data_dir = tmp_path / "data"
     make_artifact(data_dir)
     train = PackedTokenDataset(data_dir, "train")
     val = PackedTokenDataset(data_dir, "validation")
-    model = make_fbt()
+    model = make_adaptive_recirculation()
     before = {name: tensor.detach().clone() for name, tensor in model.backbone.state_dict().items()}
     cfg = ExperimentConfig(
-        variant="fbt",
+        variant="recurrent_memory",
         phase="A",
         model_dir="unused",
         data_dir=str(data_dir),
@@ -89,6 +80,9 @@ def test_phase_a_fixed_two_pass_training_counts_compute_and_freezes_backbone(tmp
         eval_every_tokens=0,
         eval_batches=0,
         checkpoint_every_tokens=0,
+        memory_layers=[0],
+        memory_window=1,
+        recurrent_merger="recirculation",
     )
     state = Trainer(model=model, config=cfg, train_data=train, validation_data=val, device=torch.device("cpu")).train()
     assert state.unique_tokens_seen == 32
@@ -103,7 +97,7 @@ def test_phase_b_has_independent_pretrained_and_added_learning_rates(tmp_path):
     train = PackedTokenDataset(data_dir, "train")
     val = PackedTokenDataset(data_dir, "validation")
     cfg = ExperimentConfig(
-        variant="fbt",
+        variant="recurrent_memory",
         phase="B",
         model_dir="unused",
         data_dir=str(data_dir),
@@ -120,8 +114,11 @@ def test_phase_b_has_independent_pretrained_and_added_learning_rates(tmp_path):
         eval_every_tokens=0,
         eval_batches=0,
         checkpoint_every_tokens=0,
+        memory_layers=[0],
+        memory_window=1,
+        recurrent_merger="recirculation",
     )
-    trainer = Trainer(model=make_fbt(), config=cfg, train_data=train, validation_data=val, device=torch.device("cpu"))
+    trainer = Trainer(model=make_adaptive_recirculation(), config=cfg, train_data=train, validation_data=val, device=torch.device("cpu"))
     groups = {group["group_name"]: group["base_lr"] for group in trainer.optimizer.param_groups}
     assert groups == {"pretrained": 1e-6, "added": 1e-4}
     decay = {
@@ -224,7 +221,7 @@ def test_training_journal_can_aggregate_over_token_intervals(tmp_path):
     train = PackedTokenDataset(data_dir, "train")
     val = PackedTokenDataset(data_dir, "validation")
     cfg = ExperimentConfig(
-        variant="fbt",
+        variant="recurrent_memory",
         phase="B",
         model_dir="unused",
         data_dir=str(data_dir),
@@ -237,9 +234,12 @@ def test_training_journal_can_aggregate_over_token_intervals(tmp_path):
         eval_every_tokens=0,
         eval_batches=0,
         checkpoint_every_tokens=0,
+        memory_layers=[0],
+        memory_window=1,
+        recurrent_merger="recirculation",
     )
     Trainer(
-        model=make_fbt(),
+        model=make_adaptive_recirculation(),
         config=cfg,
         train_data=train,
         validation_data=val,
@@ -267,7 +267,7 @@ def test_mixed_k_telemetry_uses_conditional_metric_counts_and_total_throughput(
     make_artifact(data_dir)
     train = PackedTokenDataset(data_dir, "train")
     val = PackedTokenDataset(data_dir, "validation")
-    model = make_fbt(seed=81)
+    model = make_adaptive_recirculation(seed=81)
     observed: dict[str, list[float]] = {}
     original_compute_loss = model.compute_loss
 
@@ -279,7 +279,7 @@ def test_mixed_k_telemetry_uses_conditional_metric_counts_and_total_throughput(
 
     monkeypatch.setattr(model, "compute_loss", traced_compute_loss)
     cfg = ExperimentConfig(
-        variant="fbt",
+        variant="recurrent_memory",
         phase="B",
         model_dir="unused",
         data_dir=str(data_dir),
@@ -293,6 +293,9 @@ def test_mixed_k_telemetry_uses_conditional_metric_counts_and_total_throughput(
         eval_every_tokens=0,
         eval_batches=0,
         checkpoint_every_tokens=0,
+        memory_layers=[0],
+        memory_window=1,
+        recurrent_merger="recirculation",
     )
     Trainer(
         model=model,
@@ -328,7 +331,7 @@ def test_signal_flushes_partial_training_log_window(tmp_path):
     train = PackedTokenDataset(data_dir, "train")
     val = PackedTokenDataset(data_dir, "validation")
     cfg = ExperimentConfig(
-        variant="fbt",
+        variant="recurrent_memory",
         phase="B",
         model_dir="unused",
         data_dir=str(data_dir),
@@ -341,9 +344,12 @@ def test_signal_flushes_partial_training_log_window(tmp_path):
         eval_every_tokens=0,
         eval_batches=0,
         checkpoint_every_tokens=0,
+        memory_layers=[0],
+        memory_window=1,
+        recurrent_merger="recirculation",
     )
     Trainer(
-        model=make_fbt(),
+        model=make_adaptive_recirculation(),
         config=cfg,
         train_data=train,
         validation_data=val,
@@ -369,7 +375,7 @@ def test_init_from_loads_model_only_into_fresh_phase_b_run(tmp_path):
     train = PackedTokenDataset(data_dir, "train")
     val = PackedTokenDataset(data_dir, "validation")
     phase_a_cfg = ExperimentConfig(
-        variant="fbt",
+        variant="recurrent_memory",
         phase="A",
         model_dir="unused",
         data_dir=str(data_dir),
@@ -382,8 +388,11 @@ def test_init_from_loads_model_only_into_fresh_phase_b_run(tmp_path):
         eval_every_tokens=0,
         eval_batches=0,
         checkpoint_every_tokens=0,
+        memory_layers=[0],
+        memory_window=1,
+        recurrent_merger="recirculation",
     )
-    phase_a_model = make_fbt(seed=7)
+    phase_a_model = make_adaptive_recirculation(seed=7)
     Trainer(
         model=phase_a_model,
         config=phase_a_cfg,
@@ -395,7 +404,7 @@ def test_init_from_loads_model_only_into_fresh_phase_b_run(tmp_path):
     expected = torch.load(checkpoint, map_location="cpu", weights_only=False)["model"]
 
     phase_b_cfg = ExperimentConfig(
-        variant="fbt",
+        variant="recurrent_memory",
         phase="B",
         model_dir="unused",
         data_dir=str(data_dir),
@@ -408,8 +417,11 @@ def test_init_from_loads_model_only_into_fresh_phase_b_run(tmp_path):
         eval_every_tokens=0,
         eval_batches=0,
         checkpoint_every_tokens=0,
+        memory_layers=[0],
+        memory_window=1,
+        recurrent_merger="recirculation",
     )
-    fresh = make_fbt(seed=999)
+    fresh = make_adaptive_recirculation(seed=999)
     trainer = Trainer(
         model=fresh,
         config=phase_b_cfg,
@@ -431,7 +443,8 @@ def test_mixed_pass_schedule_resume_is_bit_exact(tmp_path):
     train = PackedTokenDataset(data_dir, "train")
     val = PackedTokenDataset(data_dir, "validation")
     common = dict(
-        variant="fbt",
+        variant="recurrent_memory",
+        memory_window=1, memory_layers=[0], recurrent_merger="recirculation",
         phase="B",
         model_dir="unused",
         data_dir=str(data_dir),
@@ -456,7 +469,7 @@ def test_mixed_pass_schedule_resume_is_bit_exact(tmp_path):
         checkpoint_every_tokens=0,
     )
 
-    full = make_fbt(seed=77)
+    full = make_adaptive_recirculation(seed=77)
     full_cfg = ExperimentConfig(output_dir=str(tmp_path / "full"), **common)
     full_state = Trainer(
         model=full,
@@ -466,7 +479,7 @@ def test_mixed_pass_schedule_resume_is_bit_exact(tmp_path):
         device=torch.device("cpu"),
     ).train()
 
-    interrupted = make_fbt(seed=77)
+    interrupted = make_adaptive_recirculation(seed=77)
     interrupted_cfg = ExperimentConfig(output_dir=str(tmp_path / "interrupted"), **common)
     Trainer(
         model=interrupted,
@@ -477,7 +490,7 @@ def test_mixed_pass_schedule_resume_is_bit_exact(tmp_path):
     ).train(until_unique_tokens=32)
     checkpoint = candidate_checkpoint_paths(tmp_path / "interrupted")[0]
 
-    resumed = make_fbt(seed=77)
+    resumed = make_adaptive_recirculation(seed=77)
     resumed_cfg = ExperimentConfig.from_dict(
         {
             **interrupted_cfg.to_dict(),
@@ -513,7 +526,7 @@ def test_mixed_pass_schedule_forwards_k_specific_weights(tmp_path, monkeypatch):
     make_artifact(data_dir)
     train = PackedTokenDataset(data_dir, "train")
     val = PackedTokenDataset(data_dir, "validation")
-    model = make_fbt(seed=91)
+    model = make_adaptive_recirculation(seed=91)
     observed = []
     original_compute_loss = model.compute_loss
 
@@ -523,7 +536,7 @@ def test_mixed_pass_schedule_forwards_k_specific_weights(tmp_path, monkeypatch):
 
     monkeypatch.setattr(model, "compute_loss", traced_compute_loss)
     cfg = ExperimentConfig(
-        variant="fbt",
+        variant="recurrent_memory",
         phase="B",
         model_dir="unused",
         data_dir=str(data_dir),
@@ -540,6 +553,9 @@ def test_mixed_pass_schedule_forwards_k_specific_weights(tmp_path, monkeypatch):
         eval_every_tokens=0,
         eval_batches=0,
         checkpoint_every_tokens=0,
+        memory_layers=[0],
+        memory_window=1,
+        recurrent_merger="recirculation",
     )
     Trainer(
         model=model,
@@ -563,7 +579,7 @@ def test_validation_gates_checkpoint_and_stop_at_first_passing_evaluation(tmp_pa
     train = PackedTokenDataset(data_dir, "train")
     val = PackedTokenDataset(data_dir, "validation")
     cfg = ExperimentConfig(
-        variant="fbt",
+        variant="recurrent_memory",
         phase="B",
         model_dir="unused",
         data_dir=str(data_dir),
@@ -578,9 +594,12 @@ def test_validation_gates_checkpoint_and_stop_at_first_passing_evaluation(tmp_pa
         eval_passes=4,
         early_stop={"pass_nll_max": {1: 100.0, 4: 100.0}},
         checkpoint_every_tokens=0,
+        memory_layers=[0],
+        memory_window=1,
+        recurrent_merger="recirculation",
     )
     trainer = Trainer(
-        model=make_fbt(),
+        model=make_adaptive_recirculation(),
         config=cfg,
         train_data=train,
         validation_data=val,
@@ -607,7 +626,7 @@ def test_validation_gates_checkpoint_and_stop_at_first_passing_evaluation(tmp_pa
         {**cfg.to_dict(), "resume_from": str(checkpoint)}
     )
     resumed_state = Trainer(
-        model=make_fbt(),
+        model=make_adaptive_recirculation(),
         config=resumed_cfg,
         train_data=train,
         validation_data=val,
@@ -664,27 +683,27 @@ def test_memory_phase_a_runs_through_shared_trainer(tmp_path):
     assert state.token_equivalent_compute == 32
 
 
-def test_memory_add_phase_a_runs_through_shared_trainer(tmp_path):
-    from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
-
-    data_dir = tmp_path / "data-memory-add"
+def test_projected_residual_phase_a_runs_through_shared_trainer(tmp_path):
+    data_dir = tmp_path / "data-projected-residual"
     make_artifact(data_dir)
     train = PackedTokenDataset(data_dir, "train")
     val = PackedTokenDataset(data_dir, "validation")
     torch.manual_seed(29)
-    model = MemoryAddVariant(
-        MistralForCausalLM(micro_config(), attention_backend="reference")
+    model = RecurrentMemoryVariant(
+        MistralForCausalLM(micro_config(), attention_backend="reference"),
+        memory_layers=[0],
+        merger="projected_residual",
     )
     before = {
         name: tensor.detach().clone()
         for name, tensor in model.backbone.state_dict().items()
     }
     cfg = ExperimentConfig(
-        variant="memory_add",
+        variant="recurrent_memory",
         phase="A",
         model_dir="unused",
         data_dir=str(data_dir),
-        output_dir=str(tmp_path / "memory-add-a"),
+        output_dir=str(tmp_path / "projected-residual-a"),
         device="cpu",
         attention_backend="reference",
         max_unique_tokens=16,
@@ -694,6 +713,9 @@ def test_memory_add_phase_a_runs_through_shared_trainer(tmp_path):
         eval_every_tokens=0,
         eval_batches=0,
         checkpoint_every_tokens=0,
+        memory_layers=[0],
+        memory_window=1,
+        recurrent_merger="projected_residual",
     )
     state = Trainer(
         model=model,
@@ -704,6 +726,6 @@ def test_memory_add_phase_a_runs_through_shared_trainer(tmp_path):
     ).train()
     assert state.unique_tokens_seen == 16
     assert state.token_equivalent_compute == 32
-    assert torch.count_nonzero(model.memory_projection.weight) > 0
+    assert torch.count_nonzero(model.memory_mergers["0"].projection.weight) > 0
     for name, tensor in model.backbone.state_dict().items():
         torch.testing.assert_close(tensor, before[name], atol=0, rtol=0)

@@ -139,8 +139,7 @@ def evaluate_feedback_continuation(
 
             for offset in range(continuation_tokens):
                 target = continuation[:, offset : offset + 1]
-                valid_target = ~model.control_token_mask(target)[:, 0]
-                labels = target[:, 0].masked_fill(~valid_target, -100)
+                labels = target[:, 0]
                 for name, state in (
                     ("exact_k_pass", exact),
                     ("live_feedback", live),
@@ -161,17 +160,17 @@ def evaluate_feedback_continuation(
                     * (exact_log_probs - live_log_probs)
                 ).sum(dim=-1)
                 kl_sum_by_offset[offset] += float(
-                    per_example_kl[valid_target].sum().cpu()
+                    per_example_kl.sum().cpu()
                 )
                 top1_equal_by_offset[offset] += int(
                     (
                         exact.next_token_logits.argmax(dim=-1)
                         == live.next_token_logits.argmax(dim=-1)
-                    )[valid_target]
+                    )
                     .sum()
                     .cpu()
                 )
-                distribution_count_by_offset[offset] += int(valid_target.sum().cpu())
+                distribution_count_by_offset[offset] += target.shape[0]
 
                 exact = exact_decode_step(model, exact, target)
                 live = live_feedback_decode_step(model, live, target)

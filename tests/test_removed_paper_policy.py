@@ -16,7 +16,6 @@ from tiny_mistral_mptt.training.checkpoint import (
     load_model_weights,
     save_checkpoint,
 )
-from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +24,15 @@ REMOVED_OPTIONS = [
     {"validation_forward": "paper_recirculation"},
     {"recirculation_activation_checkpointing": True},
     {"recirculation_bptt_truncate_tokens": 128},
+    {"variant": "fbt"},
+    {"variant": "memory_add"},
+    {"variant": "recirculation"},
+    {"variant": "memory_token_attention"},
+    {"variant": "memory_attention", "memory_write_mode": "memory_token"},
+    {"memory_token_visibility": "write_only"},
+    {"prefix_mixin_probability": 0.2},
+    {"fbt_latent_jitter_std": 0.1},
+    {"recirculation_source_layer": 1},
 ]
 
 
@@ -40,6 +48,14 @@ def test_neutral_legacy_metadata_is_accepted_but_not_serialized():
         **expected,
         "recirculation_activation_checkpointing": False,
         "recirculation_bptt_truncate_tokens": None,
+        "memory_token_visibility": None,
+        "prefix_mixin_probability": 0.0,
+        "fbt_normalize_gate_input": False,
+        "fbt_latent_jitter_std": 0.0,
+        "recirculation_source_layer": None,
+        "recirculation_destination_layer": None,
+        "recirculation_alpha": 0.1,
+        "recirculation_mode": "fixed",
     })
     assert loaded.to_dict() == expected
 
@@ -48,9 +64,6 @@ def test_paper_execution_is_not_exported_or_attached_to_the_merger_variant():
     for name in ("PaperRecirculationState", "prefill_paper_recirculation",
                  "paper_recirculation_decode_step"):
         assert not hasattr(inference, name)
-    for name in ("compute_recirculation_logits", "compute_recirculation_bptt_loss",
-                 "iter_recirculation_tbptt_losses", "_replay_upper_stack"):
-        assert not hasattr(RecirculationVariant, name)
     assert hasattr(inference, "prefill_live_feedback")
     assert hasattr(inference, "live_feedback_decode_step")
     assert hasattr(inference, "prefill_exact_k_pass")
@@ -80,6 +93,14 @@ def test_unaffected_multipass_era_checkpoint_still_resumes(tmp_path):
     path, model, optimizer, config = _checkpoint(tmp_path, {
         "recirculation_activation_checkpointing": False,
         "recirculation_bptt_truncate_tokens": None,
+        "memory_token_visibility": None,
+        "prefix_mixin_probability": 0.0,
+        "fbt_normalize_gate_input": False,
+        "fbt_latent_jitter_std": 0.0,
+        "recirculation_source_layer": None,
+        "recirculation_destination_layer": None,
+        "recirculation_alpha": 0.1,
+        "recirculation_mode": "fixed",
     })
     expected = {name: value.clone() for name, value in model.state_dict().items()}
     with torch.no_grad():
@@ -111,11 +132,12 @@ def test_retired_policy_checkpoints_cannot_silently_load(tmp_path, loader, optio
 
 
 @pytest.mark.parametrize("script", ["benchmark_training_efficiency", "estimate_training_flops"])
-def test_efficiency_tools_reject_retired_policy_without_running_it(script):
+@pytest.mark.parametrize("options", REMOVED_OPTIONS)
+def test_efficiency_tools_reject_retired_policy_without_running_it(script, options):
     spec = importlib.util.spec_from_file_location(script, ROOT / "scripts" / f"{script}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    case = {"variant": "recirculation", "training_forward": "recirculation_bptt"}
+    case = {"variant": "dense_memory_attention", **options}
     with pytest.raises(ValueError, match="removed"):
         if script == "benchmark_training_efficiency":
             module._run_case(case)

@@ -64,7 +64,6 @@ See [cached inference](../docs/FEEDBACK_INFERENCE.md) for the lower-level feedba
 - `select_cuda_batch.py`: choose a candidate from an engineering batch report.
 
 Engineering grids are not scientific arms.
-The general training grid includes legacy recirculation, not both active recurrent mergers.
 The inference benchmark has a separately maintained engineering case list and
 does not yet time the production BOS NLL evaluator.
 See [efficiency measurements](../benchmarks/efficiency/README.md) and

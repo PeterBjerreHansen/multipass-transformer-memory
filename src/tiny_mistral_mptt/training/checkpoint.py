@@ -14,7 +14,7 @@ from safetensors.torch import load_file as load_safetensors
 from .snapshots import snapshot_metadata as read_snapshot_metadata
 from .durable import fsync_directory as _fsync_directory
 
-from ..compatibility import normalize_checkpoint_variant_name
+from ..compatibility import discard_retired_defaults, normalize_checkpoint_variant_name
 from ..config import (
     ExperimentConfig,
     canonical_memory_write_mode,
@@ -34,7 +34,6 @@ _INIT_ARCHITECTURE_FIELDS = (
     "memory_window",
     "memory_write_mode",
     "memory_write_stride",
-    "memory_token_visibility",
     "memory_layers",
     "memory_position_encoding",
     "memory_num_key_value_heads",
@@ -47,11 +46,6 @@ _INIT_ARCHITECTURE_FIELDS = (
     "sparse_attention_stride",
     "sparse_attention_window",
     "sparse_attention_layers",
-    "fbt_normalize_gate_input",
-    "recirculation_source_layer",
-    "recirculation_destination_layer",
-    "recirculation_alpha",
-    "recirculation_mode",
     "recurrent_merger",
     "recurrent_controller_hidden_size",
     "recurrent_layers",
@@ -62,7 +56,6 @@ _INIT_ARCHITECTURE_DEFAULTS = {
     "memory_window": 32,
     "memory_write_mode": None,
     "memory_write_stride": None,
-    "memory_token_visibility": None,
     "memory_layers": None,
     "memory_position_encoding": None,
     "memory_num_key_value_heads": None,
@@ -75,11 +68,6 @@ _INIT_ARCHITECTURE_DEFAULTS = {
     "sparse_attention_stride": None,
     "sparse_attention_window": None,
     "sparse_attention_layers": None,
-    "fbt_normalize_gate_input": False,
-    "recirculation_source_layer": None,
-    "recirculation_destination_layer": None,
-    "recirculation_alpha": 0.1,
-    "recirculation_mode": "fixed",
     "recurrent_merger": None,
     "recurrent_controller_hidden_size": None,
     "recurrent_layers": None,
@@ -91,7 +79,7 @@ class TrainState:
     optimizer_steps: int = 0
     micro_steps: int = 0
     unique_tokens_seen: int = 0  # linguistic/data tokens only
-    model_positions_seen: int = 0  # includes input-only control positions
+    model_positions_seen: int = 0  # ordinary input positions
     token_equivalent_compute: int = 0  # physical positions * effective passes
     training_elapsed_seconds: float = field(
         default=0.0,
@@ -367,7 +355,7 @@ def save_checkpoint_generation(
 
 
 def _canonical_architecture_names(config: dict[str, Any]) -> dict[str, Any]:
-    result = dict(config)
+    result = discard_retired_defaults(config)
     result.setdefault("memory_pattern", None)
     result.setdefault("recurrent_layers", None)
     name = result.get("variant")
@@ -387,13 +375,11 @@ def _resume_config_view(config: dict[str, Any]) -> dict[str, Any]:
     # that are no longer part of the current experiment schema. This keeps
     # exact resume viable for older checkpoints.
     reject_removed_paper_policy(config)
-    canonical = dict(config)
+    canonical = discard_retired_defaults(config)
     if "ntp_pass_loss_weights" not in canonical:
         canonical["ntp_pass_loss_weights"] = canonical.get("pass_loss_weights")
     if "ntp_pass_loss_weights_by_k" not in canonical:
         canonical["ntp_pass_loss_weights_by_k"] = canonical.get("pass_loss_weights_by_k")
-    canonical.setdefault("fbt_normalize_gate_input", False)
-    canonical.setdefault("fbt_latent_jitter_std", 0.0)
     canonical.setdefault("recurrent_merger", None)
     canonical.setdefault("recurrent_controller_hidden_size", None)
     canonical.setdefault("memory_num_key_value_heads", None)
@@ -467,6 +453,7 @@ def _init_compatibility_view(config: dict[str, Any]) -> dict[str, Any]:
             "init_from checkpoint is missing a semantic experiment configuration"
         )
     reject_removed_paper_policy(config)
+    config = discard_retired_defaults(config)
     view = {
         field: config.get(field, _INIT_ARCHITECTURE_DEFAULTS.get(field))
         for field in _INIT_ARCHITECTURE_FIELDS
@@ -501,6 +488,7 @@ def _validate_payload(
 ) -> None:
     _require_payload(payload)
     reject_removed_paper_policy(payload["experiment_config"])
+    discard_retired_defaults(payload["experiment_config"])
     normalize_checkpoint_variant_name(payload["experiment_config"].get("variant", ""))
     if (
         expected_manifest_sha256 is not None
@@ -597,41 +585,19 @@ def load_model_weights(
     missing = expected_keys - checkpoint_keys
     unexpected = checkpoint_keys - expected_keys
 
-    allowed_missing: set[str] = set()
-    prefixes = tuple(
-        getattr(model, "initialization_only_state_prefixes", lambda: ())()
-    )
-    for prefix in prefixes:
-        expected_for_head = {key for key in expected_keys if key.startswith(prefix)}
-        present_for_head = {key for key in checkpoint_keys if key.startswith(prefix)}
-        if present_for_head and present_for_head != expected_for_head:
-            absent = sorted(expected_for_head - present_for_head)
-            extra = sorted(present_for_head - expected_for_head)
-            raise RuntimeError(
-                f"init_from checkpoint contains a partial {prefix!r} module; "
-                f"missing={absent}, unexpected={extra}"
-            )
-        if not present_for_head:
-            allowed_missing.update(expected_for_head)
-
-    disallowed_missing = sorted(missing - allowed_missing)
-    if disallowed_missing or unexpected:
+    if missing or unexpected:
         raise RuntimeError(
             "init_from model state is incompatible; "
-            f"missing={disallowed_missing}, unexpected={sorted(unexpected)}"
+            f"missing={sorted(missing)}, unexpected={sorted(unexpected)}"
         )
-    result = model.load_state_dict(checkpoint_state, strict=False)
-    if set(result.missing_keys) != allowed_missing or result.unexpected_keys:
-        raise RuntimeError(
-            "init_from compatibility check disagreed with PyTorch state loading"
-        )
+    model.load_state_dict(checkpoint_state, strict=True)
     return {
         "source_path": str(source_path),
         "source_format": source_format,
         "source_train_state": source_train_state,
         "source_experiment_config": source_config,
         "init_compatibility_view": _init_compatibility_view(source_config),
-        "freshly_initialized_model_keys": sorted(allowed_missing),
+        "freshly_initialized_model_keys": [],
         "snapshot_metadata": snapshot_metadata,
     }
 

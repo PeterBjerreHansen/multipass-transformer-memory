@@ -16,8 +16,7 @@ from tiny_mistral_mptt.inference import (
     live_feedback_decode_step,
     prefill_live_feedback,
 )
-from tiny_mistral_mptt.variants.memory_add import MemoryAddVariant
-from tiny_mistral_mptt.variants.recirculation import RecirculationVariant
+from tiny_mistral_mptt.variants.recurrent_memory import RecurrentMemoryVariant
 
 
 class NextIdModel(torch.nn.Module):
@@ -102,21 +101,20 @@ def _make_memory_model():
     backbone = MistralForCausalLM(
         micro_config(sliding_window=4), attention_backend="reference"
     )
-    model = MemoryAddVariant(backbone).eval()
+    model = RecurrentMemoryVariant(backbone, memory_layers=[0], merger="projected_residual").eval()
     with torch.no_grad():
-        model.memory_projection.weight.copy_(0.05 * torch.eye(model.config.hidden_size))
+        model.memory_mergers["0"].projection.weight.copy_(0.05 * torch.eye(model.config.hidden_size))
     return model
 
 
 def _make_recirculation_model():
     torch.manual_seed(445)
-    return RecirculationVariant(
+    return RecurrentMemoryVariant(
         MistralForCausalLM(
             micro_config(sliding_window=4), attention_backend="reference"
         ),
-        source_layer=1,
-        destination_layer=0,
-        mode="adaptive",
+        memory_layers=[0],
+        merger="recirculation",
     ).eval()
 
 

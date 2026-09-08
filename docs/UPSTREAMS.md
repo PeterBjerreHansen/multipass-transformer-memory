@@ -26,14 +26,13 @@ deleted. Vanilla numerical-equivalence tests remain authoritative.
 
 Memory Attention and Strided Self-Attention add two tested substrate capabilities. Self-attention K/V
 entries can carry a validity mask, and selected layers can use a bounded
-dense-recent/fixed-stride-old mask. Write-only `<MEM>` positions retain their
-physical, RoPE, and cache coordinates while remaining unavailable as K/V. An
+dense-recent/fixed-stride-old mask. An
 empty attention row returns exact zero in every backend. Ordinary layers retain
 the original local path, while Strided Self-Attention reuses the pretrained projections.
 
 ## FBT architecture reference
 
-The `fbt` variant is based on the asymmetric latent-feedback construction in
+The [preserved FBT reference](../historical/implementations/feedback/README.md) is based on the asymmetric latent-feedback construction in
 Xi Wang et al., *Full-bandwidth Transformer*, arXiv:2608.08888. This repository
 uses a TinyMistral retrofit and does not claim to reproduce the paper's full
 pretraining recipe.
@@ -51,8 +50,7 @@ retired protocol records remain provenance, not executable specifications.
 
 `PeterBjerreHansen/multi-pass-transformer-training` at
 `79398be4ac33a7489029e6075bdce930a0ec44b2` is a design reference for
-previous-pass top-state feedback, strict recurrence causality, retired
-MemoryAdd, and per-layer cross-pass Memory Attention. Current implementations are
+previous-pass top-state feedback, strict recurrence causality, and per-layer cross-pass Memory Attention. Current implementations are
 written directly against this repository's Mistral/GQA/local-attention
 interfaces.
 

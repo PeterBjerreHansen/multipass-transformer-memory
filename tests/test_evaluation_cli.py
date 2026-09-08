@@ -28,9 +28,12 @@ def test_packed_cli_resolves_defaults_overrides_and_checkpoint_identity(tmp_path
     root = tmp_path / "data"
     make_artifact(root)
     config = ExperimentConfig(
-        variant="memory_add", model_dir="unused", data_dir=str(root),
+        variant="recurrent_memory", model_dir="unused", data_dir=str(root),
         device="cpu", attention_backend="reference", autocast_dtype="bfloat16",
         eval_passes=4,
+        memory_layers=[0],
+        memory_window=1,
+        recurrent_merger="projected_residual",
     )
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.safe_dump(config.to_dict()))
@@ -83,8 +86,11 @@ def test_downstream_cli_defaults_and_actual_scoring_counts(tmp_path, monkeypatch
     ))
     tokenizer.save(str(tmp_path / "tokenizer.json"))
     config = ExperimentConfig(
-        variant="memory_add", model_dir=str(tmp_path), device="cpu",
+        variant="recurrent_memory", model_dir=str(tmp_path), device="cpu",
         eval_passes=4, autocast_dtype="bfloat16",
+        memory_layers=[0],
+        memory_window=1,
+        recurrent_merger="projected_residual",
     )
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.safe_dump(config.to_dict()))

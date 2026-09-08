@@ -25,12 +25,11 @@ reference masking, and cached explicit-position retention must agree.
 The suite must enforce:
 
 - ordinary pass 1 matches the SWA Transformer backbone path;
-- FBT exact cached inference matches full-prefix multipass recomputation;
+- active recurrent exact cached inference matches full-prefix recomputation;
 - retired checkpoint controls retain their focused compatibility tests;
 - adaptive recirculation starts at the configured fixed mixture;
-- legacy middle-layer recirculation Phase A trains only its coefficient
-  controller; active recurrent-memory Phase A trains its late writer and merger,
-  while both keep the TinyMistral backbone frozen;
+- recurrent-memory Phase A trains its late writer and merger while keeping
+  the TinyMistral backbone frozen;
 - descriptive attention names resolve to the same implementation as explicit settings;
 - conflicting preset settings and deleted hybrid names fail at input boundaries;
 - dense Memory Attention and strided C1 are identical with matching weights;
@@ -38,34 +37,17 @@ The suite must enforce:
 - with zero attention readers, ordinary-token hybrid execution equals the matching
   standalone recurrent model;
 - hybrid exact caches agree with full-prefix recomputation for both mergers,
-  including shared read layers and MEM visibility modes;
+  including shared read layers;
 - dense-and-strided Memory Attention reduces to Dense Memory Attention when `S=0` and Strided Memory Attention when
   `D=0`, and uses one softmax over a non-overlapping union otherwise;
 - zero-initialized Memory Attention is an exact SWA Transformer fixed point at all pass depths;
 - Memory Attention reader allocation and projected caches match `memory_layers`;
 - memory RoPE retains original linguistic write/query positions through cached eviction;
-- strided and MEM writes are strict-past;
+- dense and strided writes are strict-past;
 - memory window counts records and empty/invalid records return finite exact-zero
   attention contributions;
 - Phase A freezes pretrained parameters and trains only added parameters;
-- memory-token Phase A preserves pass-1 autograd for the added MEM embedding,
-  which receives Memory Attention-mediated gradients after zero-output reader activation;
 - pass weights and pass-count scheduling are deterministic and checkpointable.
-
-## Explicit MEM loss/attention gates
-
-For `A <MEM> B`:
-
-- MEM input ID is V while the LM output dimension remains V;
-- A targets B and the MEM position has `ignore_index`;
-- direct LM gradient at MEM's logits is exactly zero;
-- perturbing ignored MEM-position logits cannot change the language loss;
-- after reader output activation, the MEM embedding receives nonzero Phase-A
-  gradient through recurrent/Memory Attention pathways;
-- `visible` permits a local MEM-to-future self-attention dependency;
-- `write_only` permits MEM to read preceding context but prevents MEM from being
-  used as self-attention K/V;
-- cached write-only key validity preserves the MEM physical position.
 
 ## Evaluation consistency and remaining cleanup
 
@@ -73,14 +55,14 @@ Paper replay/BPTT tests were removed with that implementation. Removal guards
 now reject its configs and checkpoints while retaining neutral legacy metadata
 compatibility. Cleanup 3–4 adds tests for K=1 state conversion with non-identity
 writers, BOS/context feedback, shared trainer/standalone precision and loss
-aggregation, per-source/control-token accounting, subset identity, and common
+aggregation, per-source token accounting, subset identity, and common
 downstream truncation. BF16 dispatch is exercised locally without claiming
 CUDA/MPS numerical or speed qualification.
 
 Snapshot tests cover interruption before/after atomic publication, sidecar
 repair, portable loading, idempotent retries, conflicting weights and retention.
 Packed BOS feedback tests cover all active mechanisms, both target sets,
-model-owned MEM labels, full 2048-position decoding, selected-only scheduling,
+ordinary next-token labels, full 2048-position decoding, selected-only scheduling,
 interrupted recovery and unchanged training weights/optimizer/sampler state.
 Batching and general depth-configurable memory interventions remain later work. See
 [CLEANUP_STATUS.md](CLEANUP_STATUS.md).
@@ -92,7 +74,6 @@ Batching and general depth-configurable memory interventions remain later work. 
 - Live Feedback prefill starts from the exact K-pass boundary;
 - for K>1, the first Live Feedback continuation transition equals exact K-pass;
 - Memory Attention state remains chronological and bounded;
-- write-only cache validity persists across decode;
 - exact K=1 and K=1 standard decode remain the SWA Transformer cached boundary;
 - K=1 feedback retains real architecture state and does not collapse to
   standard decode;
@@ -124,9 +105,7 @@ settings, avoid overlapping training slices, and match their declared budgets.
 `scripts/smoke_mps.py`.
 
 Complete the [target-GPU pre-training checks](CLOUD.md#pre-training-checks)
-before frozen LR qualification. These are separate from local correctness tests.
-For write-only MEM, CUDA FlexAttention/reference parity must remain green before
-paid quality runs.
+before frozen or unfrozen LR qualification. These are separate from local correctness tests.
 
 ## Documentation checks
 

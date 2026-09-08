@@ -13,8 +13,8 @@ import torch
 import yaml
 
 from tiny_mistral.device import resolve_device, synchronize
-from tiny_mistral_mptt.data.packed_dataset import insert_memory_tokens
 from tiny_mistral_mptt.model_factory import load_variant
+from tiny_mistral_mptt.compatibility import discard_retired_defaults
 from tiny_mistral_mptt.config import (
     reject_removed_paper_policy,
     canonical_memory_write_mode,
@@ -172,6 +172,7 @@ def _precision_error(text: str, autocast_dtype: str | None) -> bool:
 
 def _run_case(case: dict[str, Any]) -> dict[str, Any]:
     reject_removed_paper_policy(case)
+    case = discard_retired_defaults(case)
     device = resolve_device(str(case.get("device", "auto")))
     variant = str(case["variant"])
     implementation_variant = canonical_variant_name(variant)
@@ -201,9 +202,6 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
     memory_write_stride = case.get("memory_write_stride")
     if memory_write_stride is not None:
         memory_write_stride = int(memory_write_stride)
-    memory_token_visibility = case.get("memory_token_visibility")
-    if memory_token_visibility is not None:
-        memory_token_visibility = str(memory_token_visibility)
     memory_layers = case.get("memory_layers", "all")
     if memory_layers is None:
         memory_layers = "all"
@@ -218,14 +216,6 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
     if sparse_attention_window is not None:
         sparse_attention_window = int(sparse_attention_window)
     sparse_attention_layers = case.get("sparse_attention_layers", "all")
-    recirculation_source_layer = case.get("recirculation_source_layer")
-    if recirculation_source_layer is not None:
-        recirculation_source_layer = int(recirculation_source_layer)
-    recirculation_destination_layer = case.get("recirculation_destination_layer")
-    if recirculation_destination_layer is not None:
-        recirculation_destination_layer = int(recirculation_destination_layer)
-    recirculation_alpha = float(case.get("recirculation_alpha", 0.1))
-    recirculation_mode = str(case.get("recirculation_mode", "fixed"))
     recurrent_merger = case.get("recurrent_merger")
 
     is_memory = implementation_variant == "memory_attention"
@@ -240,7 +230,6 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
             for value in (
                 memory_write_mode,
                 memory_write_stride,
-                memory_token_visibility,
             )
         ):
             raise ValueError("Dense-and-strided Memory Attention efficiency cases do not use memory_write_* fields")
@@ -248,21 +237,15 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("Dense-and-strided Memory Attention efficiency cases require valid retention fields")
         memory_window = memory_dense_window + memory_sparse_window
     elif is_memory:
-        if memory_write_mode not in {"dense", "periodic", "memory_token"}:
-            raise ValueError("Memory Attention efficiency cases require memory_write_mode: dense|strided|memory_token")
+        if memory_write_mode not in {"dense", "periodic"}:
+            raise ValueError("Memory Attention efficiency cases require memory_write_mode: dense|strided")
         if memory_write_mode == "dense":
             if memory_write_stride is not None:
                 raise ValueError("dense Memory Attention efficiency cases must not set memory_write_stride")
-            if memory_token_visibility is not None:
-                raise ValueError("memory_token_visibility applies only to memory_token mode")
         else:
             if memory_write_stride is None or memory_write_stride <= 0:
                 raise ValueError(f"{memory_write_mode} Memory Attention requires positive memory_write_stride")
-            if memory_write_mode == "periodic" and memory_token_visibility is not None:
-                raise ValueError("memory_token_visibility applies only to memory_token mode")
-            if memory_write_mode == "memory_token" and memory_token_visibility not in {"visible", "write_only"}:
-                raise ValueError("memory-token Memory Attention requires memory_token_visibility: visible|write_only")
-    elif any(value is not None for value in (memory_write_mode, memory_write_stride, memory_token_visibility)):
+    elif any(value is not None for value in (memory_write_mode, memory_write_stride)):
         raise ValueError("memory_* efficiency fields apply only to Memory Attention variants")
 
     if passes not in WEIGHTS_BY_K:
@@ -314,7 +297,6 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
         "memory_pattern": memory_pattern,
         "memory_write_mode": memory_write_mode,
         "memory_write_stride": memory_write_stride,
-        "memory_token_visibility": memory_token_visibility,
         "memory_layers": memory_layers,
         "memory_position_encoding": memory_position_encoding,
         "memory_dense_window": memory_dense_window,
@@ -323,10 +305,6 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
         "sparse_attention_stride": sparse_attention_stride,
         "sparse_attention_window": sparse_attention_window,
         "sparse_attention_layers": sparse_attention_layers,
-        "recirculation_source_layer": recirculation_source_layer,
-        "recirculation_destination_layer": recirculation_destination_layer,
-        "recirculation_alpha": recirculation_alpha,
-        "recirculation_mode": recirculation_mode,
         "recurrent_merger": recurrent_merger,
         "recurrent_layers": recurrent_layers,
         "warmup_steps": warmup_steps,
@@ -349,7 +327,6 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
             memory_pattern=memory_pattern,
             memory_write_mode=memory_write_mode,
             memory_write_stride=memory_write_stride,
-            memory_token_visibility=memory_token_visibility,
             memory_layers=memory_layers,
             memory_position_encoding=memory_position_encoding,
             memory_dense_window=memory_dense_window,
@@ -358,10 +335,6 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
             sparse_attention_stride=sparse_attention_stride,
             sparse_attention_window=sparse_attention_window,
             sparse_attention_layers=sparse_attention_layers,
-            recirculation_source_layer=recirculation_source_layer,
-            recirculation_destination_layer=recirculation_destination_layer,
-            recirculation_alpha=recirculation_alpha,
-            recirculation_mode=recirculation_mode,
             recurrent_merger=recurrent_merger,
             recurrent_layers=recurrent_layers,
         )
@@ -386,13 +359,6 @@ def _run_case(case: dict[str, Any]) -> dict[str, Any]:
             device=device,
             dtype=torch.long,
         )
-        if memory_write_mode == "memory_token":
-            assert memory_write_stride is not None
-            ids = insert_memory_tokens(
-                ids,
-                memory_token_id=vocab_size,
-                interval=memory_write_stride,
-            )
         model_sequence_length = int(ids.shape[1])
         result["model_sequence_length"] = model_sequence_length
         result["microbatch_model_positions"] = batch_size * model_sequence_length

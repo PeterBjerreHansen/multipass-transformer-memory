@@ -39,3 +39,27 @@ def normalize_legacy_variant_name(name: str) -> str:
 def normalize_checkpoint_variant_name(name: str) -> str:
     """Also accept identifiers restricted to old checkpoint metadata."""
     return normalize_legacy_variant_name(_CHECKPOINT_ONLY_ALIASES.get(name, name))
+
+
+_REMOVED_VARIANTS = {"fbt", "memory_add", "recirculation", "memory_token_attention"}
+_RETIRED_DEFAULTS = {
+    "memory_token_visibility": None,
+    "prefix_mixin_probability": 0.0,
+    "fbt_normalize_gate_input": False,
+    "fbt_latent_jitter_std": 0.0,
+    "recirculation_source_layer": None,
+    "recirculation_destination_layer": None,
+    "recirculation_alpha": 0.1,
+    "recirculation_mode": "fixed",
+}
+
+
+def discard_retired_defaults(raw: dict) -> dict:
+    """Read old active-model metadata without reviving retired behavior."""
+    if raw.get("variant") in _REMOVED_VARIANTS or raw.get("memory_write_mode") == "memory_token":
+        raise ValueError("this feedback architecture has been removed from the active runtime")
+    result = dict(raw)
+    for name, default in _RETIRED_DEFAULTS.items():
+        if name in result and result.pop(name) != default:
+            raise ValueError(f"{name} belongs to a removed feedback architecture")
+    return result

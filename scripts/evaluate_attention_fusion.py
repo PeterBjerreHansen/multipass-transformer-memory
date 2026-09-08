@@ -56,8 +56,6 @@ def main() -> None:
     dataset = load_packed_dataset_for_experiment(
         evaluation_data_dir,
         "validation",
-        memory_write_mode=cfg.memory_write_mode,
-        memory_write_stride=cfg.memory_write_stride,
         verify_integrity=True,
     )
     result = evaluate_attention_fusion(

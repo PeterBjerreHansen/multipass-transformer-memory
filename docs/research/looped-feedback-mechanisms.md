@@ -101,7 +101,7 @@ Here `N` denotes a fixed, explicitly selected source-normalization rule shared b
 
 If budget permits only one extra candidate, prioritize the gated projected residual. Include the simpler projected residual when possible so extra gating does not get credit for gains attributable to projection alone. This comparison still bundles changes in destination preservation and initialization relative to the existing mixture; a win would identify a useful design, not isolate one causal feature. Match those factors in follow-up ablations before claiming a mechanism-level explanation.
 
-The existing [MemoryAdd](../../src/tiny_mistral_mptt/variants/memory_add.py) already implements zero-initialized projected residual feedback, but from the final layer into token embeddings. Reusing the idea at the recirculation layer pair would isolate placement more cleanly than directly comparing those two existing variants.
+The existing [MemoryAdd](https://github.com/PeterBjerreHansen/multipass-transformer-memory/blob/5d4c2cd5a580974aba75b30c29971c71fc726308/src/tiny_mistral_mptt/variants/memory_add.py) already implements zero-initialized projected residual feedback, but from the final layer into token embeddings. Reusing the idea at the recirculation layer pair would isolate placement more cleanly than directly comparing those two existing variants.
 
 ### Comparable experiments and low-sprawl implementation
 

@@ -9,7 +9,6 @@ The active models use the following names:
 | `strided_memory_attention` | Regularly spaced previous-pass states |
 | `dense_and_strided_memory_attention` | Recent dense states plus older strided states |
 | `memory_attention` | Explicit configuration of any supported pattern below |
-| `memory_token_attention` | Input-only `<MEM>` states. Supported, not an active study arm. |
 
 All attention names are presets of the same `memory_attention` implementation:
 `MemoryAttentionVariant` in
@@ -18,8 +17,7 @@ There is no separate dense-and-strided model class or factory branch.
 The public name stays in experiment metadata; the resolved settings determine behavior.
 
 `memory_pattern: dense|strided|dense_and_strided` selects ordinary-record access.
-`memory_write_mode: memory_token` selects the separate MEM source policy, currently
-with dense access over committed MEM records. The descriptive names supply their
+The descriptive names supply their
 pattern and write mode. Contradictory explicit settings fail instead of overriding
 the name. `memory_attention` accepts explicit settings without a preset.
 
@@ -33,7 +31,7 @@ Checkpoint comparison resolves aliases but retains pattern, reader layout and op
 recurrent settings as architecture fields. The deleted named hybrids are not aliases:
 their checkpoints require the original repository revision.
 
-See [the architecture map](ARCHITECTURES.md) for controls and legacy standalone models.
+See [the architecture map](ARCHITECTURES.md) for controls and preserved reference implementations.
 Study-specific reader locations and capacities belong in the [frozen protocol](../benchmarks/development/frozen_backbone_comparison/README.md).
 
 ## 1. Shared Memory Attention architecture
@@ -101,7 +99,7 @@ A memory record is
 m_s = W_write h_s
 ```
 
-where `h_s` is the final normalized backbone state from the source stream. For dense, strided and MEM configurations,
+where `h_s` is the final normalized backbone state from the source stream. For dense and strided configurations,
 `memory_window=W` is the maximum number of committed records presented to a
 query. It is not a token-distance window. Dense-and-strided Memory Attention has capacity `D+S`.
 
@@ -118,15 +116,14 @@ reader parameters or projected memory K/V.
 
 Memory RoPE is anchored to the original linguistic sequence, never to compact
 memory-record order. A record written for linguistic position 511 remains position 511
-even if it is the third retained record. In memory-token mode a `<MEM>`
-slot inherits the preceding linguistic boundary. `MemoryAttentionBatch` and cached
+even if it is the third retained record. `MemoryAttentionBatch` and cached
 `MemoryAttentionState` carry these coordinates through compaction, bounded eviction, and
 incremental decoding.
 
 ## 3. Write policies
 
 These are configurations of `memory_attention`, not separate implementations.
-Dense-and-strided uses a dense source stream and the retention policy in section 3.4.
+Dense-and-strided uses a dense source stream and the retention policy in section 3.3.
 Use the descriptive names below, or `variant: memory_attention` with explicit settings.
 
 ### 3.1 Dense
@@ -153,20 +150,7 @@ For zero-based physical position `t`, a write occurs when
 `(t + 1) % C == 0`. With no control positions this means C=8 writes at
 7, 15, 23, ... .
 
-### 3.3 Explicit memory token
-
-```yaml
-variant: memory_token_attention
-memory_write_mode: memory_token
-memory_write_stride: 8
-memory_token_visibility: visible   # or write_only
-```
-
-The data view inserts one `<MEM>` after each complete group of C linguistic
-tokens when another linguistic token remains in that block. Only MEM positions
-write the memory state.
-
-### 3.4 Dense-and-strided retention
+### 3.3 Dense-and-strided retention
 
 ```yaml
 variant: dense_and_strided_memory_attention
@@ -190,69 +174,7 @@ During decode, an aging dense record survives only when it meets the strided
 policy and remains among the last `S` sparse records. Raw memory and per-reader
 projected K/V stay aligned with their original linguistic positions.
 
-## 4. `<MEM>` is input-only
-
-Let the pretrained vocabulary size be `V`.
-
-```text
-ordinary input IDs: 0 ... V-1
-<MEM> input ID:     V
-LM output classes:  0 ... V-1
-```
-
-The pretrained embedding table and LM head are not resized. Memory Attention variants in
-memory-token mode own one architecture-added learned `memory_token_embedding`;
-ID V selects that vector. The embedding is currently initialized to zero and
-learns as an added parameter.
-
-Because the LM head remains size V, `<MEM>` cannot receive probability mass or
-be sampled as a language token.
-
-## 5. Language loss skips control slots
-
-The physical transformer sequence and linguistic prediction sequence are not
-the same. For
-
-```text
-physical positions:  A    <MEM>    B    C
-LM labels:            B    IGNORE   C    IGNORE
-```
-
-A predicts the next **linguistic** token B across the control slot. The MEM
-hidden state has no direct LM prediction objective. The final ordinary position
-also has no target inside the packed block.
-
-More generally, only ordinary positions predict, and each predicts the nearest
-ordinary token strictly to its right. Every MEM position receives `ignore_index`
-in cross-entropy. This is implemented as position-aligned labels rather than an
-ordinary one-position shift.
-
-The MEM representation can still receive gradients indirectly. In visible mode
-future ordinary-token losses can flow through self-attention into MEM; in both
-modes later recurrent/memory-attention-mediated losses can flow through the memory-attention reader,
-writer, and MEM state.
-
-## 6. Self-attention visibility
-
-### `visible`
-
-`<MEM>` is an ordinary causal self-attention K/V position. Later tokens may use
-its hidden state locally as well as through persistent memory records. Thus any gain
-can include both dedicated latent compute and improved memory storage.
-
-### `write_only`
-
-`<MEM>` remains a transformer query and can read preceding causal context, but
-its self-attention K/V is marked invalid. No query uses MEM as an ordinary
-self-attention key/value; the MEM input/residual path still exists and its
-hidden state still writes a memory record.
-
-This isolates the persistent memory route more cleanly. The boolean key-validity
-mask is supported by the reference, local O(TW), and FlexAttention full-sequence
-backends. Cached KV entries retain their physical/RoPE position and carry the
-same validity bit, so masking does not collapse sequence positions.
-
-## 7. Strict read-compute-write timing
+## 4. Strict read-compute-write timing
 
 Memory Attention causality is always:
 
@@ -266,16 +188,7 @@ records committed strictly before physical position t. In cached execution the
 old bounded `MemoryAttentionState` is passed to the reader and the append happens only
 after the token hidden is complete.
 
-For memory-token input
-
-```text
-A <MEM> B
-```
-
-`h_MEM` may write a memory record, and B is the first physical position that can
-read that record.
-
-## 8. Full-sequence versus Live Feedback execution
+## 5. Full-sequence versus Live Feedback execution
 
 During training and exact K-pass evaluation, pass k reads memory-attention/recurrent feedback
 constructed from completed pass k-1. The same-position source state is never
@@ -291,39 +204,14 @@ the final live stream feeds its own newly produced states into the feedback
 machinery. K=1 feedback is also supported and uses a real prompt memory. Prompt
 K is independent of the `standard` versus `feedback` continuation mode.
 
-If a cached decode step consumes `<MEM>`, `next_token_logits` remain the logits
-from the preceding ordinary position because MEM itself predicts nothing.
+## 6. Data and compute accounting
 
-## 9. Data view and compute accounting
+Packed data contains ordinary vocabulary IDs only. Each input token occupies one
+model position. Token budgets count presentations, including repeated corpus
+passes; token-equivalent compute also counts the number of refinement passes.
+See [training accounting](TRAINING.md#token-accounting).
 
-The stored Dolmino artifacts contain only ordinary linguistic IDs. A deterministic
-`MemoryTokenPackedDataset` view inserts ID V at load time, preserving the
-underlying linguistic token order and artifact provenance.
-
-The control positions are **additional physical transformer positions**. For a
-backing block with N linguistic tokens and cadence C:
-
-```text
-physical positions = N + floor((N - 1) / C)
-```
-
-For example, a 2048-linguistic-token block at C=8 becomes 2303 physical model
-positions. This deliberately keeps the linguistic data dose fixed and makes the
-extra MEM compute explicit; strided and MEM-token experiments are not
-compute-identical.
-
-Training telemetry therefore separates:
-
-```text
-unique_tokens_seen       linguistic/data tokens
-model_positions_seen     physical positions including MEM
-token_equivalent_compute physical positions x effective passes
-```
-
-Run budgets and LR schedules use linguistic tokens. Throughput should report
-both linguistic tokens/s and model positions/s.
-
-## 10. Optional recurrent-memory hybrid
+## 7. Optional recurrent-memory hybrid
 
 Any Memory Attention configuration can also enable a preceding-token memory merger:
 
@@ -357,25 +245,21 @@ attention-selected source and the recurrent source. This keeps writer gradients
 enabled when Phase A detaches the first backbone pass. Cached recurrence stores
 an already-emitted record; it must not apply the writer again when reading.
 
-For `A <MEM> B`, both MEM and B read A's recurrent record. MEM may write an
-attention record, but does not replace the preceding-ordinary-token recurrent
-record. Channel-specific diagnostics can zero or mismatch either source independently.
+Channel-specific diagnostics can zero or mismatch either source independently.
 The deleted embedding-add and middle-layer hybrids have different computation;
 their names and checkpoints are rejected, not redirected here.
 
-## 11. Phase A wrinkle
+## 8. Phase A gradients
 
 In dense/strided Phase A, pass 1 contains no architecture-added parameter, so
 it can run under `no_grad()` while the frozen backbone supplies the source state.
 
-In memory-token Phase A, the architecture-added MEM embedding participates in
-pass 1. Pass-1 autograd must therefore remain enabled even though pretrained
-backbone parameters stay frozen. With zero-initialized reader outputs, the MEM
-embedding and writer have zero gradient on the first update and receive
-nonzero memory-attention-mediated gradients after the reader output path activates.
-
-## 12. Validation
+## 9. Validation
 
 The required causality, endpoint-equivalence, masking, gradient, cache, and
 resume checks are listed in [VALIDATION.md](VALIDATION.md). Run `make check`
 before interpreting quality results.
+
+Explicit memory-token attention is preserved only as
+[reference source](../historical/implementations/feedback/README.md). Its inserted
+positions, special labels and decoding behavior are absent from this runtime.

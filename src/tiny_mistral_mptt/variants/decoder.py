@@ -21,7 +21,6 @@ def run_memory_decoder(
     after_attention: Callable[[int, torch.Tensor], torch.Tensor],
     past_key_values: tuple[LayerKVCache, ...] | None,
     use_cache: bool,
-    attention_mask: torch.Tensor | None = None,
 ) -> DecoderRun:
     """Apply memory reads after self-attention and before each layer's MLP.
 
@@ -47,7 +46,7 @@ def run_memory_decoder(
     for index, layer in enumerate(backbone.model.layers):
         attended, cache = layer.self_attn(
             layer.input_layernorm(hidden),
-            attention_mask=attention_mask,
+            attention_mask=None,
             position_ids=position_ids,
             past_key_value=None if past_key_values is None else past_key_values[index],
             use_cache=use_cache,

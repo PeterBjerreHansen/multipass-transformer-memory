@@ -90,8 +90,9 @@ retain the original findings and split-overlap caveats.
 These are not results for the restructured frozen comparison.
 Earlier unauditable downstream JSON is not valid capability evidence.
 
-Paper replay/BPTT and the 1024-token studies are deleted.
-Adaptive recirculation mixing and ordinary feedback decoding remain supported.
-FBT, MemoryAdd and middle-layer recirculation remain legacy standalone implementations.
-The old named hybrids have been deleted. Memory Attention can optionally add the
-current late recurrent-memory pathway; see [its configuration](docs/MEMORY_ATTENTION.md#10-optional-recurrent-memory-hybrid).
+Paper replay/BPTT and the 1024-token studies are deleted. The active recurrent
+models use the shared late writer and support adaptive recirculation mixing.
+FBT and explicit memory-token attention remain as
+[preserved reference source](historical/implementations/feedback/README.md), outside
+the active runtime. Memory Attention can optionally add the current late
+recurrent-memory pathway; see [its configuration](docs/MEMORY_ATTENTION.md#7-optional-recurrent-memory-hybrid).
