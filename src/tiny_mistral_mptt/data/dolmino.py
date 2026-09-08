@@ -5,7 +5,10 @@ from typing import Iterator
 
 from tiny_mistral.config import MistralConfig
 
-from .manifest import file_sha256
+from .manifest import (
+    TEXT_NORMALIZATION_REPLACE_CONTROL_LITERALS_V1,
+    file_sha256,
+)
 from .prepare import PreparationRequest, materialize_from_document_iterators
 from .recipes import DOLMINO_50B_SOURCES, DOLMINO_REFERENCE_REVISION, DOLMINO_REPO_ID
 
@@ -52,6 +55,9 @@ def prepare_dolmino(
     if not persisted_padding or persisted_padding.get("pad_id") is None:
         raise ValueError("tokenizer does not declare the padding token required for the data audit")
     pad_token_id = int(persisted_padding["pad_id"])
+    pad_token = persisted_padding.get("pad_token")
+    if not isinstance(pad_token, str) or not pad_token:
+        raise ValueError("tokenizer does not declare a padding token string required for the data audit")
     tokenizer = configure_tokenizer_for_packing(tokenizer)
     resolved = HfApi().dataset_info(dataset_repo, revision=revision).sha
 
@@ -93,6 +99,8 @@ def prepare_dolmino(
         forbidden_token_ids=(pad_token_id,),
         recipe_name="dolmino_50b",
         shuffle_buffer=shuffle_buffer,
+        text_normalization=TEXT_NORMALIZATION_REPLACE_CONTROL_LITERALS_V1,
+        text_replacements=((pad_token, "[ PAD ]"),),
     )
     return materialize_from_document_iterators(
         request,

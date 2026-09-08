@@ -43,11 +43,14 @@ recipes use no skip; a future purpose-specific artifact may use this field only
 when its split ownership is documented and verified.
 
 Documents are tokenized with the pinned TinyMistral tokenizer after explicitly
-disabling its persisted padding and truncation settings. BOS is used as an
-explicit document separator. The packer owns the fixed 2048-token boundary, so
-published blocks contain raw document IDs plus BOS separators, not tokenizer
-padding. New artifacts use manifest format 2 and the
-`raw_unpadded_document_stream_v1` packing policy.
+disabling its persisted padding and truncation settings. The Dolmino recipe
+rewrites a literal `[PAD]` source string as `[ PAD ]` before tokenization so
+source text cannot become the reserved padding ID. The manifest records this
+text-normalization policy and replacement. BOS is used as an explicit document
+separator. The packer owns the fixed 2048-token boundary, so published blocks
+contain raw document IDs plus BOS separators, not tokenizer padding. New
+artifacts use manifest format 2 and the `raw_unpadded_document_stream_v1`
+packing policy.
 
 ## On-disk format
 
@@ -63,8 +66,9 @@ artifact/
 The binary token IDs are ordinary vocabulary IDs only. The manifest records the
 vocabulary size, source allocation, tokenizer hash, requested/resolved dataset
 revision, recipe, shuffle settings, seed, split-stream offsets, forbidden
-control-token IDs, and file hashes. Verification scans the token files while
-checking their hashes and rejects any recorded padding/control ID. Training and
+control-token IDs, text-normalization policy, replacements, and file hashes.
+Verification scans the token files while checking their hashes and rejects any
+recorded padding/control ID. Training and
 the packed-data evaluation CLIs run this complete verification before consuming
 an artifact; lightweight dataset construction still checks the manifest
 contract and expected file sizes.

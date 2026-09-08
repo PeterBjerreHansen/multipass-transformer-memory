@@ -24,3 +24,6 @@ truncation settings before encoding. The packer, not the tokenizer, owns the
 2048-token boundary. New manifests use the raw unpadded packing policy; do not
 reuse an artifact with an older manifest format. Verification scans the token
 files and requires zero occurrences of the tokenizer's recorded padding ID.
+The Dolmino recipe also rewrites a literal `[PAD]` source string as
+`[ PAD ]` before tokenization. This is recorded in the manifest's text
+normalization fields; it does not enable tokenizer padding.

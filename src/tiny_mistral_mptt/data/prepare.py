@@ -13,6 +13,8 @@ from .manifest import (
     PACKING_POLICY,
     DataManifest,
     PackedSplitInfo,
+    SUPPORTED_TEXT_NORMALIZATIONS,
+    TEXT_NORMALIZATION_NONE,
     file_sha256,
 )
 from .recipes import DOLMINO_50B_SOURCES, allocate_blocks, normalized_weights
@@ -40,6 +42,8 @@ class PreparationRequest:
     shuffle_buffer: int | None = None
     train_skip_tokens: int = 0
     validation_skip_tokens: int = 0
+    text_normalization: str = TEXT_NORMALIZATION_NONE
+    text_replacements: tuple[tuple[str, str], ...] = ()
 
     def validate(self) -> None:
         if self.sequence_length < 2:
@@ -57,6 +61,15 @@ class PreparationRequest:
             raise ValueError(
                 "split skip tokens must be non-negative and divisible by sequence_length"
             )
+        if self.text_normalization not in SUPPORTED_TEXT_NORMALIZATIONS:
+            raise ValueError("unsupported text normalization policy")
+        if self.text_normalization == TEXT_NORMALIZATION_NONE and self.text_replacements:
+            raise ValueError("text replacements require a text normalization policy")
+        if self.text_normalization != TEXT_NORMALIZATION_NONE and not self.text_replacements:
+            raise ValueError("text normalization policy requires text replacements")
+        for source, replacement in self.text_replacements:
+            if not source or not replacement or source == replacement:
+                raise ValueError("text replacements must change non-empty strings")
         if self.vocab_size > np.iinfo(np.uint16).max + 1:
             raise ValueError("vocab_size does not fit uint16 artifact format")
         if not 0 <= self.bos_token_id < self.vocab_size:
@@ -81,6 +94,7 @@ def _write_source_blocks(
     tokenize: TokenizerFn,
     vocab_size: int,
     forbidden_token_ids: tuple[int, ...] = (),
+    text_replacements: tuple[tuple[str, str], ...] = (),
 ) -> Path | None:
     """Consume one source quota, optionally writing its packed blocks."""
     if blocks <= 0:
@@ -104,6 +118,8 @@ def _write_source_blocks(
             raise RuntimeError("source exhausted before its requested token quota") from exc
         if not isinstance(text, str) or not text:
             continue
+        for source, replacement in text_replacements:
+            text = text.replace(source, replacement)
         ids = tokenize(text)
         if not ids:
             continue
@@ -111,7 +127,7 @@ def _write_source_blocks(
             raise ValueError("tokenizer emitted an id outside the declared vocabulary")
         if any(token in forbidden_token_ids for token in ids):
             raise ValueError(
-                "tokenizer emitted a forbidden control token; disable tokenizer padding"
+                "tokenizer emitted a forbidden control token; check text normalization and source data"
             )
         # Explicit document separator. If the quota is reached inside this
         # document, its unused suffix is intentionally discarded. The next
@@ -238,6 +254,7 @@ def materialize_from_document_iterators(
                     tokenize=tokenize,
                     vocab_size=request.vocab_size,
                     forbidden_token_ids=request.forbidden_token_ids,
+                    text_replacements=request.text_replacements,
                 )
             # Consume validation first from each persistent shuffled iterator.
             validation_path = _write_source_blocks(
@@ -249,6 +266,7 @@ def materialize_from_document_iterators(
                 tokenize=tokenize,
                 vocab_size=request.vocab_size,
                 forbidden_token_ids=request.forbidden_token_ids,
+                text_replacements=request.text_replacements,
             )
             assert validation_path is not None
             val_files[name] = validation_path
@@ -262,6 +280,7 @@ def materialize_from_document_iterators(
                     tokenize=tokenize,
                     vocab_size=request.vocab_size,
                     forbidden_token_ids=request.forbidden_token_ids,
+                    text_replacements=request.text_replacements,
                 )
             train_path = _write_source_blocks(
                 iterators[name],
@@ -272,6 +291,7 @@ def materialize_from_document_iterators(
                 tokenize=tokenize,
                 vocab_size=request.vocab_size,
                 forbidden_token_ids=request.forbidden_token_ids,
+                text_replacements=request.text_replacements,
             )
             assert train_path is not None
             train_files[name] = train_path
@@ -309,6 +329,8 @@ def materialize_from_document_iterators(
         train_skip_tokens=request.train_skip_tokens,
         validation_skip_tokens=request.validation_skip_tokens,
         packing_policy=PACKING_POLICY,
+        text_normalization=request.text_normalization,
+        text_replacements=request.text_replacements,
         source_ids=source_ids,
         mixture_weights={source.name: weight for source, weight in zip(DOLMINO_50B_SOURCES, weights)},
         train=train,

@@ -11,6 +11,12 @@ import numpy as np
 
 DATA_FORMAT_VERSION = 2
 PACKING_POLICY = "raw_unpadded_document_stream_v1"
+TEXT_NORMALIZATION_NONE = "none"
+TEXT_NORMALIZATION_REPLACE_CONTROL_LITERALS_V1 = "replace_control_literals_v1"
+SUPPORTED_TEXT_NORMALIZATIONS = {
+    TEXT_NORMALIZATION_NONE,
+    TEXT_NORMALIZATION_REPLACE_CONTROL_LITERALS_V1,
+}
 
 
 @dataclass(frozen=True)
@@ -46,6 +52,8 @@ class DataManifest:
     train_skip_tokens: int = 0
     validation_skip_tokens: int = 0
     packing_policy: str = "legacy_unknown"
+    text_normalization: str = TEXT_NORMALIZATION_NONE
+    text_replacements: tuple[tuple[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -61,6 +69,10 @@ class DataManifest:
         # Retain a clear unsupported-format error for legacy manifests, which
         # predate the recorded control-token audit.
         raw["forbidden_token_ids"] = tuple(raw.get("forbidden_token_ids", ()))
+        raw["text_replacements"] = tuple(
+            (str(source), str(replacement))
+            for source, replacement in raw.get("text_replacements", ())
+        )
         raw["train"] = PackedSplitInfo(**raw["train"])
         raw["validation"] = PackedSplitInfo(**raw["validation"])
         return cls(**raw)
@@ -80,6 +92,15 @@ def validate_manifest_contract(manifest: DataManifest) -> None:
         raise ValueError("unsupported data artifact format")
     if manifest.packing_policy != PACKING_POLICY:
         raise ValueError("data artifact was not prepared with the raw unpadded packing policy")
+    if manifest.text_normalization not in SUPPORTED_TEXT_NORMALIZATIONS:
+        raise ValueError("data manifest declares an unsupported text normalization")
+    if manifest.text_normalization == TEXT_NORMALIZATION_NONE and manifest.text_replacements:
+        raise ValueError("data manifest has replacements without a normalization policy")
+    if manifest.text_normalization != TEXT_NORMALIZATION_NONE and not manifest.text_replacements:
+        raise ValueError("data manifest normalization policy has no replacements")
+    for source, replacement in manifest.text_replacements:
+        if not source or not replacement or source == replacement:
+            raise ValueError("data manifest contains an invalid text replacement")
     if not manifest.forbidden_token_ids:
         raise ValueError("data manifest does not record any forbidden control-token ids")
     if len(set(manifest.forbidden_token_ids)) != len(manifest.forbidden_token_ids):

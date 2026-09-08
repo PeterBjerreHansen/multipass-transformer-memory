@@ -115,6 +115,44 @@ def test_materialization_rejects_forbidden_control_tokens(tmp_path):
         )
 
 
+def test_materialization_normalizes_declared_control_literals(tmp_path):
+    request = PreparationRequest(
+        output_dir=tmp_path / "normalized",
+        sequence_length=16,
+        train_tokens=16 * 120,
+        validation_tokens=16 * 60,
+        seed=123,
+        dataset_repo="fake/dolmino",
+        requested_revision="test",
+        resolved_revision="deadbeef",
+        tokenizer_file=Path("tokenizer.json"),
+        tokenizer_sha256="abc123",
+        vocab_size=97,
+        bos_token_id=1,
+        forbidden_token_ids=(96,),
+        text_normalization="replace_control_literals_v1",
+        text_replacements=(("[PAD]", "[ PAD ]"),),
+    )
+
+    def tokenize(text: str) -> list[int]:
+        return [96] if "[PAD]" in text else [3]
+
+    manifest = materialize_from_document_iterators(
+        request,
+        iterators={
+            source.name: iter(("[PAD]" for _ in range(10_000)))
+            for source in DOLMINO_50B_SOURCES
+        },
+        tokenize=tokenize,
+    )
+
+    assert manifest.text_normalization == "replace_control_literals_v1"
+    assert manifest.text_replacements == (("[PAD]", "[ PAD ]"),)
+    assert 96 not in np.asarray(
+        np.memmap(tmp_path / "normalized" / "train.bin", mode="r", dtype=np.uint16)
+    )
+
+
 def test_training_skip_preserves_validation_and_advances_training_stream(tmp_path):
     base = materialize(tmp_path / "base")
     skipped = materialize(tmp_path / "skipped", train_skip_tokens=16 * 60)
