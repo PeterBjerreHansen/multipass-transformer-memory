@@ -3,7 +3,7 @@
   efficiency-mps efficiency-cuda efficiency-mps-training efficiency-mps-precision \
   efficiency-mps-context efficiency-mps-batch efficiency-cuda-training \
   efficiency-cuda-precision efficiency-cuda-context efficiency-cuda-batch \
-  estimate-flops-frozen-backbone report-wiring-budgets cloud-preflight
+  estimate-flops-frozen-backbone report-wiring-budgets report-unfrozen-stages cloud-preflight
 
 # Frozen comparison reports default to the primary development tier.
 TIER ?= small
@@ -114,6 +114,11 @@ report-wiring-budgets:
 	uv run python scripts/report_wiring_budgets.py \
 		--study benchmarks/development/frozen_backbone_comparison/$(TIER)/STUDY.yaml \
 		--output benchmarks/development/frozen_backbone_comparison/$(TIER)/results/wiring_budgets.json
+
+report-unfrozen-stages:
+	uv run python scripts/report_scaling_stages.py \
+		--study benchmarks/development/unfrozen_scaling_core \
+		--output benchmarks/development/unfrozen_scaling_core/stage_budget.json
 
 # Usage: make cloud-preflight CONFIG=path/to/config.yaml
 cloud-preflight:

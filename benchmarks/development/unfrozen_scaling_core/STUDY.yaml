@@ -1,0 +1,69 @@
+name: unfrozen_scaling_core
+status: planned
+learning_rates_qualified: false
+question: >-
+  When all parameters train, does dense content-addressed Memory Attention give
+  a better data/parameter/compute tradeoff than a matched recirculation merger
+  and continued vanilla training?
+data_artifacts:
+  data/dolmino/unfrozen_2p5b_2048: 80e687fbb094a49f31e7b007e3b2391106a1455748f3fc27e38d0f285442420f
+arms:
+  - {id: vanilla_compute_matched, config: vanilla_compute_matched.yaml}
+  - {id: recurrent_recirculation, config: recurrent_recirculation.yaml}
+  - {id: dense_memory_attention, config: dense_memory_attention.yaml}
+stages:
+  - name: early_100m
+    targets:
+      vanilla_compute_matched: 214040576
+      recurrent_recirculation: 100007936
+      dense_memory_attention: 100007936
+  - name: pilot_500m
+    targets:
+      vanilla_compute_matched: 1070137344
+      recurrent_recirculation: 500039680
+      dense_memory_attention: 500039680
+  - name: one_billion
+    targets:
+      vanilla_compute_matched: 2140143616
+      recurrent_recirculation: 1000013824
+      dense_memory_attention: 1000013824
+  - name: two_billion
+    targets:
+      vanilla_compute_matched: 4280221696
+      recurrent_recirculation: 2000027648
+      dense_memory_attention: 2000027648
+  - name: final_2p5b
+    targets:
+      vanilla_compute_matched: 5350227968
+      recurrent_recirculation: 2500001792
+      dense_memory_attention: 2500001792
+comparisons:
+  - name: core_scaling
+    arms: [vanilla_compute_matched, recurrent_recirculation, dense_memory_attention]
+    experimental_axes:
+      - variant
+      - memory_window
+      - memory_pattern
+      - memory_write_mode
+      - memory_layers
+      - memory_position_encoding
+      - memory_num_key_value_heads
+      - memory_reader_initialization
+      - memory_attention_fusion
+      - memory_attention_controller_hidden_size
+      - recurrent_merger
+      - recurrent_controller_hidden_size
+      - pass_schedule
+      - ntp_pass_loss_weights
+      - ntp_pass_loss_weights_by_k
+    allowed_differences:
+      - max_unique_tokens
+      - learning_rate
+      - pretrained_learning_rate
+      - added_learning_rate
+      - added_weight_decay
+      - eval_passes
+      - snapshot_at_tokens
+      - feedback_eval_at_tokens
+      - feedback_eval_max_blocks
+      - feedback_eval_autocast_dtype

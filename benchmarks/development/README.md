@@ -17,10 +17,23 @@ CUDA-memory preflight and base-family LR qualification are complete. The fixed
 layout and stride choices were informed by private exploratory checks. Launch
 one frozen tier at a time from fresh pretrained weights.
 
-The older 1024-token studies have been deleted. Paper replay/BPTT
-execution is deleted. No replacement unfrozen study is configured yet: it must
-start fresh from the common pretrained checkpoint, may use a brief frozen
-warmup, and needs its own per-model LR qualification.
+The unfrozen work is split into:
+
+- `unfrozen_lr_qualification/`: a 20M-token, six-arm vanilla backbone-LR grid;
+  the selected shared rate is carried into adaptive recirculation and dense
+  Memory Attention; and
+- `unfrozen_scaling_core/`: a guarded five-stage study with those three core
+  arms, 2.5B feedback endpoints, and one approximately 5.35B compute-matched
+  vanilla trajectory over the same corpus.
+
+`unfrozen_scaling_extensions/` reserves optional controls without delaying the
+core study. The long study starts fresh in Phase B with no frozen prefix. Its
+provisional shared backbone rate is `3e-4`; training remains blocked by
+`learning_rates_qualified: false` until the long-artifact and preflight gates
+pass.
+
+The older 1024-token studies have been deleted. Paper replay/BPTT execution is
+deleted.
 
 Pass-depth stability, parameter drift, and inference diagnostics are reusable
 evaluation tools, not standalone development studies. Superseded Stage 0–6 and

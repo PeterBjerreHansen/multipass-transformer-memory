@@ -153,24 +153,34 @@ parameter overhead. It does not claim fewer optimized parameters than vanilla.
 ### Arms
 
 Every arm restarts from the common pretrained checkpoint rather than a wiring
-snapshot. The planned arms are:
+snapshot. The core study has three arms:
 
-1. Dense Memory Attention;
-2. the strongest sparse or dense-and-strided attention finalist;
-3. the strongest fixed-route finalist;
-4. the No-memory Adapter; and
-5. vanilla continued pretraining.
+1. dense Memory Attention with the selected aligned-GQA, destination-gated,
+   two-site reader;
+2. the selected two-site adaptive recirculation merger; and
+3. vanilla continued pretraining.
 
-Wiring results select the finalists before long-run configurations are locked.
-All backbone and added parameters are trainable from token zero.
+No-memory, projected-residual, strided, hybrid-retention, and published-method
+controls are optional extensions outside the core. All backbone and added
+parameters are trainable from token zero.
 
 ### Data and compute comparison
 
-All arms use the same fixed set of approximately one billion unique training
-tokens. Feedback arms traverse that set once under the locked K=2/K=3 schedule.
-Vanilla cycles through the same blocks until it reaches the feedback arms'
-cumulative training compute, expected to require roughly two token presentations
-per unique token. It does not receive additional unique training data.
+All arms use the same fixed set of exactly 2,500,001,792 training tokens.
+Feedback arms traverse that set once under the locked K=2/K=3 schedule. Vanilla
+cycles through the same blocks to 5,350,227,968 token presentations, covering
+the denser feedback arm's estimated compute endpoint. It does not receive
+additional corpus data.
+
+The trajectories stop and resume at approximately 100M, 500M, 1B, 2B, and
+2.5B feedback-token stages. The corresponding vanilla targets are the nearest
+attainable optimizer-batch compute matches. Exact recurrent-compute match points
+are retained as additional vanilla snapshots.
+
+Cosine decay is normalized to each arm's final compute-matched horizon. This
+aligns schedule progress at the named compute stages; it does not align schedule
+progress at vanilla's equal-presentation 2.5B snapshot, which is reported as a
+qualified secondary view.
 
 Reports distinguish:
 

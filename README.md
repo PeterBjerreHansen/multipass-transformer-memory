@@ -3,39 +3,19 @@
 This repository compares feedback memory mechanisms retrofitted into TinyMistral.
 Tokens read strictly earlier positions. They never read their own same-position feedback state.
 
-## Current pipeline
+## Experiments
 
-The active frozen studies are:
+The program compares frozen-backbone wiring with full-model adaptation:
 
-1. [LR qualification](benchmarks/development/frozen_backbone_lr_qualification/README.md):
-   completed 48-arm qualification across four rates and one or two sites. Every
-   architecture/site group selected `added_learning_rate: 1.0e-3`.
-2. [Frozen comparison tiers](benchmarks/development/frozen_backbone_comparison/README.md):
-   nested small, medium, and large 100M-token arm sets. They use the same
-   protocol and differ only in the number of mechanisms tested. The small tier
-   is the primary development run.
+- [Frozen LR qualification](benchmarks/development/frozen_backbone_lr_qualification/README.md)
+- [Frozen comparison tiers](benchmarks/development/frozen_backbone_comparison/README.md)
+- [Vanilla backbone LR qualification](benchmarks/development/unfrozen_lr_qualification/README.md)
+- [Unfrozen scaling comparison](benchmarks/development/unfrozen_scaling_core/README.md)
 
-The small tier contains a No-memory Adapter, projected-residual feedback,
-Recirculation feedback, and aligned-GQA destination-gated Memory Attention at
-the fixed `[3, 7]` reader layout. Medium adds stride-8 retention and a
-zero-output residual-attention control; large adds the remaining aligned-reader
-fusion controls.
-
-The backbone stays frozen throughout these runs. Training uses 2048-token blocks
-and K=2/K=3 final-pass loss. Routine validation uses K=4 and retains per-pass scores.
-The main runs enable one full-block BOS-only feedback check at about 5M, 20M and 100M.
-The LR sweep leaves feedback checks off. See the study pages for exact counts and cadences.
-
-The runner does not select learning rates, run full-split validation, or execute downstream suites automatically.
-The clean target-GPU preflight and LR qualification are complete; the tiered
-100M trajectories remain planned and must start fresh from the pretrained
-checkpoint.
-Pass-indexed memory interventions and exact-versus-Live-Feedback diagnostics
-are implemented separately from routine validation.
-
-The future unfrozen experiment must start fresh from the pretrained checkpoint.
-It needs a separate protocol and LR qualification, preceded by the requested grill session.
-See the [development plan](docs/DEVELOPMENT_PLAN.md).
+Each study owns its protocol, launch requirements and status. The
+[research plan](docs/RESEARCH_PLAN.md) defines the hypotheses and claim limits.
+Frozen and unfrozen results can reveal whether backbone adaptation changes the
+ranking of feedback mechanisms.
 
 ## Documentation
 

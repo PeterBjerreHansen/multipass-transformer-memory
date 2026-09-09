@@ -32,6 +32,12 @@ See the [main protocol](../benchmarks/development/frozen_backbone_comparison/REA
 Target-GPU preflight and the clean 48-arm LR qualification are now complete;
 the 20M pilot and 100M trajectory reviews remain pending.
 
+The later unfrozen benchmark specification is now implemented separately: a
+20M vanilla-only backbone-LR qualification and a guarded three-arm staged study
+with 2.5B feedback and approximately 5.35B vanilla endpoints. This ledger does
+not mark their CUDA preflight, data materialization, LR selection, or training
+as complete.
+
 ## Review issue ledger
 
 | Original issue | Resolution or remaining work |

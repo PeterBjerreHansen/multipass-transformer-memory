@@ -28,7 +28,13 @@ def test_default_experiment_config_uses_active_2048_context_and_local_output():
 
 
 def test_active_data_recipes_live_beside_materialized_artifacts():
-    for name in ("wiring_2048", "gpu_2048"):
+    for name in (
+        "wiring_2048",
+        "gpu_2048",
+        "unfrozen_lr_20m_2048",
+        "unfrozen_2p5b_2048",
+        "unfrozen_final_eval_2048",
+    ):
         path = ROOT / "data" / "dolmino" / name / "config.yaml"
         assert path.exists()
         cfg = load_data_config(path)
@@ -45,7 +51,11 @@ def test_retired_data_recipes_are_removed_from_active_namespace():
         "stage_6_evaluation_2048",
     }
     assert {path.name for path in data_dir.iterdir() if path.is_dir()} == {
-        "wiring_2048", "gpu_2048",
+        "wiring_2048",
+        "gpu_2048",
+        "unfrozen_lr_20m_2048",
+        "unfrozen_2p5b_2048",
+        "unfrozen_final_eval_2048",
     }
     assert all(not (data_dir / name / "config.yaml").exists() for name in retired)
 
@@ -114,6 +124,8 @@ def test_active_study_surface_tracks_manifests_not_diagnostic_directories():
         "frozen_backbone_comparison/small",
         "frozen_backbone_comparison/medium",
         "frozen_backbone_comparison/large",
+        "unfrozen_lr_qualification",
+        "unfrozen_scaling_core",
     }
     assert {
         path.parent.relative_to(development).as_posix()
@@ -126,12 +138,18 @@ def test_active_study_surface_tracks_manifests_not_diagnostic_directories():
     assert list((ROOT / "benchmarks" / "core").glob("*/STUDY.yaml")) == []
 
 
-def test_active_studies_share_2048_data_and_effective_optimizer_batch():
+def test_active_studies_share_2048_blocks_and_effective_optimizer_batch():
     configs = _development_configs()
     assert configs
     for path in configs:
         cfg = load_experiment_config(path)
-        assert cfg.data_dir == "data/dolmino/gpu_2048"
+        data = load_data_config(ROOT / cfg.data_dir / "config.yaml")
+        assert data.sequence_length == 2048
+        assert cfg.data_dir in {
+            "data/dolmino/gpu_2048",
+            "data/dolmino/unfrozen_lr_20m_2048",
+            "data/dolmino/unfrozen_2p5b_2048",
+        }
         assert cfg.batch_size * cfg.grad_accum_steps == 32
         assert cfg.variant not in {
             "fbt",
@@ -198,6 +216,74 @@ def test_frozen_backbone_tiers_are_nested_and_explicit():
     } == {"residual", "destination_gated", "attention_gated", "dual_gated"}
     assert large["dense_memory_attention_residual_100m"].memory_reader_initialization == "zero_output"
     assert large["dense_memory_attention_residual_aligned_100m"].memory_reader_initialization == "aligned_gqa"
+
+
+def test_unfrozen_lr_qualification_is_equal_budget_with_no_feedback_decode():
+    configs = _study_configs("unfrozen_lr_qualification")
+    assert set(configs) == {
+        "vanilla_lr3e-6",
+        "vanilla_lr1e-5",
+        "vanilla_lr3e-5",
+        "vanilla_lr1e-4",
+        "vanilla_lr3e-4",
+        "vanilla_lr1e-3",
+    }
+    assert len(configs) == 6
+    assert {cfg.phase for cfg in configs.values()} == {"B"}
+    assert {cfg.variant for cfg in configs.values()} == {"vanilla"}
+    assert {cfg.data_dir for cfg in configs.values()} == {
+        "data/dolmino/unfrozen_lr_20m_2048"
+    }
+    assert {cfg.max_unique_tokens for cfg in configs.values()} == {20_054_016}
+    assert {
+        cfg.batch_size * cfg.grad_accum_steps * 2048
+        for cfg in configs.values()
+    } == {65_536}
+    assert {cfg.pretrained_lr for cfg in configs.values()} == {
+        3e-6,
+        1e-5,
+        3e-5,
+        1e-4,
+        3e-4,
+        1e-3,
+    }
+    assert all(cfg.feedback_eval_at_tokens is None for cfg in configs.values())
+    assert {cfg.added_learning_rate for cfg in configs.values()} == {None}
+
+
+def test_unfrozen_scaling_core_has_fixed_final_horizons_and_stages():
+    configs = _study_configs("unfrozen_scaling_core")
+    assert set(configs) == {
+        "vanilla_compute_matched",
+        "recurrent_recirculation",
+        "dense_memory_attention",
+    }
+    assert {cfg.phase for cfg in configs.values()} == {"B"}
+    assert {cfg.freeze_pretrained_until_tokens for cfg in configs.values()} == {0}
+    assert {cfg.data_dir for cfg in configs.values()} == {
+        "data/dolmino/unfrozen_2p5b_2048"
+    }
+    assert {
+        cfg.batch_size * cfg.grad_accum_steps * 2048
+        for cfg in configs.values()
+    } == {65_536}
+    assert configs["vanilla_compute_matched"].max_unique_tokens == 5_350_227_968
+    assert {
+        configs[arm].max_unique_tokens
+        for arm in ("recurrent_recirculation", "dense_memory_attention")
+    } == {2_500_001_792}
+    assert configs["dense_memory_attention"].memory_num_key_value_heads == 16
+
+    verification = verify_study(
+        ROOT / "benchmarks" / "development" / "unfrozen_scaling_core"
+    )
+    assert [stage.name for stage in verification.stages] == [
+        "early_100m",
+        "pilot_500m",
+        "one_billion",
+        "two_billion",
+        "final_2p5b",
+    ]
 
 
 def test_frozen_backbone_lr_qualification_uses_2048_sweep():

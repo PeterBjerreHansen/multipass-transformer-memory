@@ -98,6 +98,37 @@ def test_wiring_budget_report_instantiates_matched_groups_and_stride_spans():
     assert rows["dense_and_strided_memory_attention_stride8_100m"]["physical_write_count"] == 2048
 
 
+def test_unfrozen_stage_report_covers_feedback_compute_and_matches_parameters():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "report_scaling_stages.py"),
+            "--study",
+            str(
+                ROOT
+                / "benchmarks"
+                / "development"
+                / "unfrozen_scaling_core"
+            ),
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads(completed.stdout)
+    assert report["baseline_arm"] == "vanilla_compute_matched"
+    assert len(report["stages"]) == 5
+    assert all(
+        abs(stage["baseline_compute_coverage"] - 1.0) < 1.0e-4
+        for stage in report["stages"]
+    )
+    group = report["parameters"]["matched_groups"]["core_scaling"]
+    assert group["contains_zero_added_parameter_baseline"] is True
+    assert group["nonzero_added_parameters_within_ten_percent"] is True
+    assert group["total_parameters_within_ten_percent"] is True
+
+
 def test_recurrent_memory_counts_shared_writer_and_each_merger():
     config = tiny_mistral_248m_config()
     linear = 2 * 128 * config.hidden_size ** 2

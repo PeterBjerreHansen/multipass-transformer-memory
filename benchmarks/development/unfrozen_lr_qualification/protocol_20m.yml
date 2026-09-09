@@ -1,0 +1,37 @@
+phase: B
+training_forward: parallel_multipass
+model_dir: checkpoints/TinyMistral-248M-v3
+data_dir: data/dolmino/unfrozen_lr_20m_2048
+device: cuda
+dtype: float32
+autocast_dtype: bfloat16
+attention_backend: auto
+seed: 1337
+architecture_seed: 4242
+batch_size: 1
+grad_accum_steps: 32
+max_unique_tokens: 20054016
+learning_rate: 1.0e-5
+lr_schedule:
+  type: piecewise_linear
+  points:
+    - [0, 0.0]
+    - [5013504, 1.0]
+    - [20054016, 1.0]
+weight_decay: 0.01
+grad_clip: 1.0
+train_log_every_tokens: 327680
+validation_forward: parallel_multipass
+eval_every_tokens: 5013504
+eval_batches: 64
+checkpoint_every_tokens: 5013504
+checkpoint_every_seconds: 900.0
+checkpoint_keep_last: 2
+# Qualification measures validation performance only; durable rolling
+# checkpoints remain available for interruption recovery, but planned model
+# snapshots are intentionally disabled.
+snapshot_at_tokens: null
+# Qualification intentionally omits expensive feedback decoding.
+feedback_eval_at_tokens: null
+resume_from: null
+init_from: null

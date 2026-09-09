@@ -32,6 +32,8 @@ Other pages should link to these definitions instead of copying them.
 - [Grilling exchange](FROZEN_WIRING_GRILL_EXCHANGE.md): the original discussion, including superseded proposals.
 - [Recirculation indexing](research/recirculation-token-indexing.md) and
   [feedback-merger research](research/looped-feedback-mechanisms.md): dated research and earlier recommendations.
+- [Unfrozen benchmark decision record](research/unfrozen-benchmark-plan-audit.md):
+  the current three-arm, staged scaling rationale and launch gates.
 - [Archived experiments](../benchmarks/historical/README.md): original protocols, paths and scientific caveats.
 
 Archived commands are provenance, not instructions for launching the current campaign.

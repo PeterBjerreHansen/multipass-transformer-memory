@@ -265,26 +265,28 @@ for loading inputs and writing results.
 
 **Work**
 
-1. Create a new study and output root. Initialize every arm from the common
-   pretrained checkpoint, never from wiring weights.
-2. Select and lock dense attention, the strongest sparse/multiresolution
-   attention arm, the strongest fixed-route arm, No-memory Adapter and vanilla.
+1. Use the guarded `unfrozen_scaling_core` study and initialize every arm from
+   the common pretrained checkpoint, never from wiring weights.
+2. Keep the core to dense aligned/destination-gated Memory Attention, adaptive
+   recirculation, and vanilla. Put optional arms in the extensions study.
 3. Unfreeze the entire backbone and all added parameters from token zero.
 4. Retain the locked 90/10 K schedule and final-pass loss unless a separately
    approved objective experiment changes them.
-5. Materialize one common approximately one-billion-token corpus. Feedback arms
-   traverse it once; vanilla deterministically cycles the same blocks until its
-   cumulative estimated FLOPs match.
+5. Materialize the exact 2,500,001,792-token corpus. Feedback arms traverse it
+   once; vanilla deterministically cycles the same blocks to 5,350,227,968
+   presentations.
 6. Record unique tokens and token presentations independently.
 7. Re-estimate full-model training FLOPs and benchmark measured throughput; the
    earlier universal frozen-backward estimate is not sufficient.
-8. Verify snapshots and exact resume, then project per-arm runtime and cost.
+8. Use the declared 100M, 500M, 1B, 2B, and 2.5B stages. Verify snapshots and
+   exact resume, then project per-arm runtime and cost.
    Stay single-device if acceptable; add distributed execution only if the
    measured projection requires it.
 
 **Completion check**
 
-- Finalists and selection evidence are recorded before long configs are locked.
+- The three core architectures and private development evidence are recorded
+  before long configs are locked.
 - Vanilla receives no additional unique corpus data during its compute-matched
   tail.
 - Equal-data and equal-compute comparisons both have overlapping curve support.
@@ -327,5 +329,8 @@ for loading inputs and writing results.
 
 ## Immediate next stage
 
-Run Stage 7's correctness and target-GPU preflight. Do not launch qualification
-or paid scientific runs until its completion checks pass.
+The six-arm vanilla LR qualification is complete; the provisional shared rate
+is `3e-4`. Next materialize and pin the 2.5B training and final-evaluation
+artifacts, verify document disjointness, regenerate the stage budget, and run
+Phase-B target-CUDA preflight on all three core arms. Do not launch the 2.5B
+study while `learning_rates_qualified` remains false.

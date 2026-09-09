@@ -82,9 +82,10 @@ eval_passes: 4
 
 Phase A freezes the backbone and trains the writer and merger. The writer is
 applied when the previous pass is consumed, outside the first-pass no-gradient
-region. It therefore remains trainable even at K=2. A later unfrozen experiment
-can use Phase B and `freeze_pretrained_until_tokens`, starting fresh from the
-same pretrained checkpoint rather than continuing the frozen experiment.
+region. It therefore remains trainable even at K=2. The staged unfrozen study
+uses Phase B from token zero and starts fresh from the same pretrained checkpoint
+rather than continuing the frozen experiment. A frozen-prefix policy remains an
+optional follow-up, not part of that core run.
 
 Freezing restricts where adaptation can happen; it does not guarantee that
 feedback carries useful contextual information. Check gate/projection values

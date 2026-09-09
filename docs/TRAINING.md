@@ -41,7 +41,8 @@ checkpointed, so fixed or mixed K schedules resume exactly.
 
 The pass scheduler samples K per microbatch, not per optimizer update or token.
 See the [study protocols](../benchmarks/README.md) for probabilities and loss weights.
-Historical Phase-B objectives do not define the future unfrozen study.
+Historical Phase-B objectives do not define the current unfrozen study. Its
+configs explicitly retain final-pass-only K=2/K=3 training.
 
 ## Supported training execution
 
@@ -91,7 +92,9 @@ The active frozen studies use 2048-token blocks, microbatch 8 and accumulation
 4, for 32 sequences per nominal optimizer update. Optional hardware tuning can
 use 4x8, 2x16 or 1x32 when needed. Preserve the effective batch and record the
 resolved config. Each mechanism selects its own LR from the common qualification
-budget. No replacement unfrozen protocol is active yet.
+budget. The planned unfrozen studies use microbatch 1 and accumulation 32 until
+target-CUDA preflight establishes a larger equivalent microbatch. They preserve
+the same 65,536-token nominal optimizer batch.
 
 The trainer consumes whole packed blocks. An exact linguistic-token budget must
 be divisible by `batch_size * linguistic_tokens_per_block`; the final optimizer

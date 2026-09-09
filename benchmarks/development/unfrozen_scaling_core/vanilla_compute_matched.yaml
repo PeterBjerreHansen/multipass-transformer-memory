@@ -1,0 +1,23 @@
+extends: protocol.yml
+variant: vanilla
+max_unique_tokens: 5350227968
+added_learning_rate: null
+added_weight_decay: null
+pass_schedule:
+  - probabilities: {1: 1.0}
+ntp_pass_loss_weights: null
+eval_passes: 1
+snapshot_at_tokens:
+  - 213778432
+  - 214040576
+  - 1068761088
+  - 1070137344
+  - 2137325568
+  - 2140143616
+  - 2500001792
+  - 4274651136
+  - 4280221696
+  - 5343281152
+  - 5350227968
+feedback_eval_at_tokens: null
+output_dir: benchmarks/development/unfrozen_scaling_core/results/vanilla_compute_matched

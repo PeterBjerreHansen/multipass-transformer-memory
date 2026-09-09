@@ -1,0 +1,20 @@
+extends: protocol.yml
+variant: recurrent_memory
+max_unique_tokens: 2500001792
+added_learning_rate: 1.0e-3
+added_weight_decay: 1.0e-4
+recurrent_merger: recirculation
+recurrent_controller_hidden_size: 660
+memory_window: 1
+memory_layers: [3, 7]
+pass_schedule:
+  - probabilities: {2: 0.9, 3: 0.1}
+ntp_pass_loss_weights_by_k:
+  2: [0.0, 1.0]
+  3: [0.0, 0.0, 1.0]
+eval_passes: 4
+snapshot_at_tokens: [100007936, 500039680, 1000013824, 2000027648, 2500001792]
+feedback_eval_at_tokens: [100007936, 1000013824, 2500001792]
+feedback_eval_max_blocks: 1
+feedback_eval_autocast_dtype: config
+output_dir: benchmarks/development/unfrozen_scaling_core/results/recurrent_recirculation

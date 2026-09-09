@@ -1,0 +1,471 @@
+{
+  "baseline_arm": "vanilla_compute_matched",
+  "baseline_optimizer_batch_tokens": 65536,
+  "flops": {
+    "estimator": {
+      "backward_multiplier": 3,
+      "flops_per_matmul": 2,
+      "freeze_accounting": "conventional backward multiplier; not adjusted for frozen parameter gradients",
+      "model_config": {
+        "_name_or_path": "M4-ai/TinyMistral-248M-v3",
+        "architectures": [
+          "MistralForCausalLM"
+        ],
+        "attention_dropout": 0.0,
+        "bos_token_id": 1,
+        "eos_token_id": 2,
+        "head_dim": 32,
+        "hidden_act": "silu",
+        "hidden_size": 1024,
+        "initializer_range": 0.02,
+        "intermediate_size": 4096,
+        "max_position_embeddings": 32768,
+        "model_type": "mistral",
+        "num_attention_heads": 32,
+        "num_hidden_layers": 12,
+        "num_key_value_heads": 8,
+        "pad_token_id": null,
+        "rms_norm_eps": 1e-06,
+        "rope_theta": 10000.0,
+        "sliding_window": 32,
+        "tie_word_embeddings": false,
+        "torch_dtype": "bfloat16",
+        "transformers_version": "4.45.2",
+        "use_cache": true,
+        "vocab_size": 32005
+      },
+      "scope": "dominant dense/matmul FLOPs; excludes elementwise, masking, and optimizer arithmetic"
+    },
+    "results": [
+      {
+        "arm": "vanilla_compute_matched",
+        "batch_size": 1,
+        "config": "vanilla_compute_matched.yaml",
+        "estimate": {
+          "baseline_training_flops": 2654279565312.0,
+          "pass_estimates": {
+            "1": {
+              "forward": {
+                "lm_head": 134238699520,
+                "memory_fusion_controller": 0,
+                "memory_reader_products": 0,
+                "memory_reader_projections": 0,
+                "memory_writer": 0,
+                "mlp_projections": 618475290624,
+                "recurrent_controller": 0,
+                "recurrent_projection": 0,
+                "self_attention_products": 3196846080,
+                "self_attention_projections": 128849018880,
+                "total": 884759855104
+              },
+              "forward_flops": 884759855104,
+              "linguistic_sequence_length": 2048,
+              "memory_positions": 0,
+              "memory_write_positions": 0,
+              "passes": 1,
+              "physical_sequence_length": 2048,
+              "training_flops": 2654279565312.0,
+              "training_forward": "parallel_multipass",
+              "training_multiplier": 3,
+              "variant": "vanilla"
+            }
+          },
+          "pass_probabilities": {
+            "1": 1.0
+          },
+          "relative_training_flops": 1.0,
+          "variant": "vanilla",
+          "weighted_forward_flops": 884759855104.0,
+          "weighted_training_flops": 2654279565312.0
+        },
+        "estimated_training_flops_per_sequence": 2654279565312.0,
+        "estimated_training_flops_per_token_presentation": 1296034944.0,
+        "estimated_training_flops_per_unique_token": 1296034944.0,
+        "estimated_training_flops_total": 6.934082404894114e+18,
+        "grad_accum_steps": 32,
+        "max_unique_tokens": 5350227968,
+        "optimizer_batch_sequences": 32,
+        "optimizer_batch_tokens": 65536,
+        "phase": "B",
+        "relative_training_flops": 1.0,
+        "sequence_length": 2048,
+        "training_forward": "parallel_multipass",
+        "variant": "vanilla"
+      },
+      {
+        "arm": "recurrent_recirculation",
+        "batch_size": 1,
+        "config": "recurrent_recirculation.yaml",
+        "estimate": {
+          "baseline_training_flops": 2654279565312.0,
+          "pass_estimates": {
+            "2": {
+              "forward": {
+                "lm_head": 268477399040,
+                "memory_fusion_controller": 0,
+                "memory_reader_products": 0,
+                "memory_reader_projections": 0,
+                "memory_writer": 4294967296,
+                "mlp_projections": 1236950581248,
+                "recurrent_controller": 25714360320,
+                "recurrent_projection": 0,
+                "self_attention_products": 6393692160,
+                "self_attention_projections": 257698037760,
+                "total": 1799529037824
+              },
+              "forward_flops": 1799529037824,
+              "linguistic_sequence_length": 2048,
+              "memory_positions": 0,
+              "memory_write_positions": 0,
+              "passes": 2,
+              "physical_sequence_length": 2048,
+              "training_flops": 5398587113472.0,
+              "training_forward": "parallel_multipass",
+              "training_multiplier": 3,
+              "variant": "recurrent_memory"
+            },
+            "3": {
+              "forward": {
+                "lm_head": 402716098560,
+                "memory_fusion_controller": 0,
+                "memory_reader_products": 0,
+                "memory_reader_projections": 0,
+                "memory_writer": 8589934592,
+                "mlp_projections": 1855425871872,
+                "recurrent_controller": 51428720640,
+                "recurrent_projection": 0,
+                "self_attention_products": 9590538240,
+                "self_attention_projections": 386547056640,
+                "total": 2714298220544
+              },
+              "forward_flops": 2714298220544,
+              "linguistic_sequence_length": 2048,
+              "memory_positions": 0,
+              "memory_write_positions": 0,
+              "passes": 3,
+              "physical_sequence_length": 2048,
+              "training_flops": 8142894661632.0,
+              "training_forward": "parallel_multipass",
+              "training_multiplier": 3,
+              "variant": "recurrent_memory"
+            }
+          },
+          "pass_probabilities": {
+            "2": 0.9,
+            "3": 0.1
+          },
+          "relative_training_flops": 2.137309853275067,
+          "variant": "recurrent_memory",
+          "weighted_forward_flops": 1891005956096.0,
+          "weighted_training_flops": 5673017868288.0
+        },
+        "estimated_training_flops_per_sequence": 5673017868288.0,
+        "estimated_training_flops_per_token_presentation": 2770028256.0,
+        "estimated_training_flops_per_unique_token": 2770028256.0,
+        "estimated_training_flops_total": 6.925075603890635e+18,
+        "grad_accum_steps": 32,
+        "max_unique_tokens": 2500001792,
+        "optimizer_batch_sequences": 32,
+        "optimizer_batch_tokens": 65536,
+        "phase": "B",
+        "relative_training_flops": 2.137309853275067,
+        "sequence_length": 2048,
+        "training_forward": "parallel_multipass",
+        "variant": "recurrent_memory"
+      },
+      {
+        "arm": "dense_memory_attention",
+        "batch_size": 1,
+        "config": "dense_memory_attention.yaml",
+        "estimate": {
+          "baseline_training_flops": 2654279565312.0,
+          "pass_estimates": {
+            "2": {
+              "forward": {
+                "lm_head": 268477399040,
+                "memory_fusion_controller": 1644167168,
+                "memory_reader_products": 532545536,
+                "memory_reader_projections": 25769803776,
+                "memory_writer": 4294967296,
+                "mlp_projections": 1236950581248,
+                "recurrent_controller": 0,
+                "recurrent_projection": 0,
+                "self_attention_products": 6393692160,
+                "self_attention_projections": 257698037760,
+                "total": 1801761193984
+              },
+              "forward_flops": 1801761193984,
+              "linguistic_sequence_length": 2048,
+              "memory_positions": 0,
+              "memory_write_positions": 2048,
+              "passes": 2,
+              "physical_sequence_length": 2048,
+              "training_flops": 5405283581952.0,
+              "training_forward": "parallel_multipass",
+              "training_multiplier": 3,
+              "variant": "memory_attention"
+            },
+            "3": {
+              "forward": {
+                "lm_head": 402716098560,
+                "memory_fusion_controller": 3288334336,
+                "memory_reader_products": 1065091072,
+                "memory_reader_projections": 51539607552,
+                "memory_writer": 8589934592,
+                "mlp_projections": 1855425871872,
+                "recurrent_controller": 0,
+                "recurrent_projection": 0,
+                "self_attention_products": 9590538240,
+                "self_attention_projections": 386547056640,
+                "total": 2718762532864
+              },
+              "forward_flops": 2718762532864,
+              "linguistic_sequence_length": 2048,
+              "memory_positions": 0,
+              "memory_write_positions": 2048,
+              "passes": 3,
+              "physical_sequence_length": 2048,
+              "training_flops": 8156287598592.0,
+              "training_forward": "parallel_multipass",
+              "training_multiplier": 3,
+              "variant": "memory_attention"
+            }
+          },
+          "pass_probabilities": {
+            "2": 0.9,
+            "3": 0.1
+          },
+          "relative_training_flops": 2.1400850377071317,
+          "variant": "dense_memory_attention",
+          "weighted_forward_flops": 1893461327872.0,
+          "weighted_training_flops": 5680383983616.0
+        },
+        "estimated_training_flops_per_sequence": 5680383983616.0,
+        "estimated_training_flops_per_token_presentation": 2773624992.0,
+        "estimated_training_flops_per_unique_token": 2773624992.0,
+        "estimated_training_flops_total": 6.934067450335986e+18,
+        "grad_accum_steps": 32,
+        "max_unique_tokens": 2500001792,
+        "optimizer_batch_sequences": 32,
+        "optimizer_batch_tokens": 65536,
+        "phase": "B",
+        "relative_training_flops": 2.1400850377071317,
+        "sequence_length": 2048,
+        "training_forward": "parallel_multipass",
+        "variant": "dense_memory_attention"
+      }
+    ],
+    "study": "benchmarks/development/unfrozen_scaling_core/STUDY.yaml",
+    "study_name": "unfrozen_scaling_core"
+  },
+  "parameters": {
+    "arms": [
+      {
+        "added_parameters": 0,
+        "arm": "vanilla_compute_matched",
+        "site_count": null,
+        "total_parameters": 248024064,
+        "variant": "vanilla"
+      },
+      {
+        "added_parameters": 7341424,
+        "arm": "recurrent_recirculation",
+        "site_count": 2,
+        "total_parameters": 255365488,
+        "variant": "recurrent_memory"
+      },
+      {
+        "added_parameters": 7756032,
+        "arm": "dense_memory_attention",
+        "site_count": 2,
+        "total_parameters": 255780096,
+        "variant": "dense_memory_attention"
+      }
+    ],
+    "matched_groups": {
+      "core_scaling": {
+        "arms": [
+          "vanilla_compute_matched",
+          "recurrent_recirculation",
+          "dense_memory_attention"
+        ],
+        "contains_zero_added_parameter_baseline": true,
+        "max_to_min_added_parameter_ratio": null,
+        "max_to_min_nonzero_added_parameter_ratio": 1.056475147055939,
+        "max_to_min_total_parameter_ratio": 1.031271288256933,
+        "nonzero_added_parameters_within_ten_percent": true,
+        "total_parameters_within_ten_percent": true,
+        "within_ten_percent": null
+      }
+    }
+  },
+  "schema_version": 1,
+  "stages": [
+    {
+      "arms": [
+        {
+          "arm": "vanilla_compute_matched",
+          "estimated_training_flops": 2.7740406592988774e+17,
+          "exact_baseline_token_equivalent": 214040576.0,
+          "nearest_baseline_optimizer_batch_tokens": 214040576,
+          "target_token_presentations": 214040576
+        },
+        {
+          "arm": "recurrent_recirculation",
+          "estimated_training_flops": 2.770248085442396e+17,
+          "exact_baseline_token_equivalent": 213747947.01850232,
+          "nearest_baseline_optimizer_batch_tokens": 213778432,
+          "target_token_presentations": 100007936
+        },
+        {
+          "arm": "dense_memory_attention",
+          "estimated_training_flops": 2.773845106879365e+17,
+          "exact_baseline_token_equivalent": 214025487.4855724,
+          "nearest_baseline_optimizer_batch_tokens": 214040576,
+          "target_token_presentations": 100007936
+        }
+      ],
+      "baseline_compute_coverage": 1.0000704986803435,
+      "most_expensive_feedback_arm": "dense_memory_attention",
+      "name": "early_100m",
+      "targets": {
+        "dense_memory_attention": 100007936,
+        "recurrent_recirculation": 100007936,
+        "vanilla_compute_matched": 214040576
+      }
+    },
+    {
+      "arms": [
+        {
+          "arm": "vanilla_compute_matched",
+          "estimated_training_flops": 1.3869353927033487e+18,
+          "exact_baseline_token_equivalent": 1070137344.0,
+          "nearest_baseline_optimizer_batch_tokens": 1070137344,
+          "target_token_presentations": 1070137344
+        },
+        {
+          "arm": "recurrent_recirculation",
+          "estimated_training_flops": 1.385124042721198e+18,
+          "exact_baseline_token_equivalent": 1068739735.0925115,
+          "nearest_baseline_optimizer_batch_tokens": 1068761088,
+          "target_token_presentations": 500039680
+        },
+        {
+          "arm": "dense_memory_attention",
+          "estimated_training_flops": 1.3869225534396826e+18,
+          "exact_baseline_token_equivalent": 1070127437.4278619,
+          "nearest_baseline_optimizer_batch_tokens": 1070137344,
+          "target_token_presentations": 500039680
+        }
+      ],
+      "baseline_compute_coverage": 1.0000092573760766,
+      "most_expensive_feedback_arm": "dense_memory_attention",
+      "name": "pilot_500m",
+      "targets": {
+        "dense_memory_attention": 500039680,
+        "recurrent_recirculation": 500039680,
+        "vanilla_compute_matched": 1070137344
+      }
+    },
+    {
+      "arms": [
+        {
+          "arm": "vanilla_compute_matched",
+          "estimated_training_flops": 2.7737009115145175e+18,
+          "exact_baseline_token_equivalent": 2140143616.0,
+          "nearest_baseline_optimizer_batch_tokens": 2140143616,
+          "target_token_presentations": 2140143616
+        },
+        {
+          "arm": "recurrent_recirculation",
+          "estimated_training_flops": 2.770066548870611e+18,
+          "exact_baseline_token_equivalent": 2137339399.4464788,
+          "nearest_baseline_optimizer_batch_tokens": 2137325568,
+          "target_token_presentations": 1000013824
+        },
+        {
+          "arm": "dense_memory_attention",
+          "estimated_training_flops": 2.7736633345918894e+18,
+          "exact_baseline_token_equivalent": 2140114622.2426927,
+          "nearest_baseline_optimizer_batch_tokens": 2140143616,
+          "target_token_presentations": 1000013824
+        }
+      ],
+      "baseline_compute_coverage": 1.0000135477590808,
+      "most_expensive_feedback_arm": "dense_memory_attention",
+      "name": "one_billion",
+      "targets": {
+        "dense_memory_attention": 1000013824,
+        "recurrent_recirculation": 1000013824,
+        "vanilla_compute_matched": 2140143616
+      }
+    },
+    {
+      "arms": [
+        {
+          "arm": "vanilla_compute_matched",
+          "estimated_training_flops": 5.547316886082945e+18,
+          "exact_baseline_token_equivalent": 4280221696.0,
+          "nearest_baseline_optimizer_batch_tokens": 4280221696,
+          "target_token_presentations": 4280221696
+        },
+        {
+          "arm": "recurrent_recirculation",
+          "estimated_training_flops": 5.540133097741222e+18,
+          "exact_baseline_token_equivalent": 4274678798.8929577,
+          "nearest_baseline_optimizer_batch_tokens": 4274651136,
+          "target_token_presentations": 2000027648
+        },
+        {
+          "arm": "dense_memory_attention",
+          "estimated_training_flops": 5.547326669183779e+18,
+          "exact_baseline_token_equivalent": 4280229244.4853854,
+          "nearest_baseline_optimizer_batch_tokens": 4280221696,
+          "target_token_presentations": 2000027648
+        }
+      ],
+      "baseline_compute_coverage": 0.9999982364296504,
+      "most_expensive_feedback_arm": "dense_memory_attention",
+      "name": "two_billion",
+      "targets": {
+        "dense_memory_attention": 2000027648,
+        "recurrent_recirculation": 2000027648,
+        "vanilla_compute_matched": 4280221696
+      }
+    },
+    {
+      "arms": [
+        {
+          "arm": "vanilla_compute_matched",
+          "estimated_training_flops": 6.934082404894114e+18,
+          "exact_baseline_token_equivalent": 5350227968.0,
+          "nearest_baseline_optimizer_batch_tokens": 5350227968,
+          "target_token_presentations": 5350227968
+        },
+        {
+          "arm": "recurrent_recirculation",
+          "estimated_training_flops": 6.925075603890635e+18,
+          "exact_baseline_token_equivalent": 5343278463.246925,
+          "nearest_baseline_optimizer_batch_tokens": 5343281152,
+          "target_token_presentations": 2500001792
+        },
+        {
+          "arm": "dense_memory_attention",
+          "estimated_training_flops": 6.934067450335986e+18,
+          "exact_baseline_token_equivalent": 5350216429.300217,
+          "nearest_baseline_optimizer_batch_tokens": 5350227968,
+          "target_token_presentations": 2500001792
+        }
+      ],
+      "baseline_compute_coverage": 1.0000021566790682,
+      "most_expensive_feedback_arm": "dense_memory_attention",
+      "name": "final_2p5b",
+      "targets": {
+        "dense_memory_attention": 2500001792,
+        "recurrent_recirculation": 2500001792,
+        "vanilla_compute_matched": 5350227968
+      }
+    }
+  ],
+  "study": "unfrozen_scaling_core"
+}

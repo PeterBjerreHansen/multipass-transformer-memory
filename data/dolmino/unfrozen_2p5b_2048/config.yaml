@@ -1,0 +1,11 @@
+output_dir: data/dolmino/unfrozen_2p5b_2048
+model_dir: checkpoints/TinyMistral-248M-v3
+sequence_length: 2048
+train_tokens: 2500001792
+validation_tokens: 2000896
+validation_skip_tokens: 0
+train_skip_tokens: 0
+seed: 1337
+dataset_repo: allenai/dolmino-mix-1124
+revision: 1c2f43706986135c6799d9917e0d06ecef7fb1bb
+shuffle_buffer: 50000

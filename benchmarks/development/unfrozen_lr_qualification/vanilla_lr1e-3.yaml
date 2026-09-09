@@ -1,0 +1,9 @@
+extends: protocol_20m.yml
+variant: vanilla
+learning_rate: 1.0e-3
+pretrained_learning_rate: 1.0e-3
+added_learning_rate: null
+pass_schedule:
+  - probabilities: {1: 1.0}
+eval_passes: 1
+output_dir: benchmarks/development/unfrozen_lr_qualification/results/vanilla_lr1e-3
