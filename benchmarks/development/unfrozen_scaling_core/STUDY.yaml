@@ -1,6 +1,6 @@
 name: unfrozen_scaling_core
-status: planned
-learning_rates_qualified: false
+status: locked
+learning_rates_qualified: true
 question: >-
   When all parameters train, does dense content-addressed Memory Attention give
   a better data/parameter/compute tradeoff than a matched recirculation merger

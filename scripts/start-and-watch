@@ -134,8 +134,11 @@ if alive:
     state = "running"
 elif last_end is None:
     state = "not_started"
-elif last_end.get("reason") == "completed" and (target is None or tokens >= target):
-    state = "completed"
+elif last_end.get("reason") == "completed":
+    # A completed segment below the requested staged target is a valid
+    # continuation point, not an interrupted run.  The caller can launch
+    # ``--resume-auto`` and advance the same trajectory to the next stage.
+    state = "completed" if target is None or tokens >= target else "resumable"
 else:
     state = "interrupted"
 print(json.dumps({

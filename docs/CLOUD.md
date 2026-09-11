@@ -88,8 +88,11 @@ metadata.
 - `--cleanup shutdown` is the default.
 - `--cleanup delete` deletes the compute instance but retains attached volumes.
 - `--cleanup none` retains the running instance.
-- `--transfer all` is the default and includes checkpoints and snapshots.
-- Use `--transfer metadata` only when large artifacts are archived elsewhere or unnecessary for a smoke check.
+- `--transfer metadata` is the default for locked studies. It archives metrics,
+  validation/feedback reports, journals and provenance while leaving checkpoints
+  and snapshots on the persistent VM volume for exact remote continuation.
+- `--transfer all` is an explicit full-artifact archive and should be used only
+  for a deliberate endpoint handoff, not between arms of a staged study.
 - `--delete-remote-output` removes the verified remote run directory after transfer.
 - `--watch-existing` permits transfer of an already completed run.
 
@@ -120,7 +123,12 @@ nohup caffeinate -dimsu uv run ./scripts/run-cloud-study \
   > /tmp/tinymistral-cloud-study.log 2>&1 &
 ```
 
-The wrapper transfers all artifacts and verifies each local result.
+The wrapper transfers metadata by default and verifies each local result. This
+keeps the GPU available for the next arm instead of blocking on multi-gigabyte
+model files. A local continuation checkpoint is a separate handoff concern:
+metadata-only archives are not sufficient to resume training on another host,
+so retain the persistent VM volume until the staged study is complete and make
+any full-artifact archive explicitly with `--transfer all` while compute is idle.
 It removes each verified remote run directory and shuts down between arms.
 After all selected arms complete, it deletes compute without deleting attached volumes.
 Use `--keep-vm` to retain the instance instead.

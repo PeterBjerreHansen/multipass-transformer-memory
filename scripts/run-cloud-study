@@ -161,8 +161,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transfer",
         choices=("all", "metadata"),
-        default="all",
-        help="archive all weights or only metrics/journal metadata",
+        default="metadata",
+        help="archive only metrics/journal metadata by default; use all for weights",
     )
     parser.add_argument("--lock-file", type=Path, default=Path(DEFAULT_LOCK))
     parser.add_argument("--keep-vm", action="store_true", help="do not delete the VM after all arms")

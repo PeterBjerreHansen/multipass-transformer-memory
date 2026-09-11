@@ -109,6 +109,38 @@ def test_intermediate_cloud_stage_retains_remote_checkpoint(tmp_path):
     assert "--delete-remote-output" not in command
 
 
+def test_locked_cloud_study_defaults_to_metadata_transfer():
+    campaign = _load_extensionless("run_cloud_study_transfer_default_test", "run-cloud-study")
+    args = campaign._parser().parse_args(
+        ["--host", "example.invalid", "--vm-id", "vm-1", "--study-dir", "study"]
+    )
+    assert args.transfer == "metadata"
+
+
+def test_completed_early_segment_is_resumable_for_a_later_target(tmp_path):
+    controller = _load_extensionless("start_and_watch_stage_resume_test", "start-and-watch")
+    output = tmp_path / "arm"
+    output.mkdir()
+    (output / "segments.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "segment_end",
+                "reason": "completed",
+                "end_unique_tokens": 100,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", controller._status_code(), str(output), "200"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(result.stdout)["state"] == "resumable"
+
+
 def test_remote_identity_helpers_reject_config_or_run_path_mismatch(tmp_path):
     controller = _load_extensionless("start_and_watch_test", "start-and-watch")
     config = tmp_path / "arm.yaml"
