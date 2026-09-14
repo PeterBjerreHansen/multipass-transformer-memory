@@ -30,7 +30,7 @@ def documentation_files():
 def is_historical(path):
     relative = path.relative_to(ROOT).as_posix()
     return (
-        relative.startswith(("benchmarks/historical/", "docs/research/"))
+        relative.startswith("docs/research/")
         or path.name == "FROZEN_WIRING_GRILL_EXCHANGE.md"
     )
 

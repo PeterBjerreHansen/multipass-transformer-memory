@@ -37,8 +37,8 @@ decoding.
 Dense Memory Attention writes every physical position. Strided Memory Attention
 writes zero-based physical position `t` when `(t + 1) % C == 0`. A synthetic BOS
 is an ordinary physical position and shifts the subsequent data-token phase.
-Memory-token mode writes only explicit control positions. All reads are strict
-past, and cached memory remains bounded by its configured capacity.
+Active memory modes write ordinary-token states. All reads are strict past, and
+cached memory remains bounded by its configured capacity.
 
 The separate continuation diagnostic reports exact-K-pass, Live Feedback, and
 standard-K1 NLL; `KL(exact || live_feedback)`; top-1 agreement; hidden RMS and
@@ -47,5 +47,5 @@ real, zero, mismatched, and true-bypass conditions at configurable transitions.
 Neither diagnostic is routine validation or a training stopping criterion.
 
 Old Python runtime aliases are not exported. Compatibility remains only where
-serialized historical artifacts require it; new code, commands, and result
+existing serialized checkpoints require it; new code, commands, and result
 schemas use the explicit names above.

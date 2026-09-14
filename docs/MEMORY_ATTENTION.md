@@ -24,14 +24,15 @@ the name. `memory_attention` accepts explicit settings without a preset.
 Retired serialized names are translated at the input boundary by
 [`compatibility.py`](../src/tiny_mistral_mptt/compatibility.py).
 They are not runtime implementation keys, Python class aliases or advertised variants.
-New config metadata uses current names; historical artifacts keep their recorded identities.
+New config metadata uses current names; existing serialized checkpoints may retain
+their recorded identities at the compatibility boundary.
 Old Python import paths and state-field aliases have been removed. Pure-attention tensor parameter
 keys are unchanged, so serialized weights remain loadable when the architecture matches.
 Checkpoint comparison resolves aliases but retains pattern, reader layout and optional
 recurrent settings as architecture fields. The deleted named hybrids are not aliases:
 their checkpoints require the original repository revision.
 
-See [the architecture map](ARCHITECTURES.md) for controls and preserved reference implementations.
+See [the architecture map](ARCHITECTURES.md) for controls and supported implementations.
 Study-specific reader locations and capacities belong in the [frozen protocol](../benchmarks/development/frozen_backbone_comparison/README.md).
 
 ## 1. Shared Memory Attention architecture
@@ -260,6 +261,5 @@ The required causality, endpoint-equivalence, masking, gradient, cache, and
 resume checks are listed in [VALIDATION.md](VALIDATION.md). Run `make check`
 before interpreting quality results.
 
-Explicit memory-token attention is preserved only as
-[reference source](../historical/implementations/feedback/README.md). Its inserted
-positions, special labels and decoding behavior are absent from this runtime.
+The active benchmark contract uses ordinary tokens. Explicit control-position
+memory is outside the current training and evaluation studies.

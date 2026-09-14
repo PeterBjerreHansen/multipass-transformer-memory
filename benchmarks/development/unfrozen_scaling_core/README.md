@@ -17,9 +17,10 @@ config; the named stages conservatively use the dense-attention targets.
 Both feedback arms use `[3, 7]` injection sites and the same K distribution
 (`K=2` with probability 0.9, `K=3` with probability 0.1). Only the final pass
 receives NTP loss. Added parameters use `1e-3`; the six-arm vanilla qualification
-selected a provisional shared backbone rate of `3e-4`. The configs carry that
-rate, but `learning_rates_qualified: false` still prevents a training launch
-until the long artifacts and target-GPU preflight are complete.
+selected the shared backbone rate of `3e-4`. The long-study artifact is pinned
+and the study is locked with `learning_rates_qualified: true`, so the staged
+run may resume from its declared boundaries. This qualification does not make
+the shared rate architecture-optimal; the final report must retain its scope.
 Cosine decay is normalized to each arm's final horizon. Thus the named
 compute-matched stages are also approximately schedule-progress matched. The
 vanilla equal-presentation snapshot at 2.5B occurs earlier in its schedule and
@@ -54,6 +55,12 @@ feedback models. Expensive feedback decoding is limited to the 100M, 1B, and
 final feedback snapshots. Final paper evaluation must use the independent
 `data/dolmino/unfrozen_final_eval_2048` artifact and report curves against both
 linguistic token presentations and estimated training FLOPs.
+
+Plots for this study are ephemeral reports, not reusable result files. Every
+plot request must read the current `results/<arm>/metrics.jsonl` files first,
+record the study and arm paths in the figure metadata or caption, and be
+regenerated immediately before display. Do not reuse PNG/HTML files from the
+Codex visualization cache or from retired study directories.
 
 The held-out evaluation manifest SHA-256 is
 `79d38771a3803f173a762bfbfae969f6a382bc6cea6b9036d4e4fbe03f119a2e`.

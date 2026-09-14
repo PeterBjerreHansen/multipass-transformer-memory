@@ -1,8 +1,7 @@
 # Unfrozen benchmark decision record
 
-Updated 2026-09-07. This note records the scientific and implementation choices
-behind the current unfrozen development studies. It is not authorization to
-start paid training.
+Updated 2026-09-11. This note records the scientific and implementation choices
+behind the current unfrozen development studies and their staged execution.
 
 ## Scientific question
 
@@ -94,10 +93,12 @@ rate. Selection uses validation NLL plus finite-loss, gradient, and trajectory
 stability checks. It omits expensive BOS-feedback decoding. A lower added-rate
 rescue is allowed only as a new declared run if `1e-3` is unstable.
 
-The qualification selected a provisional shared backbone rate of `3e-4`, which
-is recorded in the long configs. The study manifest still sets
-`learning_rates_qualified: false`: both local and cloud runners refuse training
-until the long artifacts are verified and the target-GPU preflight passes.
+The qualification selected the shared backbone rate of `3e-4`, which is recorded
+in the long configs. The long artifact is materialized and pinned, the
+target-GPU checks passed, and the locked study manifest sets
+`learning_rates_qualified: true`. The staged cloud run is therefore active;
+stage boundaries remain operational checkpoints, not separate scientific
+experiments.
 
 ## Data and evaluation
 
@@ -140,7 +141,7 @@ Before LR qualification:
 3. run target-CUDA Phase-B checks with real K=3 updates, optimizer allocation,
    K=4 validation, snapshot creation, interruption, and resume.
 
-Before scaling:
+Before scaling (now satisfied for the active study):
 
 1. record the single shared LR winner in the long configs;
 2. materialize, verify, pin, and disjointness-check the long and final artifacts;
@@ -149,4 +150,5 @@ Before scaling:
 5. set `learning_rates_qualified: true`, promote to a locked core study, and
    review the clean source state.
 
-The long scaling study remains gated; qualification alone does not authorize its launch.
+Qualification alone did not authorize launch; the additional data, preflight,
+and source-state gates above were completed before the current staged run.

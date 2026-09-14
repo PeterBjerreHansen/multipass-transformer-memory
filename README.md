@@ -61,18 +61,13 @@ uv run python scripts/verify_data.py data/dolmino/gpu_2048
 See [data preparation](docs/DATA.md) and [cloud preflight](docs/CLOUD.md).
 Local tests do not establish CUDA fit or throughput.
 
-## Historical results
+## Results and artifacts
 
-The completed eight-arm screen and Stage-6 continuation protocol remain under
-[the historical staged pipeline](benchmarks/historical/staged_pipeline/README.md).
-The [Stage-5 result table and commentary](benchmarks/historical/staged_pipeline/stage_5_cloud_100m/results/README.md)
-retain the original findings and split-overlap caveats.
-These are not results for the restructured frozen comparison.
-Earlier unauditable downstream JSON is not valid capability evidence.
+Current experiment definitions live under `benchmarks/development/` and
+`benchmarks/core/`. Raw checkpoints and telemetry are local artifacts under
+`results/<arm>/` and are ignored by Git; compact summaries belong beside the
+owning study when they are needed to interpret a run.
 
-Paper replay/BPTT and the 1024-token studies are deleted. The active recurrent
-models use the shared late writer and support adaptive recirculation mixing.
-FBT and explicit memory-token attention remain as
-[preserved reference source](historical/implementations/feedback/README.md), outside
-the active runtime. Memory Attention can optionally add the current late
+The active recurrent models use the shared late writer and support adaptive
+recirculation mixing. Memory Attention can optionally add the current late
 recurrent-memory pathway; see [its configuration](docs/MEMORY_ATTENTION.md#7-optional-recurrent-memory-hybrid).

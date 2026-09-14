@@ -36,8 +36,7 @@ The older 1024-token studies have been deleted. Paper replay/BPTT execution is
 deleted.
 
 Pass-depth stability, parameter drift, and inference diagnostics are reusable
-evaluation tools, not standalone development studies. Superseded Stage 0–6 and
-exploratory protocols are preserved under `../historical/`.
+evaluation tools, not standalone development studies.
 
 [Remaining additions](../../docs/DEVELOPMENT_PLAN.md) are tracked separately. The inference-efficiency
 directory is a diagnostic with no study manifest; it must not be counted as a

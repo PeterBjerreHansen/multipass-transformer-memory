@@ -34,7 +34,7 @@ def test_active_tree_does_not_reintroduce_retired_names():
         if not path.is_file() or (path.suffix not in {".py", ".md", ".yaml"} and path.name not in {"start-and-watch", "run-cloud-study"}):
             continue
         relative = path.relative_to(ROOT).as_posix()
-        if relative.startswith(("benchmarks/historical/", "docs/research/")) or relative == "docs/FROZEN_WIRING_GRILL_EXCHANGE.md":
+        if relative.startswith("docs/research/") or relative == "docs/FROZEN_WIRING_GRILL_EXCHANGE.md":
             continue
         if RETIRED.search(relative):
             failures.append(f"retired filename: {relative}")

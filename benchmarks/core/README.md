@@ -10,7 +10,3 @@ comparison axes, data artifact, initialization, optimizer batch, learning
 rates, parallel-pass objective, and evaluation semantics have been reviewed. Run
 `scripts/verify_study.py` before execution. See the [study schema and promotion
 rules](../README.md).
-
-Completed studies from the superseded staged protocol are preserved under
-`../historical/staged_pipeline/`; their previous location here does not make
-them part of the current contract.

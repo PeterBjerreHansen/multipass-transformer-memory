@@ -337,13 +337,9 @@ def test_attention_reader_layers_match_across_frozen_studies():
         assert all(cfg.memory_num_key_value_heads == 16 for cfg in attention)
 
 
-def test_historical_studies_are_preserved_but_not_discovered():
+def test_historical_studies_are_removed_from_active_tree():
     historical = ROOT / "benchmarks" / "historical"
-    assert (historical / "staged_pipeline" / "stage_5_cloud_100m").is_dir()
-    assert (historical / "staged_pipeline" / "stage_6_long_continuation").is_dir()
-    assert (historical / "exploratory" / "backbone_lr_sweep").is_dir()
-    discovered = set(discover_studies(ROOT))
-    assert not any(path.is_relative_to(historical) for path in discovered)
+    assert not historical.exists()
 
 
 def test_runnable_local_configs_keep_one_checkpoint_generation():
@@ -376,7 +372,7 @@ def test_training_efficiency_defaults_to_2048_cases():
 def test_root_readme_links_active_contract_and_explains_config_locality():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "benchmarks/README.md" in readme
-    assert "benchmarks/historical/staged_pipeline/" in readme
+    assert "benchmarks/historical/" not in readme
     assert "There is intentionally no central `configs/` directory" in readme
     assert "results/<arm>/" in readme
 
@@ -419,5 +415,3 @@ def test_1024_study_configs_and_recipe_are_removed():
     assert not (ROOT / "data/dolmino/paper_1024/config.yaml").exists()
     for path in (ROOT / "benchmarks").rglob("*.yaml"):
         assert "paper_1024" not in path.read_text()
-    assert not (ROOT / "benchmarks/historical/retired_1024").exists()
-    assert not (ROOT / "benchmarks/historical/exploratory/frozen_backbone_comparison").exists()

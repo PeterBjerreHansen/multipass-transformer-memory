@@ -1,7 +1,7 @@
 # Documentation map
 
 Use this map for current behavior. Runnable configs define experiment settings.
-Historical records and research notes do not override those configs or the current contracts.
+Research notes and decision records do not override those configs or the current contracts.
 
 ## Authoritative guides
 
@@ -26,24 +26,18 @@ Architecture contracts define mechanisms. Study READMEs explain their selected s
 The evaluation guide owns scoring and precision. The training guide owns scheduling and recovery.
 Other pages should link to these definitions instead of copying them.
 
-## Historical and decision records
+## Decision records
 
 - [Cleanup ledger](CLEANUP_STATUS.md): original review issues and their resolution.
-- [Grilling exchange](FROZEN_WIRING_GRILL_EXCHANGE.md): the original discussion, including superseded proposals.
 - [Recirculation indexing](research/recirculation-token-indexing.md) and
   [feedback-merger research](research/looped-feedback-mechanisms.md): dated research and earlier recommendations.
 - [Unfrozen benchmark decision record](research/unfrozen-benchmark-plan-audit.md):
   the current three-arm, staged scaling rationale and launch gates.
-- [Archived experiments](../benchmarks/historical/README.md): original protocols, paths and scientific caveats.
 
-Archived commands are provenance, not instructions for launching the current campaign.
-Do not rewrite historical results to match new model names or reader layouts.
+Research notes are context, not instructions for launching the current campaign.
 
 ## Maintaining the docs
 
 Verify behavior against the implementation before changing a contract.
 Update the owning study when a default changes. Update the development plan when a task is deferred or completed.
 Run `make check` after edits. Documentation tests check local links, examples and selected config-backed protocol values.
-
-Preserved FBT and explicit memory-token source, matching tests and reproduction
-instructions live in the [reference archive](../historical/implementations/feedback/README.md).

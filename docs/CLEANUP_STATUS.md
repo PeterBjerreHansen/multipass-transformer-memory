@@ -6,12 +6,11 @@ Pending work and user decisions belong in the [development plan](DEVELOPMENT_PLA
 
 ## Supported-runtime cleanup (2026-09-08)
 
-MemoryAdd and middle-layer Recirculation implementations are removed. FBT and
-explicit memory-token attention are preserved as [reference source](../historical/implementations/feedback/README.md)
-with matching tests and revision information. Active data, labels, positions and
-decoding now use ordinary tokens only. Generic inference, evaluation and recovery
-tests use supported recurrent models. Frozen studies and the unfrozen schedule
-are retained. Navigation pages link to study-owned protocol and status information.
+MemoryAdd, middle-layer Recirculation, FBT, and explicit memory-token attention
+are outside the active runtime. Active data, labels, positions and decoding use
+ordinary tokens only. Generic inference, evaluation and recovery tests use
+supported recurrent models. Frozen studies and the unfrozen schedule are
+retained. Navigation pages link to study-owned protocol and status information.
 
 ## Completed work
 
@@ -54,7 +53,7 @@ as complete.
 | 10. Incomplete snapshot publication | Atomic weights/identity publication, retry verification and recovery tests implemented. |
 | 11. K=1 feedback-memory conversion | Implemented and regression-tested, including non-identity writers. |
 | 12. Merger interpretation and diagnostics | Existing simple checks first. Initial baselines and configurable-depth interventions deferred. |
-| 13. Directory-layout test | Discovery follows manifests. Archive checks follow retained studies, not deleted FBT files. |
+| 13. Directory-layout test | Discovery follows manifests. Deleted study archives are not part of the active tree. |
 | 14. Timing-tool integration after arm replacement | Current arm paths and separate recurrent IDs implemented. Production BOS timing remains pending. |
 | 15. Incomplete implementation rename | Current names now reach modules, factory dispatch, feedback fields, diagnostics, tests and active YAML paths. Retired serialized names are confined to one input-compatibility adapter; a repository naming test guards the boundary. |
 | 16. Separate attention dispatch and obsolete hybrid models | The three descriptive attention names now resolve to one configurable implementation. The non-memory control is Strided Self-Attention. Named legacy hybrids are deleted; optional late recurrent memory uses the shared writer and merger modules. Architecture-aware checkpoint comparison prevents silent remapping. |
@@ -66,12 +65,10 @@ retains the original four-arm timing evidence.
 Its continuation costs extrapolate a short horizon and do not time the production full-block BOS evaluator.
 The two new recurrent mergers were not measured there.
 
-Historical experiment configs and results keep their recorded names and paths.
-The [grilling transcript](FROZEN_WIRING_GRILL_EXCHANGE.md) and dated research notes
-include superseded proposals. They are not executable specifications.
+Dated research notes record decisions and caveats; they are not executable
+specifications.
 
 The earlier cleanup passed 471 tests with 10 MPS skips. The later rename passed
-480 tests with 10 MPS skips. The directory-layout assertion now checks only the
-historical studies that are actually retained; deleted FBT and efficiency
-archives are not expected to exist. Current verification results belong in the
-task handoff, not a perpetually current claim in this ledger.
+480 tests with 10 MPS skips. The directory-layout assertion checks the active
+studies and does not expect deleted archives. Current verification results
+belong in the task handoff, not a perpetually current claim in this ledger.

@@ -80,10 +80,3 @@ cached K-pass inference snapshots lower-stream feedback before computing the
 same physical position in higher streams, so no same-position lower-stream
 state leaks upward. Live Feedback inference closes the final stream only
 after the exact K-pass prefill boundary.
-
-## Preserved reference implementations
-
-FBT and explicit memory-token attention are preserved as
-[reference source](../historical/implementations/feedback/README.md), with matching
-tests and revision information. They are outside the installed package and
-unsupported by current training and evaluation commands.

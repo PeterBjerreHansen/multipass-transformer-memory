@@ -8,10 +8,9 @@ The benchmark tree has four active roles:
 - `efficiency/`: hardware measurements used to choose feasible execution
   settings and report compute.
 
-Superseded protocols and retained runs live under `historical/`. Nothing in
-that directory defines the current contract or participates in automatic study
-discovery. `ad_hoc/` is ignored local scratch space and must not be cited as a
-study.
+Raw checkpoints and telemetry are local artifacts under `results/<arm>/` and
+are ignored by Git. `ad_hoc/` is ignored local scratch space and must not be
+cited as a study.
 
 ## Studies and contracts
 

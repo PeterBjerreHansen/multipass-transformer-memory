@@ -30,21 +30,12 @@ dense-recent/fixed-stride-old mask. An
 empty attention row returns exact zero in every backend. Ordinary layers retain
 the original local path, while Strided Self-Attention reuses the pretrained projections.
 
-## FBT architecture reference
-
-The [preserved FBT reference](../historical/implementations/feedback/README.md) is based on the asymmetric latent-feedback construction in
-Xi Wang et al., *Full-bandwidth Transformer*, arXiv:2608.08888. This repository
-uses a TinyMistral retrofit and does not claim to reproduce the paper's full
-pretraining recipe.
-
 ## Recirculation architecture reference
 
 The adaptive mixing rule is based on Michael C. Mozer et al., *Recirculation*,
 arXiv:2608.17981v2. The active retrofit uses preceding-token, previous-pass
 feedback and a late emitted memory. It does not reproduce the paper
-readout/replay computation. That execution policy and its BPTT/TBPTT training
-implementation have been deleted. The source-indexing research note and
-retired protocol records remain provenance, not executable specifications.
+readout/replay computation.
 
 ## Earlier MPTT research reference
 
